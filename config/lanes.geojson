@@ -1,0 +1,45 @@
+{
+  "type": "FeatureCollection",
+  "_comment": "Lane direction ground truth for wrong-way detection. Each feature is a polygon region of the road, with the EXPECTED direction of legal travel for vehicles inside it. 'heading_deg' uses the math convention computed by atan2(vy, vx) in the sensor frame: 0=+X, 90=+Y, 180/-180=-X, -90=-Y. A vehicle whose velocity heading points more than 'angle_thresh_deg' (a runtime parameter) away from the lane heading is flagged as wrong-way. IMPORTANT: every feature below currently has \"calibrated\": false and PLACEHOLDER headings copied from a rough guess of road orientation. They MUST be measured from the real data before the WWD numbers are trustworthy (see README, section 'Calibrating lane geometry').",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "lane_id": "main_road_eastbound_guess",
+        "name": "Main carriageway (roughly along X axis)",
+        "heading_deg": 0.0,
+        "calibrated": false
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-25.0, -20.0], [-25.0, 10.0], [45.0, 20.0], [45.0, -15.0], [-25.0, -20.0]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "lane_id": "north_ramp_guess",
+        "name": "Northern ramp / cross road",
+        "heading_deg": 90.0,
+        "calibrated": false
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[0.0, 0.0], [10.0, 50.0], [35.0, 50.0], [25.0, 0.0], [0.0, 0.0]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "lane_id": "south_ramp_guess",
+        "name": "Southern ramp / cross road",
+        "heading_deg": -90.0,
+        "calibrated": false
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[0.0, 0.0], [30.0, 0.0], [40.0, -50.0], [10.0, -50.0], [0.0, 0.0]]]
+      }
+    }
+  ]
+}

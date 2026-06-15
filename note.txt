@@ -1,0 +1,7 @@
+How to run (flat layout — everything lives in this folder):
+
+    # activate your Python environment, then:
+    streamlit run Home.py
+
+Run from this directory: the data/ and outputs/ paths are relative to it.
+See README.md for full details (pipeline, lane calibration, evaluation).

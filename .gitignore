@@ -1,0 +1,20 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# --- Virtual environment (do not track) ---
+venv/
+.venv/
+
+# --- OS / editor ---
+.DS_Store
+.vscode/
+
+# --- Large data & generated artifacts (track code, not data) ---
+data/
+outputs/
+*.pcd
+*.pkl
+*.gif
+**/vis/
