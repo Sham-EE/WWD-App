@@ -259,10 +259,14 @@ def build_preview(points: np.ndarray, lanes, color_mode: str = 'cardinal',
     else:
         cam = {'up': {'x': 0, 'y': 0, 'z': 1}, 'center': {'x': 0, 'y': 0, 'z': 0},
                'eye': {'x': 1.25, 'y': 1.25, 'z': 1.25}}
+    # uirevision keeps the user's zoom/rotation across Streamlit reruns (e.g.
+    # while editing box numbers); it only resets when the camera mode changes.
+    uirev = f"td_{top_down}"
     fig.update_layout(
         height=680, margin=dict(l=0, r=0, t=30, b=0),
+        uirevision=uirev,
         scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)', zaxis_title='Z (m)',
-                   aspectmode='data', camera=cam),
+                   aspectmode='data', camera=cam, uirevision=uirev),
         legend=dict(orientation='h', y=-0.02),
         title='Top-down (drag to rotate, scroll to zoom, right-drag to pan)' if top_down else '3D view')
     return fig
