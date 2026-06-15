@@ -177,7 +177,8 @@ def lane_display_colors(lanes, color_mode: str):
 
 
 def build_preview(points: np.ndarray, lanes, color_mode: str = 'cardinal',
-                  bg_xyz: np.ndarray = None, top_down: bool = True) -> go.Figure:
+                  bg_xyz: np.ndarray = None, top_down: bool = True,
+                  cam_dist: float = 3.4) -> go.Figure:
     """3D bird's-eye preview (same mouse UX as the detection viewer): optional
     point-cloud backdrop + vehicle positions + lane boxes with direction arrows.
     Box colors always match the dot colors. ``top_down`` toggles the camera.
@@ -253,15 +254,19 @@ def build_preview(points: np.ndarray, lanes, color_mode: str = 'cardinal',
             z=[Z_BOX] * 3, mode='lines', line=dict(color=col, width=6),
             showlegend=False, hoverinfo='skip'))
 
+    # cam_dist sets the zoom: larger eye magnitude = camera farther = wider view.
     if top_down:
         cam = {'up': {'x': 0, 'y': 1, 'z': 0}, 'center': {'x': 0, 'y': 0, 'z': 0},
-               'eye': {'x': 0, 'y': 0, 'z': 2.0}}
+               'eye': {'x': 0, 'y': 0, 'z': float(cam_dist)}}
     else:
+        d = float(cam_dist) * 0.6
         cam = {'up': {'x': 0, 'y': 0, 'z': 1}, 'center': {'x': 0, 'y': 0, 'z': 0},
-               'eye': {'x': 1.25, 'y': 1.25, 'z': 1.25}}
+               'eye': {'x': d, 'y': d, 'z': d}}
     # uirevision keeps the user's zoom/rotation across Streamlit reruns (e.g.
-    # while editing box numbers); it only resets when the camera mode changes.
-    uirev = f"td_{top_down}"
+    # while editing box numbers). It only changes when the view mode or the zoom
+    # control changes — so mouse fine-tuning persists, but the +/- buttons and
+    # top-down toggle still re-apply a fresh camera.
+    uirev = f"td_{top_down}_z_{cam_dist}"
     fig.update_layout(
         height=680, margin=dict(l=0, r=0, t=30, b=0),
         uirevision=uirev,

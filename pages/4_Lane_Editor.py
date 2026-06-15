@@ -24,6 +24,9 @@ COLS = ["lane_id", "xmin", "xmax", "ymin", "ymax", "heading_deg"]
 
 st.session_state.setdefault('le_lanes', [])
 st.session_state.setdefault('le_v', 0)  # data-editor key version (bump to reseed)
+st.session_state.setdefault('le_zoom', 3.4)  # camera distance; bigger = wider view
+
+ZOOM_MIN, ZOOM_MAX, ZOOM_STEP = 1.6, 7.0, 0.4
 
 st.title("🛣️ Lane Editor")
 
@@ -111,7 +114,18 @@ with right:
     top_down = rc[1].toggle("⬇️ Top-down", value=True,
                             help="On = bird's-eye. Off = oblique 3D (drag-rotate, scroll-zoom, right-drag pan).")
 
-    show_bg = st.checkbox("🛰️ Point cloud background", value=False)
+    zc = st.columns([1, 1, 1, 3])
+    if zc[0].button("🔍➖ Wider", use_container_width=True, help="Zoom out (see more)"):
+        st.session_state.le_zoom = round(min(ZOOM_MAX, st.session_state.le_zoom + ZOOM_STEP), 2)
+        st.rerun()
+    if zc[1].button("🔍➕ Closer", use_container_width=True, help="Zoom in"):
+        st.session_state.le_zoom = round(max(ZOOM_MIN, st.session_state.le_zoom - ZOOM_STEP), 2)
+        st.rerun()
+    if zc[2].button("↺ Fit", use_container_width=True, help="Reset to the default wide view"):
+        st.session_state.le_zoom = 3.4
+        st.rerun()
+    show_bg = zc[3].checkbox("🛰️ Point cloud background", value=False)
+
     bg_xyz = None
     if show_bg:
         bg_dir = "data/point_clouds/cropped/cropped_pcd"
@@ -122,6 +136,7 @@ with right:
                 st.warning(f"Background load failed: {e}")
 
     fig = build_preview(points if points is not None else np.zeros((0, 3)),
-                        lanes, color_mode=color_mode, bg_xyz=bg_xyz, top_down=top_down)
+                        lanes, color_mode=color_mode, bg_xyz=bg_xyz, top_down=top_down,
+                        cam_dist=st.session_state.le_zoom)
     # Stable key + uirevision so the camera/zoom survives table edits.
     st.plotly_chart(fig, use_container_width=True, key="le_preview")
