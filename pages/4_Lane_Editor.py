@@ -3,7 +3,6 @@ import json
 
 import streamlit as st
 import numpy as np
-import pandas as pd
 
 from lane_tools import (
     load_tracks, moving_points, auto_lanes,
@@ -20,13 +19,9 @@ def _cached_background(pcd_dir, n_frames):
 
 LANES_PATH = "config/lanes.geojson"
 DEFAULT_TRACKS = "outputs/object_detection/tracks.csv"
-COLS = ["lane_id", "xmin", "xmax", "ymin", "ymax", "heading_deg"]
 
 st.session_state.setdefault('le_lanes', [])
 st.session_state.setdefault('le_v', 0)  # data-editor key version (bump to reseed)
-st.session_state.setdefault('le_zoom', 3.4)  # camera distance; bigger = wider view
-
-ZOOM_MIN, ZOOM_MAX, ZOOM_STEP = 1.6, 7.0, 0.4
 
 st.title("🛣️ Lane Editor")
 
@@ -63,39 +58,50 @@ st.caption(f"{cap} · edit the table on the left and watch the preview on the ri
 left, right = st.columns([5, 7], gap="medium")
 
 with left:
-    seed = pd.DataFrame(
-        [{c: l.get(c) for c in COLS} for l in st.session_state.le_lanes],
-        columns=COLS,
-    )
-    edited = st.data_editor(
-        seed, num_rows="dynamic", use_container_width=True, height=430,
-        key=f"lane_table_{st.session_state.le_v}",
-        column_config={
-            "lane_id": st.column_config.TextColumn("Lane", width="small"),
-            "xmin": st.column_config.NumberColumn("X min", step=0.5, format="%.1f"),
-            "xmax": st.column_config.NumberColumn("X max", step=0.5, format="%.1f"),
-            "ymin": st.column_config.NumberColumn("Y min", step=0.5, format="%.1f"),
-            "ymax": st.column_config.NumberColumn("Y max", step=0.5, format="%.1f"),
-            "heading_deg": st.column_config.NumberColumn("Heading°", step=1.0, format="%.1f",
-                                                         help="0=+X, 90=+Y, 180=-X, -90=-Y"),
-        },
-    )
-    # Parse the edited table into lane dicts (skip incomplete rows).
-    lanes = []
-    for i, r in edited.iterrows():
-        if any(pd.isna(r[c]) for c in ("xmin", "xmax", "ymin", "ymax")):
-            continue
-        lanes.append(dict(
-            lane_id=(str(r["lane_id"]) if not pd.isna(r["lane_id"]) else f"lane_{len(lanes)+1}"),
-            xmin=float(r["xmin"]), xmax=float(r["xmax"]),
-            ymin=float(r["ymin"]), ymax=float(r["ymax"]),
-            heading_deg=float(r["heading_deg"]) if not pd.isna(r["heading_deg"]) else 0.0,
-        ))
+    lanes = st.session_state.le_lanes
+    v = st.session_state.le_v
+    W = [1.5, 1, 1, 1, 1, 1, 0.5]  # column widths: id, xmin, xmax, ymin, ymax, hdg, del
 
-    st.caption("➕ add a row at the bottom · select a row's checkbox + ⌫ to delete.")
-    ex1, ex2 = st.columns(2)
+    if not lanes:
+        st.info("No lanes yet — use ✨ Auto-generate above or ➕ Add lane below.")
+    else:
+        head = st.columns(W)
+        for col, lab in zip(head, ["Lane", "X min", "X max", "Y min", "Y max", "Hdg°", ""]):
+            col.markdown(f"<div style='font-size:0.75rem;color:#888'>{lab}</div>",
+                         unsafe_allow_html=True)
+        delete_idx = None
+        for i, l in enumerate(lanes):
+            r = st.columns(W)
+            l['lane_id'] = r[0].text_input("id", value=str(l['lane_id']),
+                                           key=f"id_{i}_{v}", label_visibility="collapsed")
+            # step=1.0 -> the +/- steppers increment/decrement each value by one.
+            l['xmin'] = r[1].number_input("xmin", value=float(l['xmin']), step=1.0, format="%.1f",
+                                          key=f"xmin_{i}_{v}", label_visibility="collapsed")
+            l['xmax'] = r[2].number_input("xmax", value=float(l['xmax']), step=1.0, format="%.1f",
+                                          key=f"xmax_{i}_{v}", label_visibility="collapsed")
+            l['ymin'] = r[3].number_input("ymin", value=float(l['ymin']), step=1.0, format="%.1f",
+                                          key=f"ymin_{i}_{v}", label_visibility="collapsed")
+            l['ymax'] = r[4].number_input("ymax", value=float(l['ymax']), step=1.0, format="%.1f",
+                                          key=f"ymax_{i}_{v}", label_visibility="collapsed")
+            l['heading_deg'] = r[5].number_input("hdg", value=float(l['heading_deg']), step=1.0,
+                                                 format="%.1f", key=f"hd_{i}_{v}",
+                                                 label_visibility="collapsed")
+            if r[6].button("🗑", key=f"del_{i}_{v}", help="Delete lane"):
+                delete_idx = i
+        if delete_idx is not None:
+            lanes.pop(delete_idx)
+            st.session_state.le_v += 1
+            st.rerun()
+
+    if st.button("➕ Add lane", use_container_width=True):
+        lanes.append(dict(lane_id=f"lane_{len(lanes)+1}", xmin=-5.0, xmax=5.0,
+                          ymin=-5.0, ymax=5.0, heading_deg=0.0))
+        st.session_state.le_v += 1
+        st.rerun()
+
     if lanes:
         txt = json.dumps(lanes_to_geojson(lanes), indent=2)
+        ex1, ex2 = st.columns(2)
         ex1.download_button("⬇️ Download", data=txt, file_name="lanes.geojson",
                             mime="application/json", use_container_width=True)
         if ex2.button("💾 Save to config", use_container_width=True):
@@ -114,18 +120,7 @@ with right:
     top_down = rc[1].toggle("⬇️ Top-down", value=True,
                             help="On = bird's-eye. Off = oblique 3D (drag-rotate, scroll-zoom, right-drag pan).")
 
-    zc = st.columns([1, 1, 1, 3])
-    if zc[0].button("🔍➖ Wider", use_container_width=True, help="Zoom out (see more)"):
-        st.session_state.le_zoom = round(min(ZOOM_MAX, st.session_state.le_zoom + ZOOM_STEP), 2)
-        st.rerun()
-    if zc[1].button("🔍➕ Closer", use_container_width=True, help="Zoom in"):
-        st.session_state.le_zoom = round(max(ZOOM_MIN, st.session_state.le_zoom - ZOOM_STEP), 2)
-        st.rerun()
-    if zc[2].button("↺ Fit", use_container_width=True, help="Reset to the default wide view"):
-        st.session_state.le_zoom = 3.4
-        st.rerun()
-    show_bg = zc[3].checkbox("🛰️ Point cloud background", value=False)
-
+    show_bg = st.checkbox("🛰️ Point cloud background", value=False)
     bg_xyz = None
     if show_bg:
         bg_dir = "data/point_clouds/cropped/cropped_pcd"
@@ -136,7 +131,6 @@ with right:
                 st.warning(f"Background load failed: {e}")
 
     fig = build_preview(points if points is not None else np.zeros((0, 3)),
-                        lanes, color_mode=color_mode, bg_xyz=bg_xyz, top_down=top_down,
-                        cam_dist=st.session_state.le_zoom)
+                        lanes, color_mode=color_mode, bg_xyz=bg_xyz, top_down=top_down)
     # Stable key + uirevision so the camera/zoom survives table edits.
     st.plotly_chart(fig, use_container_width=True, key="le_preview")
