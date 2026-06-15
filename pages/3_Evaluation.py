@@ -1,12 +1,26 @@
 import streamlit as st
 import os
+import numpy as np
 
-from evaluation import evaluate, save_report, load_gt_by_key, bev_figure, _frame_key
+from evaluation import (evaluate, save_report, load_gt_by_key, bev_figure,
+                        _frame_key, _match_frame, BEV_CONFIG)
 
 
 @st.cache_data(show_spinner="Loading ground-truth frames…")
 def _gt_cached(gt_dir):
     return load_gt_by_key(gt_dir)
+
+
+@st.cache_data(show_spinner=False)
+def _pcd_xy(path, grid=0.3):
+    """Downsampled top-down (X, Y) of a point cloud frame, for the BEV backdrop."""
+    import open3d as o3d
+    pts = np.asarray(o3d.io.read_point_cloud(path).points)
+    if pts.size == 0:
+        return np.zeros((0, 2))
+    xy = pts[:, :2]
+    _, idx = np.unique(np.floor(xy / grid).astype(np.int64), axis=0, return_index=True)
+    return xy[idx]
 
 st.set_page_config(layout="wide", page_title="Evaluation")
 st.title("📊 Quantitative Evaluation")
@@ -77,9 +91,21 @@ if not os.path.isdir(gt_dir):
 else:
     gt_by_key = _gt_cached(gt_dir)
     pcd_files = results['pcd_files']
+    orig_files = results.get('original_pcd_files', pcd_files)
     n = len(pcd_files)
     rb = results.get('research_poly_bounds', (-25, -50, 45, 50))
     x_range, y_range = (rb[0], rb[2]), (rb[1], rb[3])
+
+    # --- view options ---
+    opt = st.columns(4)
+    separate = opt[0].toggle("Separate views", value=True,
+                             help="On = GT and Detection side by side. Off = both overlaid in one "
+                                  "plot (GT drawn on top of Detection).")
+    show_pc = opt[1].checkbox("Show point cloud", value=False,
+                              help="Overlay the LiDAR point cloud (top-down) behind the boxes.")
+    show_missed = opt[2].checkbox("Show missed (red)", value=False, disabled=not separate,
+                                  help="In separate view, draw GT objects that have NO matching "
+                                       "detection (false negatives) in red on the Detection panel.")
 
     st.session_state.setdefault('ev_frame', 0)
     st.session_state.ev_frame = max(0, min(st.session_state.ev_frame, n - 1))
@@ -98,19 +124,42 @@ else:
     key = _frame_key(pcd_files[i])
     gt_raw = gt_by_key.get(key, [])
     gt_boxes = [dict(cx=b['cx'], cy=b['cy'], yaw=b.get('yaw', 0.0), l=b['l'], w=b['w'],
-                     color='#2ca02c', label=str(b['cls'])[:3]) for b in gt_raw]
+                     label=str(b['cls'])[:3]) for b in gt_raw]
     det_boxes = [dict(cx=d['cx'], cy=d['cy'], yaw=d.get('yaw', 0.0),
                       l=d.get('l', 4.5), w=d.get('w', 1.9),
-                      color='orange' if d.get('wrong_way') else '#1f77b4',
                       label=str(d.get('tid', ''))) for d in results['det_frames'][i]]
+
+    bg_xy = _pcd_xy(orig_files[i]) if (show_pc and i < len(orig_files) and os.path.exists(orig_files[i])) else None
 
     if key not in gt_by_key:
         st.warning(f"No GT frame matches this detection frame (key {key}).")
-    g, d = st.columns(2)
-    g.plotly_chart(bev_figure(gt_boxes, f"Ground Truth — {len(gt_boxes)} objects (frame {i})",
-                              x_range, y_range, default_color='#2ca02c'),
-                   use_container_width=True, key="ev_gt")
-    d.plotly_chart(bev_figure(det_boxes, f"Detection — {len(det_boxes)} objects (frame {i})",
-                              x_range, y_range, default_color='#1f77b4'),
-                   use_container_width=True, key="ev_det")
-    st.caption(f"Frame {i}/{n-1} · GT objects: {len(gt_boxes)} · Detections: {len(det_boxes)}")
+
+    if separate:
+        # Compute missed GT (false negatives) for the detection panel.
+        missed_boxes = []
+        if show_missed and (gt_boxes or det_boxes):
+            matches, _, _, _ = _match_frame(det_boxes, gt_boxes, float(match_dist))
+            matched_gt = {gj for _, gj, _ in matches}
+            missed_boxes = [gt_boxes[j] for j in range(len(gt_boxes)) if j not in matched_gt]
+        g, d = st.columns(2)
+        g.plotly_chart(
+            bev_figure([(gt_boxes, '#2ca02c')], f"Ground Truth — {len(gt_boxes)} objects (frame {i})",
+                       x_range, y_range, bg_xy=bg_xy, uirev='ev_left'),
+            use_container_width=True, key="ev_gt", config=BEV_CONFIG)
+        det_groups = [(det_boxes, '#1f77b4')]
+        if missed_boxes:
+            det_groups.append((missed_boxes, '#ff2b2b'))
+        title = f"Detection — {len(det_boxes)} objects (frame {i})"
+        if show_missed:
+            title += f" · {len(missed_boxes)} missed"
+        d.plotly_chart(bev_figure(det_groups, title, x_range, y_range, bg_xy=bg_xy, uirev='ev_right'),
+                       use_container_width=True, key="ev_det", config=BEV_CONFIG)
+    else:
+        # Overlap: detection first (bottom), GT on top, distinguishable by color.
+        fig = bev_figure([(det_boxes, '#1f77b4'), (gt_boxes, '#2ca02c')],
+                         f"Overlay — GT (green) over Detection (blue), frame {i}",
+                         x_range, y_range, height=680, bg_xy=bg_xy, uirev='ev_overlay')
+        st.plotly_chart(fig, use_container_width=True, key="ev_overlay", config=BEV_CONFIG)
+
+    st.caption(f"Frame {i}/{n-1} · GT objects: {len(gt_boxes)} · Detections: {len(det_boxes)}"
+               + ("  ·  🟩 GT  🟦 Detection" + ("  🟥 missed" if (separate and show_missed) else "")))

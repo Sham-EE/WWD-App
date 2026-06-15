@@ -179,41 +179,48 @@ def _box_corners(cx, cy, yaw, l, w):
     return [(cx + x * c - y * s, cy + x * s + y * c) for x, y in loc]
 
 
-def bev_figure(boxes, title, x_range, y_range, default_color='#1f77b4', height=620):
-    """Top-down (bird's-eye) plot of oriented boxes, in the sensor X/Y frame.
-    Both the GT and detection figures use identical axes/ranges so the LiDAR
-    blind spot and every object line up for side-by-side comparison.
+def bev_figure(box_groups, title, x_range, y_range, height=620, bg_xy=None, uirev='eval'):
+    """Top-down (bird's-eye) plot of oriented boxes in the sensor X/Y frame.
+    All figures share identical axes/ranges so the LiDAR blind spot and objects
+    line up. Pan/scroll-zoom enabled; uirevision keeps the view across frames.
 
-    Each box: dict(cx, cy, yaw, l, w, [color], [label])."""
+    box_groups: list of (boxes, color) — later groups render on top. Each box:
+    dict(cx, cy, yaw, l, w, [label]). bg_xy: optional (N,2) point cloud."""
     import plotly.graph_objects as go
     fig = go.Figure()
-    by_color = defaultdict(lambda: ([], []))
-    mx, my, mtext, mcol = [], [], [], []
-    for b in boxes:
-        col = b.get('color', default_color)
-        l = float(b.get('l') or 4.5)
-        w = float(b.get('w') or 1.9)
-        corners = _box_corners(float(b['cx']), float(b['cy']), float(b.get('yaw', 0.0)), l, w)
-        xs = [p[0] for p in corners] + [None]
-        ys = [p[1] for p in corners] + [None]
-        by_color[col][0].extend(xs)
-        by_color[col][1].extend(ys)
-        mx.append(float(b['cx'])); my.append(float(b['cy']))
-        mtext.append(str(b.get('label', ''))); mcol.append(col)
-    for col, (xs, ys) in by_color.items():
-        fig.add_trace(go.Scatter(x=xs, y=ys, mode='lines',
-                                 line=dict(color=col, width=2),
+    if bg_xy is not None and len(bg_xy):
+        fig.add_trace(go.Scatter(x=bg_xy[:, 0], y=bg_xy[:, 1], mode='markers',
+                                 marker=dict(size=1.5, color='#666'),
                                  showlegend=False, hoverinfo='skip'))
+    mx, my, mtext, mcol = [], [], [], []
+    for boxes, color in box_groups:
+        xs, ys = [], []
+        for b in boxes:
+            l = float(b.get('l') or 4.5)
+            w = float(b.get('w') or 1.9)
+            corners = _box_corners(float(b['cx']), float(b['cy']), float(b.get('yaw', 0.0)), l, w)
+            xs.extend([p[0] for p in corners] + [None])
+            ys.extend([p[1] for p in corners] + [None])
+            mx.append(float(b['cx'])); my.append(float(b['cy']))
+            mtext.append(str(b.get('label', ''))); mcol.append(color)
+        if xs:
+            fig.add_trace(go.Scatter(x=xs, y=ys, mode='lines',
+                                     line=dict(color=color, width=2),
+                                     showlegend=False, hoverinfo='skip'))
     if mx:
         fig.add_trace(go.Scatter(x=mx, y=my, mode='markers+text', text=mtext,
                                  textposition='top center', textfont=dict(size=9),
-                                 marker=dict(size=5, color=mcol), showlegend=False,
+                                 marker=dict(size=4, color=mcol), showlegend=False,
                                  hoverinfo='skip'))
     fig.update_xaxes(range=list(x_range), title='X (m)', constrain='domain')
     fig.update_yaxes(range=list(y_range), title='Y (m)', scaleanchor='x', scaleratio=1)
     fig.update_layout(title=title, height=height, margin=dict(l=0, r=0, t=40, b=0),
-                      plot_bgcolor='#111')
+                      plot_bgcolor='#111', dragmode='pan', uirevision=uirev)
     return fig
+
+
+BEV_CONFIG = {'scrollZoom': True, 'displayModeBar': True,
+              'modeBarButtonsToRemove': ['select2d', 'lasso2d']}
 
 
 def save_report(report, out_dir):
