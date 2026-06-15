@@ -93,8 +93,23 @@ else:
     pcd_files = results['pcd_files']
     orig_files = results.get('original_pcd_files', pcd_files)
     n = len(pcd_files)
-    rb = results.get('research_poly_bounds', (-25, -50, 45, 50))
-    x_range, y_range = (rb[0], rb[2]), (rb[1], rb[3])
+
+    # Default to data-driven bounds (an "auto-fit") so the whole scene is visible
+    # without pressing autoscale; shared by both panels so they stay aligned.
+    gxs, gys = [], []
+    for dets in results['det_frames']:
+        for d in dets:
+            gxs.append(d['cx']); gys.append(d['cy'])
+    for boxes in gt_by_key.values():
+        for b in boxes:
+            gxs.append(b['cx']); gys.append(b['cy'])
+    if gxs:
+        m = 6.0  # margin so edge boxes (and their extent) aren't clipped
+        x_range = (min(gxs) - m, max(gxs) + m)
+        y_range = (min(gys) - m, max(gys) + m)
+    else:
+        rb = results.get('research_poly_bounds', (-25, -50, 45, 50))
+        x_range, y_range = (rb[0], rb[2]), (rb[1], rb[3])
 
     # --- view options ---
     opt = st.columns(4)
