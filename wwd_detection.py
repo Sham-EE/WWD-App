@@ -39,6 +39,8 @@ DEFAULT_PARAMS = {
     "min_speed": 2.0,            # m/s; below this, heading is unreliable
     "min_frames": 5,             # consecutive flagged frames required
     "min_displacement_m": 3.0,   # net travel over the flagged span
+    "exempt_junction": True,     # skip frames inside 2+ overlapping lanes (turns)
+    "min_heading_consistency": 0.85,  # resultant length of flagged headings (turn reject)
 }
 
 
@@ -78,6 +80,21 @@ def lanes_calibrated(lanes) -> bool:
 def angular_diff_deg(a_deg: float, b_deg: float) -> float:
     """Smallest absolute angle between two headings, in [0, 180]."""
     return abs((a_deg - b_deg + 180.0) % 360.0 - 180.0)
+
+
+def _lanes_containing(lanes, x: float, y: float):
+    """All lanes whose box contains the point (2+ => ambiguous junction/overlap)."""
+    pt = np.array([[x, y]], dtype=np.float64)
+    return [lane for lane in lanes if points_in_polygon(lane["polygon"], pt)[0]]
+
+
+def _resultant_length(headings_rad):
+    """Circular concentration R in [0,1]: ~1 = steady heading, low = rotating/turning."""
+    if not headings_rad:
+        return 0.0
+    c = np.cos(headings_rad).mean()
+    s = np.sin(headings_rad).mean()
+    return float(np.hypot(c, s))
 
 
 def _lane_for_point(lanes, x: float, y: float):
@@ -135,6 +152,8 @@ def detect_wrong_way(det_frames, lanes, params=None):
     min_speed = float(p["min_speed"])
     min_frames = int(p["min_frames"])
     min_disp = float(p["min_displacement_m"])
+    exempt_junction = bool(p.get("exempt_junction", True))
+    min_consistency = float(p.get("min_heading_consistency", 0.0))
 
     # Group detections by track id, preserving frame order.
     series = defaultdict(list)
@@ -159,27 +178,34 @@ def detect_wrong_way(det_frames, lanes, params=None):
             speed = float(d.get('speed', 0.0))
             if hdg is None or speed < min_speed:
                 continue
-            lane = _lane_for_point(lanes, d['cx'], d['cy'])
-            if lane is None:
+            here = _lanes_containing(lanes, d['cx'], d['cy'])
+            # In the junction (2+ overlapping lanes) the legal direction is
+            # ambiguous and turns are normal, so don't judge wrong-way there.
+            if not here or (exempt_junction and len(here) >= 2):
                 continue
+            lane = here[0]
             diff = angular_diff_deg(np.degrees(hdg), lane['heading_deg'])
             if diff >= angle_thresh:
                 flagged.append(fi)
-                flagged_meta[fi] = (diff, lane['lane_id'], d)
+                flagged_meta[fi] = (diff, lane['lane_id'], d, float(hdg))
 
         flagged_sorted = sorted(flagged)
         run_len, run_start, run_end = _longest_consecutive_run(flagged_sorted)
 
+        run_frames = set(f for f in flagged_sorted if run_start is not None and run_start <= f <= run_end)
+
         is_ww = False
         disp = 0.0
+        consistency = 0.0
         if run_len >= min_frames and run_start is not None:
             p0 = pos_by_frame.get(run_start)
             p1 = pos_by_frame.get(run_end)
             if p0 is not None and p1 is not None:
                 disp = float(np.hypot(p1[0] - p0[0], p1[1] - p0[1]))
-            is_ww = disp >= min_disp
-
-        run_frames = set(f for f in flagged_sorted if run_start is not None and run_start <= f <= run_end)
+            # A real wrong-way vehicle holds a steady heading against flow; a turn
+            # sweeps through headings, giving a low resultant length.
+            consistency = _resultant_length([flagged_meta[f][3] for f in run_frames])
+            is_ww = (disp >= min_disp) and (consistency >= min_consistency)
         max_angle = max((flagged_meta[f][0] for f in run_frames), default=0.0)
         lane_id = None
         if run_frames:
@@ -199,6 +225,7 @@ def detect_wrong_way(det_frames, lanes, params=None):
             "max_angle_deg": max_angle,
             "run_len": run_len,
             "displacement_m": disp,
+            "heading_consistency": consistency,
             "flagged_frames": run_frames,
             "first_flag_frame": run_start if is_ww else None,
         }

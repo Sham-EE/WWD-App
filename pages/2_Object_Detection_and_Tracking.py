@@ -135,8 +135,20 @@ if st.session_state.detection_results:
         with wc4:
             ww_disp = st.slider("Min displacement (m)", 0.0, 20.0, 3.0, 0.5,
                                 help="Net travel over the flagged span.")
+        wc5, wc6 = st.columns(2)
+        with wc5:
+            ww_exempt = st.checkbox("Exempt junction turns", value=True,
+                                    help="Ignore wrong-way inside the intersection (where lane boxes "
+                                         "overlap and turning is legal). Fixes turning vehicles being "
+                                         "misflagged.")
+        with wc6:
+            ww_consist = st.slider("Min heading steadiness", 0.0, 1.0, 0.85, 0.05,
+                                   help="A real wrong-way vehicle holds a steady heading; a turn sweeps "
+                                        "through headings. Higher = reject turns more aggressively (1.0 = "
+                                        "perfectly steady).")
         ww_params = {"angle_thresh_deg": ww_angle, "min_speed": ww_speed,
-                     "min_frames": ww_frames, "min_displacement_m": ww_disp}
+                     "min_frames": ww_frames, "min_displacement_m": ww_disp,
+                     "exempt_junction": ww_exempt, "min_heading_consistency": ww_consist}
         wwd_result = detect_wrong_way(results['det_frames'], lanes, ww_params)  # annotates det_frames in place
         rows = summarize_wrong_way(wwd_result, fps=results.get('params', {}).get('fps', 10.0))
         n_ww = len(wwd_result['wrong_way_tids'])
