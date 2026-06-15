@@ -117,8 +117,7 @@ with left:
 with right:
     head = st.columns([3, 1.4])
     color_choice = head[0].segmented_control(
-        "Color", ["Cardinal", "Lane", "Heading"], default="Cardinal",
-        label_visibility="collapsed",
+        "Color points by", ["Cardinal", "Lane", "Heading"], default="Cardinal",
         help="How the vehicle dots are colored:\n\n"
              "• Cardinal — by travel direction bucket (E/N/W/S); lane boxes are colored to match.\n\n"
              "• Lane — each dot takes the color of the lane box it falls inside (gray if outside every box). "
