@@ -41,11 +41,16 @@ if src is not None:
         st.error(f"Could not read tracks: {e}")
 
 if top[3].button("✨ Auto-generate", use_container_width=True,
-                 disabled=points is None or len(points) == 0):
+                 disabled=points is None or len(points) == 0,
+                 help="Cluster the moving vehicles into the chosen number of directions and "
+                      "create one starting lane box (with a measured heading) per direction. "
+                      "A rough template you then refine by hand."):
     st.session_state.le_lanes = auto_lanes(points, k=int(k), buffer_m=2.0)
     st.session_state.le_v += 1
     st.rerun()
-if top[4].button("📂 Load saved", use_container_width=True, disabled=not os.path.exists(LANES_PATH)):
+if top[4].button("📂 Load saved", use_container_width=True, disabled=not os.path.exists(LANES_PATH),
+                 help="Load the lanes from the active config/lanes.geojson into the editor so "
+                      "you can view or adjust them."):
     with open(LANES_PATH) as f:
         st.session_state.le_lanes = geojson_to_lanes(json.load(f))
     st.session_state.le_v += 1
@@ -98,8 +103,12 @@ with left:
         st.rerun()
     txt = json.dumps(lanes_to_geojson(lanes), indent=2) if lanes else ""
     dl.download_button("⬇️ Download", data=txt, file_name="lanes.geojson",
-                       mime="application/json", use_container_width=True, disabled=not lanes)
-    if sv.button("💾 Save", use_container_width=True, disabled=not lanes):
+                       mime="application/json", use_container_width=True, disabled=not lanes,
+                       help="Download the current lanes as a lanes.geojson file to your computer. "
+                            "Does NOT change the active config.")
+    if sv.button("💾 Save", use_container_width=True, disabled=not lanes,
+                 help="Overwrite config/lanes.geojson with the current lanes. The Wrong-Way "
+                      "Detection page picks this up on its next run."):
         os.makedirs(os.path.dirname(LANES_PATH), exist_ok=True)
         with open(LANES_PATH, "w") as f:
             f.write(txt)
@@ -109,7 +118,12 @@ with right:
     head = st.columns([3, 1.4])
     color_choice = head[0].segmented_control(
         "Color", ["Cardinal", "Lane", "Heading"], default="Cardinal",
-        label_visibility="collapsed") or "Cardinal"
+        label_visibility="collapsed",
+        help="How the vehicle dots are colored:\n\n"
+             "• Cardinal — by travel direction bucket (E/N/W/S); lane boxes are colored to match.\n\n"
+             "• Lane — each dot takes the color of the lane box it falls inside (gray if outside every box). "
+             "Good for checking which boxes capture which vehicles.\n\n"
+             "• Heading — continuous color by exact heading angle.") or "Cardinal"
     color_mode = {"Cardinal": "cardinal", "Lane": "lane", "Heading": "heading"}[color_choice]
     top_down = head[1].toggle("⬇️ Top-down", value=True,
                               help="On = bird's-eye. Off = oblique 3D.")
