@@ -146,7 +146,39 @@ if st.session_state.detection_results:
             st.error(f"⚠ {n_ww} wrong-way vehicle(s) detected.")
             st.dataframe(rows, use_container_width=True)
 
-    frame_idx = st.slider("Select Frame", 0, len(results['pcd_files']) - 1, 0)
+    # --- View toggles (lane overlay + bird's-eye) ---
+    vc1, vc2 = st.columns(2)
+    if lanes:
+        results['lanes'] = lanes
+        results['show_lanes'] = vc1.checkbox(
+            "🛣️ Show lane directions", value=True,
+            help="Overlay the calibrated lane polygons and their expected travel-direction arrows.")
+    else:
+        results['show_lanes'] = False
+    results['top_down'] = vc2.checkbox(
+        "⬇️ Top-down (bird's-eye) view", value=False,
+        help="Snap the camera straight down to verify lane alignment against the road.")
+
+    # --- Frame playback controls (steps the live viewer; no animation render) ---
+    n_frames = len(results['pcd_files'])
+    if 'odt_frame' not in st.session_state:
+        st.session_state.odt_frame = 0
+    st.session_state.odt_frame = max(0, min(st.session_state.odt_frame, n_frames - 1))
+
+    pc = st.columns([1, 1, 1, 1, 1.4, 3])
+    if pc[0].button("⏮ First", use_container_width=True):
+        st.session_state.odt_frame = 0; st.rerun()
+    if pc[1].button("◀ Prev", use_container_width=True):
+        st.session_state.odt_frame = max(0, st.session_state.odt_frame - 1); st.rerun()
+    if pc[2].button("Next ▶", use_container_width=True):
+        st.session_state.odt_frame = min(n_frames - 1, st.session_state.odt_frame + 1); st.rerun()
+    if pc[3].button("Last ⏭", use_container_width=True):
+        st.session_state.odt_frame = n_frames - 1; st.rerun()
+    playing = pc[4].toggle("▶ Play", value=False, help="Auto-advance frames in the live viewer.")
+    play_delay = pc[5].slider("Play delay (s/frame)", 0.0, 1.0, 0.2, 0.05)
+
+    frame_idx = st.slider("Select Frame", 0, max(n_frames - 1, 1), st.session_state.odt_frame)
+    st.session_state.odt_frame = frame_idx
 
     st.subheader("3D Point Cloud View")
     original_pcd_path = results['original_pcd_files'][frame_idx]
@@ -155,6 +187,13 @@ if st.session_state.detection_results:
     else:
         fig = create_3d_figure(results, frame_idx, original_pcd_path)
         st.plotly_chart(fig, use_container_width=True, height=800)
+
+    # Auto-play: advance one frame and rerun until the end or until paused.
+    if playing and frame_idx < n_frames - 1:
+        import time
+        time.sleep(float(play_delay))
+        st.session_state.odt_frame = frame_idx + 1
+        st.rerun()
 
     # --- Animation Generation Section ---
     st.divider()

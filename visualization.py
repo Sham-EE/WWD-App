@@ -38,12 +38,51 @@ def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_d
             line=dict(color='green', width=4)
         ))
 
+    # 2b. Optional lane-direction overlay (for WWD calibration / sanity check)
+    if results.get('show_lanes') and results.get('lanes'):
+        lane_colors = ['#1f77b4', '#9467bd', '#17becf', '#e377c2', '#bcbd22', '#7f7f7f']
+        z_lane = -7.3
+        for li, lane in enumerate(results['lanes']):
+            poly = lane['polygon']
+            col = lane_colors[li % len(lane_colors)]
+            lx, ly = poly.exterior.xy
+            lx, ly = np.array(lx), np.array(ly)
+            # lane boundary
+            fig.add_trace(go.Scatter3d(
+                x=lx, y=ly, z=np.full_like(lx, z_lane),
+                mode='lines', name=f"Lane: {lane['lane_id']}",
+                line=dict(color=col, width=5)
+            ))
+            # expected-direction arrow from the lane centroid -> tip
+            cxl, cyl = float(poly.centroid.x), float(poly.centroid.y)
+            hd = np.radians(lane['heading_deg'])
+            arrow_len = 9.0
+            tx, ty = cxl + arrow_len * np.cos(hd), cyl + arrow_len * np.sin(hd)
+            # shaft (with the lane label at its base)
+            fig.add_trace(go.Scatter3d(
+                x=[cxl, tx], y=[cyl, ty], z=[z_lane, z_lane],
+                mode='lines+text',
+                text=[f"{lane['lane_id']} ({lane['heading_deg']:.0f}°)", ''],
+                textposition='top center', textfont=dict(size=12, color=col),
+                line=dict(color=col, width=8),
+                showlegend=False, hoverinfo='none'
+            ))
+            # arrowhead: two wings forming a ">" at the tip, pointing along hd
+            wing_len, wing_ang = 2.4, np.radians(28)
+            lwx, lwy = tx - wing_len * np.cos(hd - wing_ang), ty - wing_len * np.sin(hd - wing_ang)
+            rwx, rwy = tx - wing_len * np.cos(hd + wing_ang), ty - wing_len * np.sin(hd + wing_ang)
+            fig.add_trace(go.Scatter3d(
+                x=[lwx, tx, rwx], y=[lwy, ty, rwy], z=[z_lane, z_lane, z_lane],
+                mode='lines', line=dict(color=col, width=8),
+                showlegend=False, hoverinfo='none'
+            ))
+
     # 3. Add Detections
     det_frames = results['det_frames']
     current_dets = det_frames[frame_index_to_render]
     params = results.get('params', {})
     speed_threshold = params.get('moving_speed_thresh', 3.0)
-    
+
     # Split detections into normal vs. wrong-way so the latter stand out.
     norm_x, norm_y, norm_z, norm_text = [], [], [], []
     ww_x, ww_y, ww_z, ww_text = [], [], [], []
@@ -130,12 +169,21 @@ def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_d
         ),
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
     )
-    camera_eye = results.get('camera_eye', {'x': 1.25, 'y': 1.25, 'z': 1.25})
-    layout_dict['scene']['camera'] = {
-        'up': {'x': 0, 'y': 0, 'z': 1},
-        'center': {'x': 0, 'y': 0, 'z': 0},
-        'eye': camera_eye
-    }
+    if results.get('top_down'):
+        # Straight-down bird's-eye: look along -Z with +Y as screen-up so the
+        # view matches the X/Y sensor grid (best for verifying lane alignment).
+        layout_dict['scene']['camera'] = {
+            'up': {'x': 0, 'y': 1, 'z': 0},
+            'center': {'x': 0, 'y': 0, 'z': 0},
+            'eye': {'x': 0, 'y': 0, 'z': 2.5}
+        }
+    else:
+        camera_eye = results.get('camera_eye', {'x': 1.25, 'y': 1.25, 'z': 1.25})
+        layout_dict['scene']['camera'] = {
+            'up': {'x': 0, 'y': 0, 'z': 1},
+            'center': {'x': 0, 'y': 0, 'z': 0},
+            'eye': camera_eye
+        }
     fig.update_layout(**layout_dict)
     return fig
 

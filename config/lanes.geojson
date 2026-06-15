@@ -1,44 +1,77 @@
 {
   "type": "FeatureCollection",
-  "_comment": "Lane direction ground truth for wrong-way detection. Each feature is a polygon region of the road, with the EXPECTED direction of legal travel for vehicles inside it. 'heading_deg' uses the math convention computed by atan2(vy, vx) in the sensor frame: 0=+X, 90=+Y, 180/-180=-X, -90=-Y. A vehicle whose velocity heading points more than 'angle_thresh_deg' (a runtime parameter) away from the lane heading is flagged as wrong-way. IMPORTANT: every feature below currently has \"calibrated\": false and PLACEHOLDER headings copied from a rough guess of road orientation. They MUST be measured from the real data before the WWD numbers are trustworthy (see README, section 'Calibrating lane geometry').",
+  "_comment": "Calibrated lane directions for wrong-way detection. heading_deg is the expected legal direction of travel (math convention, atan2(vy,vx): 0=+X, 90=+Y, 180/-180=-X, -90=-Y), derived from observed right-way traffic. Lanes overlap in the intersection interior; matching is positional first-match in file order (horizontal lanes first), which avoids false flags from cross traffic at the 120-degree threshold.",
   "features": [
     {
       "type": "Feature",
       "properties": {
-        "lane_id": "main_road_eastbound_guess",
-        "name": "Main carriageway (roughly along X axis)",
-        "heading_deg": 0.0,
-        "calibrated": false
+        "lane_id": "eastbound",
+        "heading_deg": 4.9,
+        "calibrated": true
       },
       "geometry": {
         "type": "Polygon",
-        "coordinates": [[[-25.0, -20.0], [-25.0, 10.0], [45.0, 20.0], [45.0, -15.0], [-25.0, -20.0]]]
+        "coordinates": [[
+          [-20, -22],
+          [42, -22],
+          [42, -4],
+          [-20, -4],
+          [-20, -22]
+        ]]
       }
     },
     {
       "type": "Feature",
       "properties": {
-        "lane_id": "north_ramp_guess",
-        "name": "Northern ramp / cross road",
-        "heading_deg": 90.0,
-        "calibrated": false
+        "lane_id": "westbound",
+        "heading_deg": -170.4,
+        "calibrated": true
       },
       "geometry": {
         "type": "Polygon",
-        "coordinates": [[[0.0, 0.0], [10.0, 50.0], [35.0, 50.0], [25.0, 0.0], [0.0, 0.0]]]
+        "coordinates": [[
+          [-20, -4],
+          [42, -4],
+          [42, 37],
+          [-20, 37],
+          [-20, -4]
+        ]]
       }
     },
     {
       "type": "Feature",
       "properties": {
-        "lane_id": "south_ramp_guess",
-        "name": "Southern ramp / cross road",
-        "heading_deg": -90.0,
-        "calibrated": false
+        "lane_id": "northbound",
+        "heading_deg": 78.9,
+        "calibrated": true
       },
       "geometry": {
         "type": "Polygon",
-        "coordinates": [[[0.0, 0.0], [30.0, 0.0], [40.0, -50.0], [10.0, -50.0], [0.0, 0.0]]]
+        "coordinates": [[
+          [19, -32],
+          [30, -32],
+          [30, 42],
+          [19, 42],
+          [19, -32]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "lane_id": "southbound",
+        "heading_deg": -87.7,
+        "calibrated": true
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [8, -32],
+          [19, -32],
+          [19, 42],
+          [8, 42],
+          [8, -32]
+        ]]
       }
     }
   ]

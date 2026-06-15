@@ -22,7 +22,7 @@ st.markdown(
     """
 )
 
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("Background Filtering")
@@ -36,11 +36,19 @@ with col2:
     if st.button("Go to Object Detection and Tracking", use_container_width=True):
         st.switch_page("pages/2_Object_Detection_and_Tracking.py")
 
+col3, col4 = st.columns(2)
+
 with col3:
     st.subheader("Evaluation")
     st.write("Score detection/tracking against ground truth (P/R/F1, MOTA).")
     if st.button("Go to Evaluation", use_container_width=True):
         st.switch_page("pages/3_Evaluation.py")
+
+with col4:
+    st.subheader("Lane Editor")
+    st.write("Build/adjust wrong-way lane geometry from tracks.csv and export it.")
+    if st.button("Go to Lane Editor", use_container_width=True):
+        st.switch_page("pages/4_Lane_Editor.py")
 
 
 
