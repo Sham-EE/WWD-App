@@ -36,6 +36,15 @@ def cardinal_color(heading_rad):
     return CARDINAL_BINS[cardinal_index(heading_rad)][1]
 
 
+def object_marker_color(d, speed_threshold, default='red'):
+    """Cardinal color when the object is moving with a defined heading; otherwise
+    `default` (red) for stationary / undefined-direction objects."""
+    hdg = d.get('heading', None)
+    if hdg is not None and d.get('speed', 0.0) >= speed_threshold:
+        return cardinal_color(hdg)
+    return default
+
+
 def _arrow_segments(cx, cy, hdg, z, length=4.0, head=1.6, head_ang=np.radians(30)):
     """Return (xs, ys, zs) for a shaft + arrowhead 'V', with None separators so a
     whole set of arrows can live in one Scatter3d trace."""
@@ -122,8 +131,9 @@ def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_d
     params = results.get('params', {})
     speed_threshold = params.get('moving_speed_thresh', 3.0)
 
-    # Split detections into normal vs. wrong-way so the latter stand out.
-    norm_x, norm_y, norm_z, norm_text = [], [], [], []
+    # Split detections into normal vs. wrong-way so the latter stand out. Normal
+    # markers are colored by cardinal direction when moving, else red.
+    norm_x, norm_y, norm_z, norm_text, norm_color = [], [], [], [], []
     ww_x, ww_y, ww_z, ww_text = [], [], [], []
     for d in current_dets:
         speed = d.get('speed', 0.0)
@@ -134,12 +144,13 @@ def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_d
         else:
             norm_x.append(d['cx']); norm_y.append(d['cy']); norm_z.append(-6.5)
             norm_text.append(label)
+            norm_color.append(object_marker_color(d, speed_threshold))
 
     fig.add_trace(go.Scatter3d(
         x=norm_x, y=norm_y, z=norm_z,
         mode='markers+text',
         name='Objects',
-        marker=dict(size=8, color='red', symbol='circle'),
+        marker=dict(size=8, color=norm_color or 'red', symbol='circle'),
         text=norm_text,
         textposition='top center',
         textfont=dict(size=10, color='black'),
@@ -304,7 +315,8 @@ def generate_tracking_animation(results, output_gif_path, progress_callback=None
                     ax.scatter([d['cx']], [d['cy']], [-6.5], s=90, c='orange',
                                marker='D', edgecolors='black', linewidths=1.0, alpha=0.95)
                 else:
-                    ax.scatter([d['cx']], [d['cy']], [-6.5], s=30, c='red', edgecolors='none', alpha=0.9)
+                    mcol = object_marker_color(d, speed_threshold)
+                    ax.scatter([d['cx']], [d['cy']], [-6.5], s=30, c=mcol, edgecolors='none', alpha=0.9)
                 speed = d.get('speed', 0.0)
                 base = f"ID:{d['tid']}\n{speed:.1f}m/s" if speed >= speed_threshold else f"ID:{d['tid']}"
                 label = ("WRONG WAY\n" + base) if is_ww else base
