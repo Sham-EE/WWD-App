@@ -96,7 +96,7 @@ def _match_frame(pred, gt, match_dist):
     return matches, n_fp, n_fn, dist_sum
 
 
-def evaluate(det_frames, pred_frame_paths, gt_dir, match_dist=2.0):
+def evaluate(det_frames, pred_frame_paths, gt_dir, match_dist=2.0, classes=None, roi_bounds=None):
     """Evaluate detection + tracking against GT.
 
     Parameters
@@ -105,11 +105,29 @@ def evaluate(det_frames, pred_frame_paths, gt_dir, match_dist=2.0):
     pred_frame_paths : list[str]    pcd path per detection frame (for alignment)
     gt_dir : str                    directory of OpenLABEL .json files
     match_dist : float              BEV centre gate (m)
+    classes : set[str] | None       if given, only score GT of these classes
+                                     (upper-case, e.g. {'CAR','TRUCK','VAN','BUS'})
 
     Returns a report dict.
     """
+    cls_filter = {c.upper() for c in classes} if classes else None
+
+    def _in_roi(b):
+        if roi_bounds is None:
+            return True
+        x0, x1, y0, y1 = roi_bounds
+        return (x0 <= b['cx'] <= x1) and (y0 <= b['cy'] <= y1)
+
+    def _keep(b):
+        return (cls_filter is None or str(b['cls']).upper() in cls_filter) and _in_roi(b)
+
     gt_files = sorted(glob.glob(os.path.join(gt_dir, '*.json')))
-    gt_by_key = {_frame_key(f): parse_gt_frame(f) for f in gt_files}
+    gt_by_key = {_frame_key(f): [b for b in parse_gt_frame(f) if _keep(b)] for f in gt_files}
+    # Filter predictions to the same ROI so the comparison is apples-to-apples.
+    if roi_bounds is not None:
+        x0, x1, y0, y1 = roi_bounds
+        det_frames = [[d for d in dets if x0 <= d['cx'] <= x1 and y0 <= d['cy'] <= y1]
+                      for dets in det_frames]
 
     total_tp = total_fp = total_fn = total_idsw = 0
     total_gt = 0

@@ -85,22 +85,24 @@ def extract_candidates(points_xyz: np.ndarray, bounds, eps: float):
 
 # ---------------------- Temporal logic -------------------------------------
 
-def gate_radius(cx, cy, gap=1):
-    # Scaled by the frame gap so a fast vehicle (which moves several metres per
-    # frame) still matches its own candidate in neighbouring frames. The old
-    # fixed ~1.1 m gate rejected fast trucks/cars during temporal confirmation.
-    return (1.5 + 0.05 * np.hypot(cx, cy)) * gap
+def gate_radius(cx, cy):
+    return 0.8 + 0.02 * np.hypot(cx, cy)
 
-def _similar(c1, c2, gap=1):
-    return np.hypot(c1['cx']-c2['cx'], c1['cy']-c2['cy']) <= gate_radius(c1['cx'], c1['cy'], gap)
+def _similar(c1, c2):
+    return np.hypot(c1['cx']-c2['cx'], c1['cy']-c2['cy']) <= gate_radius(c1['cx'], c1['cy'])
 
-def accept_with_temporal(cand, neighs, min_hits=2, min_pts=3):
-    """neighs: list of (frame_gap, candidate) so the gate can scale with gap."""
+def accept_with_temporal(cand, neighs, min_hits=2, min_pts=3, strong_pts=200):
+    # Large dense clusters (e.g. a 900-point truck) are unambiguously real, so
+    # accept them without temporal confirmation. This catches fast vehicles
+    # (whose per-frame motion exceeds the tight gate) without widening the gate
+    # for everything, which would let noise confirm itself and hurt precision.
     if cand['n'] < min_pts:
         return False
+    if strong_pts and cand['n'] >= strong_pts:
+        return True
     hits = 1
-    for gap, n in neighs:
-        if _similar(cand, n, gap):
+    for n in neighs:
+        if _similar(cand, n):
             hits += 1
             if hits >= min_hits:
                 return True
@@ -218,11 +220,11 @@ def run_detection_and_tracking(pcd_dir, out_dir, params, progress_callback=None)
         neighs = []
         for dti in (-2, -1, 1, 2):
             j = i + dti
-            if 0 <= j < len(cand_frames):
-                neighs.extend((abs(dti), c) for c in cand_frames[j])
+            if 0 <= j < len(cand_frames): neighs.extend(cand_frames[j])
         dets = []
         for c in cand_frames[i]:
-            if accept_with_temporal(c, neighs, min_hits=args.min_hits, min_pts=args.min_cluster_pts):
+            if accept_with_temporal(c, neighs, min_hits=args.min_hits, min_pts=args.min_cluster_pts,
+                                     strong_pts=getattr(args, 'strong_pts', 200)):
                 dets.append(dict(cls='Car', cx=c['cx'], cy=c['cy'], l=float(c.get('l',0)), w=float(c.get('w',0)), yaw=c['yaw']+yaw_bias, score=c['n']))
         raw_det_frames.append(dets)
 

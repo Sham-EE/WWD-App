@@ -46,15 +46,27 @@ gt_dir = st.text_input(
     "Ground-truth directory (OpenLABEL .json files)",
     value="data/labels_point_clouds/a9_gt_visible_only_south",
 )
-match_dist = st.slider("BEV match distance gate (m)", 0.5, 5.0, 2.0, 0.5,
-                       help="Max centre distance for a prediction to count as a true positive.")
+ec1, ec2, ec3 = st.columns(3)
+match_dist = ec1.slider("BEV match distance gate (m)", 0.5, 5.0, 2.0, 0.5,
+                        help="Max centre distance for a prediction to count as a true positive.")
+veh_only = ec2.checkbox("Vehicles only", value=False,
+                        help="Score only CAR/TRUCK/VAN/BUS/TRAILER/MOTORCYCLE (exclude pedestrians & bicycles).")
+roi_only = ec3.checkbox("Restrict to processed region (ROI)", value=True,
+                        help="Only score GT inside the area the detector actually processes "
+                             "(research polygon ∩ |y|≤ROI). Objects outside the sensor's operational "
+                             "region aren't counted as misses — this is the fair number.")
 output_dir = "outputs/object_detection"
 
 if st.button("📐 Run Evaluation", use_container_width=True, type="primary"):
     if not os.path.isdir(gt_dir):
         st.error(f"GT directory not found: {gt_dir}")
     else:
-        report = evaluate(results['det_frames'], results['pcd_files'], gt_dir, match_dist=match_dist)
+        classes = {'CAR', 'TRUCK', 'VAN', 'BUS', 'TRAILER', 'MOTORCYCLE'} if veh_only else None
+        rb = results.get('research_poly_bounds', (-25, -50, 45, 50))
+        roi_y = float(results.get('params', {}).get('roi_abs_y', 40.0))
+        roi_bounds = (rb[0], rb[2], -roi_y, roi_y) if roi_only else None
+        report = evaluate(results['det_frames'], results['pcd_files'], gt_dir,
+                          match_dist=match_dist, classes=classes, roi_bounds=roi_bounds)
         s = report['summary']
         if s['evaluated_frames'] == 0:
             st.warning("No detection frames aligned to GT files. Check that .pcd and .json "
