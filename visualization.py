@@ -5,9 +5,48 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.lines import Line2D
 import imageio
 import open3d as o3d
 from detection_logic import load_points_from_pcd
+
+# Cardinal direction colour encoding (sensor frame, atan2(vy,vx)).
+# Matches the Lane Editor scheme: E=+X red, N=+Y green, W=-X blue, S=-Y orange.
+CARDINAL_BINS = [
+    ("→ E (+X)", '#d62728'),
+    ("→ N (+Y)", '#2ca02c'),
+    ("→ W (-X)", '#1f77b4'),
+    ("→ S (-Y)", '#ff7f0e'),
+]
+
+
+def cardinal_index(heading_rad):
+    """0=E, 1=N, 2=W, 3=S for a heading in radians."""
+    deg = (np.degrees(heading_rad) + 180.0) % 360.0 - 180.0
+    if -45 <= deg < 45:
+        return 0
+    if 45 <= deg < 135:
+        return 1
+    if deg >= 135 or deg < -135:
+        return 2
+    return 3
+
+
+def cardinal_color(heading_rad):
+    return CARDINAL_BINS[cardinal_index(heading_rad)][1]
+
+
+def _arrow_segments(cx, cy, hdg, z, length=4.0, head=1.6, head_ang=np.radians(30)):
+    """Return (xs, ys, zs) for a shaft + arrowhead 'V', with None separators so a
+    whole set of arrows can live in one Scatter3d trace."""
+    tx, ty = cx + length * np.cos(hdg), cy + length * np.sin(hdg)
+    lwx, lwy = tx - head * np.cos(hdg - head_ang), ty - head * np.sin(hdg - head_ang)
+    rwx, rwy = tx - head * np.cos(hdg + head_ang), ty - head * np.sin(hdg + head_ang)
+    xs = [cx, tx, None, lwx, tx, rwx, None]
+    ys = [cy, ty, None, lwy, ty, rwy, None]
+    zs = [z, z, None, z, z, z, None]
+    return xs, ys, zs
+
 
 def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_dict=None):
     """
@@ -120,21 +159,28 @@ def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_d
             hoverinfo='none'
         ))
 
-    # Heading arrows for moving objects (shows true direction of travel).
+    # Heading arrows for moving objects, color-encoded by cardinal direction and
+    # drawn with an arrowhead. Grouped into one trace per direction so the legend
+    # shows the colour->direction key.
+    bins_xyz = {i: ([], [], []) for i in range(len(CARDINAL_BINS))}
     for d in current_dets:
         if d.get('speed', 0.0) < speed_threshold:
             continue
         hdg = d.get('heading', None)
         if hdg is None:
             continue
-        L = 4.0
-        ax_end, ay_end = d['cx'] + L * np.cos(hdg), d['cy'] + L * np.sin(hdg)
+        ci = cardinal_index(hdg)
+        xs, ys, zs = _arrow_segments(d['cx'], d['cy'], hdg, -6.5)
+        bins_xyz[ci][0].extend(xs)
+        bins_xyz[ci][1].extend(ys)
+        bins_xyz[ci][2].extend(zs)
+    for ci, (name, color) in enumerate(CARDINAL_BINS):
+        xs, ys, zs = bins_xyz[ci]
+        if not xs:
+            continue
         fig.add_trace(go.Scatter3d(
-            x=[d['cx'], ax_end], y=[d['cy'], ay_end], z=[-6.5, -6.5],
-            mode='lines',
-            line=dict(color='orange' if d.get('wrong_way') else 'cyan', width=5),
-            showlegend=False, hoverinfo='none'
-        ))
+            x=xs, y=ys, z=zs, mode='lines', name=name,
+            line=dict(color=color, width=6), connectgaps=False, hoverinfo='none'))
 
     # 4. Add Trajectories
     moving_tids = {d['tid'] for d in current_dets if d.get('moving', False)}
@@ -265,13 +311,22 @@ def generate_tracking_animation(results, output_gif_path, progress_callback=None
                 ax.text(d['cx'], d['cy'], -5.5, label, fontsize=7, fontweight='bold' if is_ww else 'normal',
                         color='darkorange' if is_ww else 'black', ha='center')
 
-                # Heading arrow (true travel direction) for moving objects.
+                # Heading arrow (true travel direction), color-encoded by cardinal
+                # direction with an arrowhead.
                 hdg = d.get('heading', None)
                 if speed >= speed_threshold and hdg is not None:
-                    L = 4.0
-                    ax.plot([d['cx'], d['cx'] + L * np.cos(hdg)],
-                            [d['cy'], d['cy'] + L * np.sin(hdg)],
-                            [-6.5, -6.5], color='orange' if is_ww else 'cyan', linewidth=2.0, alpha=0.9)
+                    col = cardinal_color(hdg)
+                    xs, ys, zs = _arrow_segments(d['cx'], d['cy'], hdg, -6.5)
+                    seg_x, seg_y, seg_z = [], [], []
+                    for px, py, pz in zip(xs, ys, zs):
+                        if px is None:
+                            if seg_x:
+                                ax.plot(seg_x, seg_y, seg_z, color=col, linewidth=2.0, alpha=0.95)
+                            seg_x, seg_y, seg_z = [], [], []
+                        else:
+                            seg_x.append(px); seg_y.append(py); seg_z.append(pz)
+                    if seg_x:
+                        ax.plot(seg_x, seg_y, seg_z, color=col, linewidth=2.0, alpha=0.95)
 
                 if d.get('moving', False):
                     tid = d['tid']
@@ -301,6 +356,11 @@ def generate_tracking_animation(results, output_gif_path, progress_callback=None
             ax.set_ylabel('Y (m)', fontsize=8, labelpad=-10)
             ax.set_zlabel('Z (m)', fontsize=8, labelpad=-10)
             ax.set_title(f"Frame {i}", color='black', fontsize=10, y=0.95)
+
+            # Cardinal-direction colour key for the heading arrows.
+            handles = [Line2D([0], [0], color=c, lw=2, label=n) for n, c in CARDINAL_BINS]
+            ax.legend(handles=handles, loc='upper right', fontsize=7, framealpha=0.6,
+                      title='Heading', title_fontsize=7)
             
             fig.canvas.draw()
             rgba = np.asarray(fig.canvas.buffer_rgba())
