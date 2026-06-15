@@ -30,11 +30,17 @@ def _frame_key(path: str) -> str:
     return '_'.join(toks[:2]) if len(toks) >= 2 else os.path.splitext(base)[0]
 
 
+def _quat_yaw(qx, qy, qz, qw):
+    """Yaw (rotation about Z) from a quaternion."""
+    return float(np.arctan2(2.0 * (qw * qz + qx * qy),
+                            1.0 - 2.0 * (qy * qy + qz * qz)))
+
+
 def parse_gt_frame(json_path: str):
     """Return GT boxes for a single OpenLABEL frame.
 
-    Each box: dict(gid, cls, cx, cy, l, w). gid is the persistent GT object id
-    (used for ID-switch counting)."""
+    Each box: dict(gid, cls, cx, cy, l, w, yaw). gid is the persistent GT object
+    id (used for ID-switch counting). val = [cx,cy,cz, qx,qy,qz,qw, l,w,h]."""
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -51,10 +57,19 @@ def parse_gt_frame(json_path: str):
             if isinstance(val, list) and len(val) >= 10:
                 boxes.append(dict(gid=gid, cls=cls,
                                   cx=float(val[0]), cy=float(val[1]),
+                                  yaw=_quat_yaw(val[3], val[4], val[5], val[6]),
                                   l=float(val[7]), w=float(val[8])))
     except Exception:
         pass
     return boxes
+
+
+def load_gt_by_key(gt_dir: str):
+    """Map each GT frame's timestamp key -> list of GT boxes (for visual eval)."""
+    out = {}
+    for f in sorted(glob.glob(os.path.join(gt_dir, '*.json'))):
+        out[_frame_key(f)] = parse_gt_frame(f)
+    return out
 
 
 def _match_frame(pred, gt, match_dist):
@@ -155,6 +170,50 @@ def evaluate(det_frames, pred_frame_paths, gt_dir, match_dist=2.0):
         "per_frame": per_frame,
         "gt_frames_available": len(gt_files),
     }
+
+
+def _box_corners(cx, cy, yaw, l, w):
+    c, s = np.cos(yaw), np.sin(yaw)
+    dx, dy = l / 2.0, w / 2.0
+    loc = [(dx, dy), (dx, -dy), (-dx, -dy), (-dx, dy), (dx, dy)]
+    return [(cx + x * c - y * s, cy + x * s + y * c) for x, y in loc]
+
+
+def bev_figure(boxes, title, x_range, y_range, default_color='#1f77b4', height=620):
+    """Top-down (bird's-eye) plot of oriented boxes, in the sensor X/Y frame.
+    Both the GT and detection figures use identical axes/ranges so the LiDAR
+    blind spot and every object line up for side-by-side comparison.
+
+    Each box: dict(cx, cy, yaw, l, w, [color], [label])."""
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    by_color = defaultdict(lambda: ([], []))
+    mx, my, mtext, mcol = [], [], [], []
+    for b in boxes:
+        col = b.get('color', default_color)
+        l = float(b.get('l') or 4.5)
+        w = float(b.get('w') or 1.9)
+        corners = _box_corners(float(b['cx']), float(b['cy']), float(b.get('yaw', 0.0)), l, w)
+        xs = [p[0] for p in corners] + [None]
+        ys = [p[1] for p in corners] + [None]
+        by_color[col][0].extend(xs)
+        by_color[col][1].extend(ys)
+        mx.append(float(b['cx'])); my.append(float(b['cy']))
+        mtext.append(str(b.get('label', ''))); mcol.append(col)
+    for col, (xs, ys) in by_color.items():
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode='lines',
+                                 line=dict(color=col, width=2),
+                                 showlegend=False, hoverinfo='skip'))
+    if mx:
+        fig.add_trace(go.Scatter(x=mx, y=my, mode='markers+text', text=mtext,
+                                 textposition='top center', textfont=dict(size=9),
+                                 marker=dict(size=5, color=mcol), showlegend=False,
+                                 hoverinfo='skip'))
+    fig.update_xaxes(range=list(x_range), title='X (m)', constrain='domain')
+    fig.update_yaxes(range=list(y_range), title='Y (m)', scaleanchor='x', scaleratio=1)
+    fig.update_layout(title=title, height=height, margin=dict(l=0, r=0, t=40, b=0),
+                      plot_bgcolor='#111')
+    return fig
 
 
 def save_report(report, out_dir):
