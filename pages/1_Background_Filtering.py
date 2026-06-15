@@ -93,6 +93,10 @@ config.update({
     'pole_max_xy_area': side.number_input('Max XY Area', value=1.0),
     'pole_min_linearity': side.number_input('Min Linearity', value=0.75),
     'pole_min_points': side.number_input('Min Points', value=8),
+    'pole_max_points': side.number_input('Max Points (pole)', value=80,
+        help="A tall, small-footprint cluster is only treated as a pole if it has at most this many "
+             "points. Dense objects (trucks/vans) exceed it and are kept. Raise to delete more; "
+             "lower to protect more vehicles."),
 })
 
 side.header("Misc Filters")

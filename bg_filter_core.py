@@ -165,10 +165,14 @@ def geometry_filter_pole(points_xyz, params, z_ceiling=None):
         if inds.size < max(3, params['pole_min_points']):
             continue
         m = cluster_shape_metrics(points_xyz[inds])
+        # Poles are sparse; vehicles are dense. A small XY footprint only counts
+        # as pole-like when the cluster is also sparse, so a tall but compact
+        # truck/van (many points) is no longer mistaken for a pole and deleted.
+        pole_max_points = params.get('pole_max_points', 80)
         pole_like = (m['H'] >= params['pole_min_height']) and \
                     ((m['aspect_xy'] >= params['pole_min_aspect_xy']) or \
-                     (m['area_xy'] <= params['pole_max_xy_area']) or \
-                     (m['L'] >= params['pole_min_linearity']))
+                     (m['L'] >= params['pole_min_linearity']) or \
+                     (m['area_xy'] <= params['pole_max_xy_area'] and inds.size <= pole_max_points))
         if not pole_like and z_ceiling is not None:
             pole_like |= (m['H'] >= max(0.0, z_ceiling - points_xyz[inds, 2].min()) - 0.3) and \
                          (m['aspect_xy'] >= params['pole_min_aspect_xy'])
