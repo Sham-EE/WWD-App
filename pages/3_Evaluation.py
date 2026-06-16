@@ -104,11 +104,31 @@ if st.button("📐 Run Evaluation", use_container_width=True, type="primary"):
             st.caption(f"TP={s['TP']}  FP={s['FP']}  FN={s['FN']}  GT objects={s['gt_objects_total']}  "
                        f"(match gate = {s['match_dist_m']} m)")
 
+            # Record the exact settings that produced this result, plus the
+            # detection parameters from the last run, so a number is never ambiguous.
+            import datetime
+            report['config']['evaluated_at'] = datetime.datetime.now().isoformat(timespec='seconds')
+            report['config']['detection_params'] = results.get('params', {})
+
+            st.markdown("**⚙️ Settings used** (saved with the report):")
+            cfg = report['config']
+            roi_txt = (f"x[{cfg['roi_bounds'][0]:.0f}, {cfg['roi_bounds'][1]:.0f}] · "
+                       f"|y|≤{abs(cfg['roi_bounds'][2]):.0f}" if cfg['roi_bounds'] else "off (full area)")
+            st.caption(
+                f"Match gate: **{cfg['match_dist_m']} m**  ·  Scored classes: **{cfg['scored_classes']}**  ·  "
+                f"ROI: **{roi_txt}**  ·  Ignored (don't-care) GT present: **{cfg['ignore_classes_present']}**  ·  "
+                f"Run at {cfg['evaluated_at']}")
+            with st.expander("🔧 Full settings (readable JSON)"):
+                st.json(report['config'])
+
             with st.expander("Per-frame breakdown"):
                 st.dataframe(report['per_frame'], use_container_width=True)
 
             json_path, csv_path = save_report(report, output_dir)
             st.info(f"Saved report to `{json_path}` and `{csv_path}`.")
+            with st.expander("📄 Full report summary (readable JSON)"):
+                st.json(report['summary'])
+                st.caption("Full report (incl. per-frame rows + settings) saved at the path above.")
 
 # ---------------- Visual evaluation: GT vs Detection, side-by-side top-down ----------------
 st.divider()

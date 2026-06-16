@@ -210,6 +210,13 @@ def evaluate(det_frames, pred_frame_paths, gt_dir, match_dist=2.0, classes=None,
             "MOTP_m": round(motp, 4),
             "match_dist_m": match_dist,
         },
+        "config": {
+            "match_dist_m": match_dist,
+            "scored_classes": sorted(cls_filter) if cls_filter else "all",
+            "ignore_classes_present": bool(ignore_by_key),
+            "roi_bounds": list(roi_bounds) if roi_bounds else None,
+            "gt_dir": gt_dir,
+        },
         "per_frame": per_frame,
         "gt_frames_available": len(gt_files),
     }

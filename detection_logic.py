@@ -45,7 +45,31 @@ def align_yaw_to_ref(yaw, ref):
 
 # ---------------------- Candidate extraction -------------------------------
 
-def extract_candidates(points_xyz: np.ndarray, bounds, eps: float):
+def _adaptive_eps_labels(xy, adaptive):
+    """Connected-components clustering with a per-point eps that grows with range
+    (eps = clip(eps0 + eps_k*range, eps_min, eps_max)). Equivalent to DBSCAN with
+    min_samples=1 but with a distance-dependent neighbourhood."""
+    from sklearn.neighbors import NearestNeighbors
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import connected_components
+    n = xy.shape[0]
+    if n == 0:
+        return np.empty((0,), dtype=int)
+    eps0, eps_k = adaptive['eps0'], adaptive['eps_k']
+    eps_min, eps_max = adaptive['eps_min'], adaptive['eps_max']
+    r = np.hypot(xy[:, 0], xy[:, 1])
+    eps_i = np.clip(eps0 + eps_k * r, eps_min, eps_max).astype(np.float64)
+    nn = NearestNeighbors(radius=float(eps_i.max()))
+    nn.fit(xy)
+    g = nn.radius_neighbors_graph(xy, mode='distance').tocoo()
+    # Keep an edge only if the distance is within BOTH endpoints' eps.
+    keep = g.data <= np.minimum(eps_i[g.row], eps_i[g.col])
+    g2 = csr_matrix((g.data[keep], (g.row[keep], g.col[keep])), shape=(n, n))
+    _, labels = connected_components(g2, directed=False)
+    return labels
+
+
+def extract_candidates(points_xyz: np.ndarray, bounds, eps: float, adaptive=None):
     if points_xyz.shape[0] == 0:
         return []
     rminx, rminy, rmaxx, rmaxy = bounds
@@ -58,7 +82,13 @@ def extract_candidates(points_xyz: np.ndarray, bounds, eps: float):
     pts = points_xyz[mask]
     if pts.shape[0] == 0:
         return []
-    labels = DBSCAN(eps=eps, min_samples=1).fit(pts[:,:2]).labels_
+    if adaptive is None:
+        labels = DBSCAN(eps=eps, min_samples=1).fit(pts[:,:2]).labels_
+    else:
+        # Range-adaptive clustering: each point gets eps = eps0 + eps_k*range,
+        # so dense near objects use a small eps (kept separate) while sparse far
+        # objects use a larger eps (their scattered points still join one cluster).
+        labels = _adaptive_eps_labels(pts[:, :2], adaptive)
     cands = []
     for lbl in set(labels) - {-1}:
         m = labels == lbl
@@ -128,12 +158,21 @@ def run_detection_and_tracking(pcd_dir, out_dir, params, progress_callback=None)
     road_poly = get_road_polygon()
     yaw_bias = np.deg2rad(args.yaw_bias_deg)
 
+    # Optional range-adaptive eps for candidate clustering.
+    adaptive = None
+    if getattr(args, 'adaptive_eps', False):
+        adaptive = dict(eps0=float(getattr(args, 'aeps0', 0.8)),
+                        eps_k=float(getattr(args, 'aeps_k', 0.04)),
+                        eps_min=float(getattr(args, 'aeps_min', 1.0)),
+                        eps_max=float(getattr(args, 'aeps_max', 3.0)))
+
     cand_frames = []
     for idx, p in enumerate(pcd_files):
         pts = load_points_from_pcd(p)
         if pts.size > 0 and args.roi_abs_y is not None:
             pts = pts[np.abs(pts[:, 1]) <= float(args.roi_abs_y)]
-        cand_frames.append(extract_candidates(pts, (rminx, rminy, rmaxx, rmaxy), eps=args.dbscan_eps))
+        cand_frames.append(extract_candidates(pts, (rminx, rminy, rmaxx, rmaxy),
+                                              eps=args.dbscan_eps, adaptive=adaptive))
         if progress_callback:
             progress_callback(idx + 1, len(pcd_files), "Extracting candidates")
 
