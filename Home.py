@@ -50,5 +50,13 @@ with col4:
     if st.button("Go to Lane Editor", use_container_width=True):
         st.switch_page("pages/4_Lane_Editor.py")
 
+col5, _ = st.columns(2)
+
+with col5:
+    st.subheader("🚨 WWD Simulator")
+    st.write("Spawn a synthetic wrong-way driver, watch the detector flag it, fire the alert.")
+    if st.button("Go to WWD Simulator", use_container_width=True):
+        st.switch_page("pages/5_WWD_Simulator.py")
+
 
 
