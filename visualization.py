@@ -13,10 +13,10 @@ from detection_logic import load_points_from_pcd
 # Cardinal direction colour encoding (sensor frame, atan2(vy,vx)).
 # Matches the Lane Editor scheme: E=+X red, N=+Y green, W=-X blue, S=-Y orange.
 CARDINAL_BINS = [
-    ("→ E (+X)", '#d62728'),
-    ("→ N (+Y)", '#2ca02c'),
-    ("→ W (-X)", '#1f77b4'),
-    ("→ S (-Y)", '#ff7f0e'),
+    ("→ E (+X)", "#1f77b4"),
+    ("→ N (+Y)", '#17becf'),
+    ("→ W (-X)", '#9467bd'),
+    ("→ S (-Y)", '#e377c2'),
 ]
 
 

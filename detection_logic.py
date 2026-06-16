@@ -324,11 +324,21 @@ def run_detection_and_tracking(pcd_dir, out_dir, params, progress_callback=None)
                             keep.missed=min(int(keep.missed),int(drop.missed))
                             if drop.cls=='Truck': keep.cls='Truck'
                             tracks.remove(drop); merged=True; break
+        # Optional vehicle gate: a track is a "vehicle" if it is long enough OR
+        # dense enough; small + sparse clusters (pedestrians / bicycles) are not.
+        # is_vehicle is always recorded so non-vehicles can be used later; the
+        # gate only DROPS them from the output when explicitly enabled.
+        veh_gate = bool(getattr(args, 'vehicle_gate', False))
+        veh_min_len = float(getattr(args, 'vehicle_min_length', 2.5))
+        veh_min_pts = float(getattr(args, 'vehicle_min_points', 40))
         for t in tracks:
             hit = (t.missed == 0)
             # Call is_moving exactly once per frame: it mutates moving_history,
             # so the previous two-call version double-counted every frame.
             moving = t.is_moving(args.moving_speed_thresh, window=10)
+            is_vehicle = (t.length >= veh_min_len) or (float(t.score) >= veh_min_pts)
+            if veh_gate and not is_vehicle:
+                continue  # gate on: suppress small/sparse (non-vehicle) detections
             # Classification by size only; a stopped truck is still a truck.
             final_cls = 'Truck' if t.length >= float(args.truck_len_thresh) else 'Car'
             # Report the measured box size; fall back to nominal sizes only when
@@ -339,7 +349,7 @@ def run_detection_and_tracking(pcd_dir, out_dir, params, progress_callback=None)
             det_dict = dict(tid=t.tid, cls=final_cls, cx=t.x, cy=t.y, l=out_l, w=out_w, yaw=t.yaw,
                             score=t.score, hit=bool(hit), speed=t.speed(),
                             vx=t.vx, vy=t.vy, heading=(float(hdg) if hdg is not None else None),
-                            moving=moving, length=t.length)
+                            moving=moving, length=t.length, is_vehicle=bool(is_vehicle))
             if hit:
                 pend = pending_by_tid.pop(t.tid, [])
                 for pf, pd in pend: pd['tid']=t.tid; track_det_frames[pf].append(pd)
@@ -363,7 +373,7 @@ def run_detection_and_tracking(pcd_dir, out_dir, params, progress_callback=None)
     # Save track results as CSV for post-processing
     csv_path = os.path.join(out_dir, 'tracks.csv')
     with open(csv_path, 'w', encoding='utf-8') as f:
-        f.write('frame,tid,cls,cx,cy,yaw,vx,vy,heading,hit,speed,moving,score,length,width\n')
+        f.write('frame,tid,cls,cx,cy,yaw,vx,vy,heading,hit,speed,moving,score,length,width,is_vehicle\n')
         for frame_idx, dets in enumerate(track_det_frames):
             for d in dets:
                 hdg = d.get('heading', None)
@@ -371,7 +381,8 @@ def run_detection_and_tracking(pcd_dir, out_dir, params, progress_callback=None)
                 f.write(f"{frame_idx},{d.get('tid','')},{d.get('cls','')},{d.get('cx',0):.6f},{d.get('cy',0):.6f},"
                         f"{d.get('yaw',0):.6f},{d.get('vx',0):.6f},{d.get('vy',0):.6f},{hdg_s},"
                         f"{int(bool(d.get('hit',True)))},{d.get('speed',0):.6f},{int(bool(d.get('moving',False)))},"
-                        f"{d.get('score',0):.6f},{d.get('length',0):.6f},{d.get('w',0):.6f}\n")
+                        f"{d.get('score',0):.6f},{d.get('length',0):.6f},{d.get('w',0):.6f},"
+                        f"{int(bool(d.get('is_vehicle', True)))}\n")
 
     if progress_callback:
         progress_callback(len(pcd_files), len(pcd_files), "Finished")

@@ -106,7 +106,12 @@ def evaluate(det_frames, pred_frame_paths, gt_dir, match_dist=2.0, classes=None,
     gt_dir : str                    directory of OpenLABEL .json files
     match_dist : float              BEV centre gate (m)
     classes : set[str] | None       if given, only score GT of these classes
-                                     (upper-case, e.g. {'CAR','TRUCK','VAN','BUS'})
+                                     (upper-case, e.g. {'CAR','TRUCK','VAN','BUS'}).
+                                     GT of OTHER classes (in ROI) become "ignore":
+                                     a detection matching one is neither TP nor FP,
+                                     so the detector isn't penalised for correctly
+                                     finding a pedestrian/bicycle that we simply
+                                     aren't scoring.
 
     Returns a report dict.
     """
@@ -118,11 +123,22 @@ def evaluate(det_frames, pred_frame_paths, gt_dir, match_dist=2.0, classes=None,
         x0, x1, y0, y1 = roi_bounds
         return (x0 <= b['cx'] <= x1) and (y0 <= b['cy'] <= y1)
 
-    def _keep(b):
-        return (cls_filter is None or str(b['cls']).upper() in cls_filter) and _in_roi(b)
-
     gt_files = sorted(glob.glob(os.path.join(gt_dir, '*.json')))
-    gt_by_key = {_frame_key(f): [b for b in parse_gt_frame(f) if _keep(b)] for f in gt_files}
+    gt_by_key = {}       # scored GT (the classes we evaluate)
+    ignore_by_key = {}   # in-ROI GT of non-scored classes -> don't-care
+    for f in gt_files:
+        k = _frame_key(f)
+        scored, ignore = [], []
+        for b in parse_gt_frame(f):
+            if not _in_roi(b):
+                continue
+            if cls_filter is None or str(b['cls']).upper() in cls_filter:
+                scored.append(b)
+            else:
+                ignore.append(b)
+        gt_by_key[k] = scored
+        if ignore:
+            ignore_by_key[k] = ignore
     # Filter predictions to the same ROI so the comparison is apples-to-apples.
     if roi_bounds is not None:
         x0, x1, y0, y1 = roi_bounds
@@ -149,6 +165,15 @@ def evaluate(det_frames, pred_frame_paths, gt_dir, match_dist=2.0, classes=None,
 
         matches, n_fp, n_fn, ds = _match_frame(dets, gt, match_dist)
         tp = len(matches)
+        # Detections that didn't match a scored GT but DO match an ignore-class
+        # GT (e.g. a real pedestrian when scoring vehicles only) are not FPs.
+        ign = ignore_by_key.get(key)
+        if ign and n_fp > 0:
+            matched_di = {di for di, _, _ in matches}
+            unmatched = [dets[di] for di in range(len(dets)) if di not in matched_di]
+            if unmatched:
+                im, _, _, _ = _match_frame(unmatched, ign, match_dist)
+                n_fp = max(0, n_fp - len(im))
         total_tp += tp; total_fp += n_fp; total_fn += n_fn
         dist_sum += ds; n_matched += tp
 

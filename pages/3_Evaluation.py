@@ -75,13 +75,32 @@ if st.button("📐 Run Evaluation", use_container_width=True, type="primary"):
             st.success(f"Evaluated {s['evaluated_frames']} frame(s) "
                        f"({report['gt_frames_available']} GT files available).")
             c1, c2, c3 = st.columns(3)
-            c1.metric("Precision", f"{s['precision']:.3f}")
-            c2.metric("Recall", f"{s['recall']:.3f}")
-            c3.metric("F1", f"{s['f1']:.3f}")
+            c1.metric("Precision", f"{s['precision']:.3f}",
+                      help="Of everything the detector reported, the fraction that was a real object. "
+                           "TP / (TP + FP). **Higher is better** (1.0 = no false positives). Low precision "
+                           "= too many spurious detections.")
+            c2.metric("Recall", f"{s['recall']:.3f}",
+                      help="Of all the ground-truth objects, the fraction the detector found. "
+                           "TP / (TP + FN). **Higher is better** (1.0 = nothing missed). Low recall = "
+                           "missing real objects.")
+            c3.metric("F1", f"{s['f1']:.3f}",
+                      help="Harmonic mean of precision and recall — a single balanced score. "
+                           "2·P·R / (P + R). **Higher is better.** Good when you want both few misses and "
+                           "few false alarms.")
             c4, c5, c6 = st.columns(3)
-            c4.metric("MOTA", f"{s['MOTA']:.3f}")
-            c5.metric("MOTP (m)", f"{s['MOTP_m']:.3f}")
-            c6.metric("ID switches", s['ID_switches'])
+            c4.metric("MOTA", f"{s['MOTA']:.3f}",
+                      help="Multi-Object Tracking Accuracy: overall error rate combining misses, false "
+                           "positives and identity switches. 1 − (FN + FP + IDSW) / GT. **Higher is "
+                           "better** (1.0 = perfect; can go negative if errors exceed the number of GT "
+                           "objects).")
+            c5.metric("MOTP (m)", f"{s['MOTP_m']:.3f}",
+                      help="Multi-Object Tracking Precision: average distance (metres) between a matched "
+                           "detection and its ground-truth centre — how *accurately* matched boxes are "
+                           "placed. **Lower is better** (0 = perfect localization).")
+            c6.metric("ID switches", s['ID_switches'],
+                      help="How many times a tracked object's ID changed to a different ground-truth "
+                           "object across frames (identity got swapped/lost and reassigned). "
+                           "**Lower is better** (0 = every object kept one consistent ID).")
             st.caption(f"TP={s['TP']}  FP={s['FP']}  FN={s['FN']}  GT objects={s['gt_objects_total']}  "
                        f"(match gate = {s['match_dist_m']} m)")
 

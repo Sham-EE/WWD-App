@@ -38,6 +38,19 @@ with col1:
     dbscan_eps = st.slider("DBSCAN Epsilon (eps)", 0.1, 5.0, 2.0, 0.1, help="Controls cluster density.")
     min_cluster_pts = st.slider("Min Cluster Points", 1, 50, 1, 1, help="Minimum points to form a cluster.")
     min_hits = st.slider("Min Temporal Hits", 1, 10, 2, 1, help="Frames a candidate must exist to be confirmed.")
+    st.markdown("##### Vehicle class gate")
+    vehicle_gate = st.checkbox("Drop non-vehicles (peds/bikes)", value=False,
+        help="OFF (default) = detect everything, including pedestrians & bicycles (each detection is "
+             "still tagged is_vehicle). ON = drop clusters below BOTH size thresholds. NOTE: on the "
+             "background-FILTERED clouds, vehicles are very sparse (often fewer points than a "
+             "pedestrian), so a size gate can drop vehicles — leave OFF unless using denser input. "
+             "For fair vehicle-only metrics, use the Evaluation page's 'Vehicles only' instead (it "
+             "ignores ped/bike detections rather than dropping them).")
+    vg1, vg2 = st.columns(2)
+    vehicle_min_length = vg1.number_input("Veh. min length (m)", 0.0, 10.0, 2.5, 0.1,
+        help="A track counts as a vehicle if it is at least this long OR has enough points.")
+    vehicle_min_points = vg2.number_input("Veh. min points", 1, 500, 40, 1,
+        help="A track counts as a vehicle if it has at least this many points OR is long enough.")
 
 with col2:
     st.markdown("#### Tracking and Association")
@@ -80,6 +93,8 @@ if st.button("🚀 Start Detection and Tracking", use_container_width=True):
                 'roi_abs_y': roi_abs_y, 'yaw_bias_deg': -90.0,
                 'fps': fps, 'max_missed': max_missed, 'moving_speed_thresh': moving_speed_thresh,
                 'merge_dist': 2.5, 'yaw_merge_deg': 15.0, 'truck_len_thresh': 7.0, 'truck_merge_dist': 10.0,
+                'vehicle_gate': vehicle_gate, 'vehicle_min_length': vehicle_min_length,
+                'vehicle_min_points': vehicle_min_points,
             }
             st.info(f"Processing {len(filtered_files)} files from: {filtered_pcd_dir}...")
             progress_bar = st.progress(0, text="Starting...")
