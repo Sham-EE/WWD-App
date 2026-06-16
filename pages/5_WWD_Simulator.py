@@ -1,9 +1,12 @@
 import streamlit as st
 import numpy as np
 
+import streamlit.components.v1 as components
+
 from wwd_detection import load_lane_config, lanes_calibrated, detect_wrong_way
 from wwd_simulator import (wrong_way_options, make_wrong_way_track,
-                           build_sim_det_frames, simulator_figure, SIM_TID)
+                           build_sim_det_frames, simulator_figure, SIM_TID,
+                           v2x_dashboard_html, math_heading_to_compass)
 
 st.set_page_config(layout="wide", page_title="WWD Simulator")
 st.title("🚨 Wrong-Way Driver Simulator")
@@ -121,37 +124,47 @@ with right:
         st.success("No wrong-way flag — the driver did not trigger the detector. "
                    "Increase speed/length or check lane calibration.")
 
-# ---------------- Alert / external-app messaging hook ----------------
+# ---------------- V2X broadcast (external dashboard) ----------------
 st.divider()
-st.subheader("3. Alert & messaging")
-if flagged_now:
-    details = {
-        "lane": opt["lane_id"], "direction": opt["wrong_name"],
-        "speed_mps": round(speed, 1), "frame": cur_frame_idx,
-        "max_angle_deg": round(sim_res.get("max_angle_deg", 0), 0),
-    }
-    # ===================================================================
-    # INTEGRATION POINT for the external alerting app (single HTML file).
-    # Paste that app's HTML here and it will render/trigger on detection,
-    # e.g. via st.components.v1.html(your_html, height=...). Until then,
-    # a placeholder alert banner is shown.
-    # ===================================================================
-    st.markdown(
-        f"""
-        <div style="background:#b00020;color:white;padding:18px;border-radius:10px;
-                    font-size:1.1rem;border:2px solid #ff5252">
-          🚨 <b>WRONG-WAY ALERT</b> — {details['direction']}-bound vehicle in the
-          <b>{details['lane']}</b> lane at {details['speed_mps']} m/s.
-          <br><span style="opacity:.85;font-size:.95rem">[Your alert app's messaging renders here]</span>
-        </div>
-        """, unsafe_allow_html=True)
-    st.caption("⬆ This banner is the hook for your external messaging app — paste its HTML and "
-               "I'll wire it to fire here on detection.")
-else:
-    st.caption("No active alert at this step. Play through to the moment of detection.")
+st.subheader("3. V2X broadcast — WWD V2X Dashboard")
+st.session_state.setdefault("v2x_armed", False)
+st.session_state.setdefault("v2x_event", None)
 
-# auto-advance
-if playing and step < n_steps - 1:
+if not is_flagged:
+    st.caption("No wrong-way flag yet — once detected, broadcast it to your V2X dashboard here.")
+else:
+    bc1, bc2 = st.columns([2, 1])
+    if bc1.button("📡 Broadcast detection to the V2X Dashboard", type="primary",
+                  disabled=not flagged_now,
+                  help="Fires your dashboard's full J2735 TIM / C-V2X / nav-push pipeline with the "
+                       "detected speed & heading. Play to the detection step to enable."):
+        compass = math_heading_to_compass(sim_track[step]["heading"])
+        st.session_state.v2x_event = {
+            "speed": round(float(speed), 1), "heading": round(float(compass)),
+            "lane": opt["lane_id"], "direction": opt["wrong_name"],
+        }
+        st.session_state.v2x_armed = True
+        st.rerun()
+    if st.session_state.v2x_armed and bc2.button("✖ Close dashboard", use_container_width=True):
+        st.session_state.v2x_armed = False
+        st.session_state.v2x_event = None
+        st.rerun()
+    if not flagged_now and not st.session_state.v2x_armed:
+        st.caption(f"Scrub to step {first_flag - start_frame} (the detection moment) to enable the broadcast.")
+
+if st.session_state.v2x_armed and st.session_state.v2x_event:
+    html = v2x_dashboard_html(st.session_state.v2x_event)
+    if html is None:
+        st.warning("V2X dashboard not found. Save your single-file app to "
+                   "`assets/wwd_v2x_dashboard.html` (see assets/README.md), then broadcast again.")
+    else:
+        ev = st.session_state.v2x_event
+        st.success(f"🚨 Broadcasting: {ev['direction']}-bound in the {ev['lane']} lane · "
+                   f"{ev['speed']} m/s · heading {ev['heading']}° — the dashboard fired its alert pipeline below.")
+        components.html(html, height=1500, scrolling=True)
+
+# auto-advance (paused while the dashboard is embedded to avoid re-render churn)
+if playing and step < n_steps - 1 and not st.session_state.v2x_armed:
     import time
     time.sleep(max(0.03, 1.0 / float(fps)))
     st.session_state.sim_step = step + 1

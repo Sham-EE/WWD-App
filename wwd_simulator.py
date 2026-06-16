@@ -10,9 +10,59 @@ The driver is injected at the track level: a smooth, correctly-formed detection
 OPPOSITE to that lane's legal heading. Only genuinely-wrong-way scenarios are
 offered (e.g. "North-bound in the southbound lane").
 """
+import json
+import os
+
 import numpy as np
 
 SIM_TID = 90001  # high id so it never collides with real track ids
+
+V2X_HTML_PATH = os.path.join(os.path.dirname(__file__), "assets", "wwd_v2x_dashboard.html")
+
+# JS injected into the V2X React app: when window.__WWD_EVENT__ is present, fire
+# the app's alert pipeline once on mount with the detected speed/heading. Inserted
+# right after the app's fireAlert useCallback (anchored on its dependency list).
+_V2X_AUTO_FIRE = r"""
+  // ===== External LiDAR/WWD trigger (injected by the Streamlit simulator) =====
+  const __wwdFireRef = useRef(null);
+  useEffect(function () { __wwdFireRef.current = fireAlert; });
+  useEffect(function () {
+    var ev = window.__WWD_EVENT__;
+    if (!ev || window.__WWD_AUTO_FIRED__) return;
+    window.__WWD_AUTO_FIRED__ = true;
+    if (ev.speed != null) setSpeed(Number(ev.speed));
+    setTimeout(function () {
+      var nodes = current.laneNodes;
+      var mid = (nodes && nodes.length) ? nodes[Math.floor(nodes.length / 2)] : current.center;
+      if (__wwdFireRef.current) __wwdFireRef.current(mid, ev.heading != null ? Number(ev.heading) : 270);
+    }, 700);
+  }, []);
+"""
+
+_FIREALERT_ANCHOR = "}, [current, speed, threshold]);"
+
+
+def math_heading_to_compass(heading_rad):
+    """Convert a math-convention heading (0=+X/east, CCW) to a compass bearing
+    (0=north, clockwise) for the V2X message."""
+    return (90.0 - np.degrees(heading_rad)) % 360.0
+
+
+def v2x_dashboard_html(event):
+    """Load the user's V2X dashboard, inject the detection event + auto-fire hook.
+    Returns the HTML string, or None if the dashboard file isn't present."""
+    if not os.path.exists(V2X_HTML_PATH):
+        return None
+    with open(V2X_HTML_PATH, "r", encoding="utf-8", errors="replace") as f:
+        html = f.read()
+    ev_script = "<script>window.__WWD_EVENT__ = %s;</script>" % json.dumps(event)
+    if '<div id="root"></div>' in html:
+        html = html.replace('<div id="root"></div>', '<div id="root"></div>\n' + ev_script, 1)
+    else:
+        html = ev_script + html
+    if _FIREALERT_ANCHOR in html:
+        html = html.replace(_FIREALERT_ANCHOR, _FIREALERT_ANCHOR + _V2X_AUTO_FIRE, 1)
+    return html
 
 
 def cardinal_name(deg: float) -> str:
