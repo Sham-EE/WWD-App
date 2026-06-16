@@ -35,9 +35,26 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.markdown("#### Clustering and Detection")
-    dbscan_eps = st.slider("DBSCAN Epsilon (eps)", 0.1, 5.0, 2.0, 0.1, help="Controls cluster density.")
+    adaptive_eps = st.checkbox("Range-adaptive eps", value=True,
+        help="Grow the clustering radius with distance (eps = eps0 + eps_k·range, clipped). Near, dense "
+             "objects use a small eps (kept separate → precision); far, sparse objects use a larger eps "
+             "(scattered points still join → recall). Measured better than a fixed eps on both precision "
+             "and recall. Uncheck to use the fixed DBSCAN eps below.")
+    if adaptive_eps:
+        ae1, ae2 = st.columns(2)
+        aeps0 = ae1.number_input("eps0 (base)", 0.1, 3.0, 0.8, 0.1)
+        aeps_k = ae2.number_input("eps_k (per m)", 0.0, 0.2, 0.04, 0.01, format="%.3f")
+        ae3, ae4 = st.columns(2)
+        aeps_min = ae3.number_input("eps min", 0.1, 3.0, 1.0, 0.1)
+        aeps_max = ae4.number_input("eps max", 0.5, 6.0, 3.0, 0.1)
+        dbscan_eps = 2.0  # unused when adaptive is on
+    else:
+        dbscan_eps = st.slider("DBSCAN Epsilon (eps)", 0.1, 5.0, 2.0, 0.1, help="Fixed cluster radius (m).")
+        aeps0, aeps_k, aeps_min, aeps_max = 0.8, 0.04, 1.0, 3.0
     min_cluster_pts = st.slider("Min Cluster Points", 1, 50, 1, 1, help="Minimum points to form a cluster.")
-    min_hits = st.slider("Min Temporal Hits", 1, 10, 2, 1, help="Frames a candidate must exist to be confirmed.")
+    min_hits = st.slider("Min Temporal Hits", 1, 10, 2, 1,
+        help="Frames a candidate must exist to be confirmed. Higher = fewer spurious tracks and fewer "
+             "ID switches, but lower recall (e.g. 3 cut ID switches ~half but dropped recall).")
     st.markdown("##### Vehicle class gate")
     vehicle_gate = st.checkbox("Drop non-vehicles (peds/bikes)", value=False,
         help="OFF (default) = detect everything, including pedestrians & bicycles (each detection is "
@@ -95,6 +112,8 @@ if st.button("🚀 Start Detection and Tracking", use_container_width=True):
                 'merge_dist': 2.5, 'yaw_merge_deg': 15.0, 'truck_len_thresh': 7.0, 'truck_merge_dist': 10.0,
                 'vehicle_gate': vehicle_gate, 'vehicle_min_length': vehicle_min_length,
                 'vehicle_min_points': vehicle_min_points,
+                'adaptive_eps': adaptive_eps, 'aeps0': aeps0, 'aeps_k': aeps_k,
+                'aeps_min': aeps_min, 'aeps_max': aeps_max,
             }
             st.info(f"Processing {len(filtered_files)} files from: {filtered_pcd_dir}...")
             progress_bar = st.progress(0, text="Starting...")
