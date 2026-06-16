@@ -12,9 +12,4 @@ venv/
 .vscode/
 
 # --- Large data & generated artifacts (track code, not data) ---
-data/
-outputs/
-*.pcd
-*.pkl
-*.gif
-**/vis/
+

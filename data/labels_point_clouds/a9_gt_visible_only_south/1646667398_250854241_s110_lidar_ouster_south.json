@@ -1,0 +1,851 @@
+{
+  "openlabel": {
+    "metadata": {
+      "schema_version": "1.0.0"
+    },
+    "coordinate_systems": {
+      "hd_map_origin": {
+        "type": "scene_cs",
+        "parent": "",
+        "children": [
+          "s110_base"
+        ]
+      },
+      "s110_base": {
+        "type": "local_cs",
+        "parent": "hd_map_origin",
+        "children": [
+          "s110_lidar_ouster_south"
+        ],
+        "pose_wrt_parent": {
+          "matrix4x4": [
+            0.0,
+            -1.0,
+            -0.0,
+            -433.63036414,
+            1.0,
+            0.0,
+            0.0,
+            -169.78483588,
+            0.0,
+            0.0,
+            1.0,
+            5.08,
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      },
+      "s110_lidar_ouster_south": {
+        "type": "sensor_cs",
+        "parent": "s110_base",
+        "children": [
+          "s110_camera_basler_south1_8mm",
+          "s110_camera_basler_south2_8mm"
+        ],
+        "pose_wrt_parent": {
+          "matrix4x4": [
+            0.99011438,
+            0.13828977,
+            0.02344061,
+            -2.36963586,
+            -0.13753536,
+            0.99000475,
+            -0.03121898,
+            16.19616412,
+            -0.02752358,
+            0.02768645,
+            0.99923767,
+            8.62,
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      },
+      "s110_camera_basler_south1_8mm": {
+        "type": "sensor_cs",
+        "parent": "s110_lidar_ouster_south",
+        "children": [],
+        "pose_wrt_parent": {
+          "matrix4x4": [
+            -0.0931837,
+            -0.995484,
+            0.018077,
+            -13.8309,
+            -0.481033,
+            0.029117,
+            -0.876219,
+            1.96067,
+            0.871736,
+            -0.0903453,
+            -0.481574,
+            -2.58546,
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      },
+      "s110_camera_basler_south2_8mm": {
+        "type": "sensor_cs",
+        "parent": "s110_lidar_ouster_south",
+        "children": [],
+        "pose_wrt_parent": {
+          "matrix4x4": [
+            0.641509,
+            -0.766975,
+            0.0146997,
+            1.99131,
+            -0.258939,
+            -0.234538,
+            -0.936986,
+            1.21464,
+            0.722092,
+            0.597278,
+            -0.349058,
+            -1.50021,
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "streams": {
+      "s110_camera_basler_south1_8mm": {
+        "description": "Basler RGB camera",
+        "uri": "",
+        "type": "camera",
+        "stream_properties": {
+          "intrinsics_pinhole": {
+            "width_px": 1920,
+            "height_px": 1200,
+            "camera_matrix_3x4": [
+              [
+                1293.54,
+                0.0,
+                946.104,
+                0.0
+              ],
+              [
+                0.0,
+                1320.17,
+                621.989,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0,
+                0.0
+              ]
+            ]
+          }
+        }
+      },
+      "s110_camera_basler_south2_8mm": {
+        "description": "Basler RGB camera",
+        "uri": "",
+        "type": "camera",
+        "stream_properties": {
+          "intrinsics_pinhole": {
+            "width_px": 1920,
+            "height_px": 1200,
+            "camera_matrix_3x4": [
+              [
+                1296.38,
+                0.0,
+                957.363,
+                0.0
+              ],
+              [
+                0.0,
+                1337.75,
+                604.919,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0,
+                0.0
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "frames": {
+      "32": {
+        "objects": {
+          "250ff7b6-ea53-4df5-b119-b37c3f4c1679": {
+            "object_data": {
+              "name": "CAR_250ff7b6",
+              "type": "CAR",
+              "cuboid": {
+                "name": "shape3D",
+                "val": [
+                  31.655080089579762,
+                  -28.187560084507968,
+                  -6.3337,
+                  0.0,
+                  0.0,
+                  0.7210175376263886,
+                  0.6929168135030201,
+                  4.5394,
+                  1.8966,
+                  1.594
+                ],
+                "attributes": {
+                  "text": [
+                    {
+                      "name": "body_color",
+                      "val": "white"
+                    },
+                    {
+                      "name": "occlusion_level",
+                      "val": "PARTIALLY_OCCLUDED"
+                    },
+                    {
+                      "name": "sensor_id",
+                      "val": "s110_lidar_ouster_south"
+                    }
+                  ],
+                  "num": [
+                    {
+                      "name": "num_points",
+                      "val": 60
+                    }
+                  ],
+                  "vec": [
+                    {
+                      "name": "track_history",
+                      "val": []
+                    }
+                  ]
+                }
+              },
+              "bbox": []
+            }
+          },
+          "975f4823-d7e3-4337-adb4-0402fd2368be": {
+            "object_data": {
+              "name": "CAR_975f4823",
+              "type": "CAR",
+              "cuboid": {
+                "name": "shape3D",
+                "val": [
+                  11.731894746431175,
+                  29.3117037247656,
+                  -7.5683,
+                  0.0,
+                  0.0,
+                  -0.7510750131792036,
+                  0.6602168769259532,
+                  4.1761,
+                  1.8976,
+                  1.5196
+                ],
+                "attributes": {
+                  "text": [
+                    {
+                      "name": "body_color",
+                      "val": "black"
+                    },
+                    {
+                      "name": "occlusion_level",
+                      "val": "NOT_OCCLUDED"
+                    },
+                    {
+                      "name": "sensor_id",
+                      "val": "s110_lidar_ouster_south"
+                    }
+                  ],
+                  "num": [
+                    {
+                      "name": "num_points",
+                      "val": 13
+                    }
+                  ],
+                  "vec": [
+                    {
+                      "name": "track_history",
+                      "val": []
+                    }
+                  ]
+                }
+              },
+              "bbox": []
+            }
+          },
+          "b95ff0a5-72eb-4e0c-88d7-cbea88fe93da": {
+            "object_data": {
+              "name": "CAR_b95ff0a5",
+              "type": "CAR",
+              "cuboid": {
+                "name": "shape3D",
+                "val": [
+                  21.29612679146528,
+                  8.380455315569522,
+                  -6.2283,
+                  0.0,
+                  0.0,
+                  -0.9982523485264565,
+                  0.05909525075176535,
+                  4.112,
+                  1.9016,
+                  1.499
+                ],
+                "attributes": {
+                  "text": [
+                    {
+                      "name": "body_color",
+                      "val": "red"
+                    },
+                    {
+                      "name": "occlusion_level",
+                      "val": "NOT_OCCLUDED"
+                    },
+                    {
+                      "name": "sensor_id",
+                      "val": "s110_lidar_ouster_south"
+                    }
+                  ],
+                  "num": [
+                    {
+                      "name": "num_points",
+                      "val": 135
+                    }
+                  ],
+                  "vec": [
+                    {
+                      "name": "track_history",
+                      "val": []
+                    }
+                  ]
+                }
+              },
+              "bbox": []
+            }
+          },
+          "a3beb1ef-2463-4584-ac36-e99e5230aa43": {
+            "object_data": {
+              "name": "PEDESTRIAN_a3beb1ef",
+              "type": "PEDESTRIAN",
+              "cuboid": {
+                "name": "shape3D",
+                "val": [
+                  39.97058439319237,
+                  -9.445827196413958,
+                  -6.0576,
+                  0.0,
+                  0.0,
+                  0.21055823379912994,
+                  0.9775813164025747,
+                  0.6973,
+                  0.7848,
+                  1.7
+                ],
+                "attributes": {
+                  "text": [
+                    {
+                      "name": "body_color",
+                      "val": ""
+                    },
+                    {
+                      "name": "occlusion_level",
+                      "val": "NOT_OCCLUDED"
+                    },
+                    {
+                      "name": "sensor_id",
+                      "val": "s110_lidar_ouster_south"
+                    }
+                  ],
+                  "num": [
+                    {
+                      "name": "num_points",
+                      "val": 14
+                    }
+                  ],
+                  "vec": [
+                    {
+                      "name": "track_history",
+                      "val": []
+                    }
+                  ]
+                }
+              },
+              "bbox": []
+            }
+          },
+          "48fd9e2b-2a41-4aae-aa43-fb708595a991": {
+            "object_data": {
+              "name": "TRUCK_48fd9e2b",
+              "type": "TRUCK",
+              "cuboid": {
+                "name": "shape3D",
+                "val": [
+                  50.30376239458635,
+                  7.96123258638638,
+                  -5.2988,
+                  0.0,
+                  0.0,
+                  -0.9986999035240658,
+                  0.050975510797065894,
+                  1.8309,
+                  2.7742,
+                  3.4079
+                ],
+                "attributes": {
+                  "text": [
+                    {
+                      "name": "body_color",
+                      "val": "other"
+                    },
+                    {
+                      "name": "occlusion_level",
+                      "val": "PARTIALLY_OCCLUDED"
+                    },
+                    {
+                      "name": "sensor_id",
+                      "val": "s110_lidar_ouster_south"
+                    }
+                  ],
+                  "num": [
+                    {
+                      "name": "num_points",
+                      "val": 75
+                    }
+                  ],
+                  "vec": [
+                    {
+                      "name": "track_history",
+                      "val": []
+                    }
+                  ]
+                }
+              },
+              "bbox": []
+            }
+          },
+          "a89f18ad-14c5-48eb-b7c2-28c4deb673e0": {
+            "object_data": {
+              "name": "CAR_a89f18ad",
+              "type": "CAR",
+              "cuboid": {
+                "name": "shape3D",
+                "val": [
+                  44.68653863472268,
+                  7.301165630812752,
+                  -6.2711,
+                  0.0,
+                  0.0,
+                  -0.9989371980978619,
+                  0.0460920194436424,
+                  4.1132,
+                  1.8966,
+                  1.5064
+                ],
+                "attributes": {
+                  "text": [
+                    {
+                      "name": "body_color",
+                      "val": "black"
+                    },
+                    {
+                      "name": "occlusion_level",
+                      "val": "NOT_OCCLUDED"
+                    },
+                    {
+                      "name": "sensor_id",
+                      "val": "s110_lidar_ouster_south"
+                    }
+                  ],
+                  "num": [
+                    {
+                      "name": "num_points",
+                      "val": 7
+                    }
+                  ],
+                  "vec": [
+                    {
+                      "name": "track_history",
+                      "val": []
+                    }
+                  ]
+                }
+              },
+              "bbox": []
+            }
+          },
+          "64bcb12c-8d7d-4d50-a4a1-ec8b6149d360": {
+            "object_data": {
+              "name": "CAR_64bcb12c",
+              "type": "CAR",
+              "cuboid": {
+                "name": "shape3D",
+                "val": [
+                  15.53149247386952,
+                  30.506146507665214,
+                  -7.441,
+                  0.0,
+                  0.0,
+                  -0.7452858837572045,
+                  0.6667450423304568,
+                  4.1014,
+                  1.8976,
+                  1.5195
+                ],
+                "attributes": {
+                  "text": [
+                    {
+                      "name": "body_color",
+                      "val": "white"
+                    },
+                    {
+                      "name": "occlusion_level",
+                      "val": "NOT_OCCLUDED"
+                    },
+                    {
+                      "name": "sensor_id",
+                      "val": "s110_lidar_ouster_south"
+                    }
+                  ],
+                  "num": [
+                    {
+                      "name": "num_points",
+                      "val": 84
+                    }
+                  ],
+                  "vec": [
+                    {
+                      "name": "track_history",
+                      "val": []
+                    }
+                  ]
+                }
+              },
+              "bbox": []
+            }
+          },
+          "91e26aa4-25ea-4846-b4c2-62593e9a713e": {
+            "object_data": {
+              "name": "CAR_91e26aa4",
+              "type": "CAR",
+              "cuboid": {
+                "name": "shape3D",
+                "val": [
+                  27.988334409382233,
+                  -26.20047319872089,
+                  -6.4483,
+                  0.0,
+                  0.0,
+                  0.7132061963999279,
+                  0.7009542933863431,
+                  4.0972,
+                  1.9049,
+                  1.4987
+                ],
+                "attributes": {
+                  "text": [
+                    {
+                      "name": "body_color",
+                      "val": "black"
+                    },
+                    {
+                      "name": "occlusion_level",
+                      "val": "PARTIALLY_OCCLUDED"
+                    },
+                    {
+                      "name": "sensor_id",
+                      "val": "s110_lidar_ouster_south"
+                    }
+                  ],
+                  "num": [
+                    {
+                      "name": "num_points",
+                      "val": 10
+                    }
+                  ],
+                  "vec": [
+                    {
+                      "name": "track_history",
+                      "val": []
+                    }
+                  ]
+                }
+              },
+              "bbox": []
+            }
+          },
+          "e4a171f5-2451-4d24-9898-f49538ad294a": {
+            "object_data": {
+              "name": "CAR_e4a171f5",
+              "type": "CAR",
+              "cuboid": {
+                "name": "shape3D",
+                "val": [
+                  12.95041767081334,
+                  37.83827159351077,
+                  -7.6049,
+                  0.0,
+                  0.0,
+                  -0.7568078247834064,
+                  0.6536374502326262,
+                  4.1284,
+                  1.8976,
+                  1.5196
+                ],
+                "attributes": {
+                  "text": [
+                    {
+                      "name": "body_color",
+                      "val": "black"
+                    },
+                    {
+                      "name": "occlusion_level",
+                      "val": "PARTIALLY_OCCLUDED"
+                    },
+                    {
+                      "name": "sensor_id",
+                      "val": "s110_lidar_ouster_south"
+                    }
+                  ],
+                  "num": [
+                    {
+                      "name": "num_points",
+                      "val": 11
+                    }
+                  ],
+                  "vec": [
+                    {
+                      "name": "track_history",
+                      "val": []
+                    }
+                  ]
+                }
+              },
+              "bbox": []
+            }
+          },
+          "3facab9a-3db6-44e1-b7b6-1931ec899247": {
+            "object_data": {
+              "name": "BICYCLE_3facab9a",
+              "type": "BICYCLE",
+              "cuboid": {
+                "name": "shape3D",
+                "val": [
+                  30.37412388680645,
+                  -16.02039601116635,
+                  -6.8021,
+                  0.0,
+                  0.0,
+                  0.23561524062108244,
+                  0.9718464170778578,
+                  1.4456,
+                  0.8236,
+                  1.7402
+                ],
+                "attributes": {
+                  "text": [
+                    {
+                      "name": "body_color",
+                      "val": ""
+                    },
+                    {
+                      "name": "occlusion_level",
+                      "val": "NOT_OCCLUDED"
+                    },
+                    {
+                      "name": "sensor_id",
+                      "val": "s110_lidar_ouster_south"
+                    }
+                  ],
+                  "num": [
+                    {
+                      "name": "num_points",
+                      "val": 32
+                    }
+                  ],
+                  "vec": [
+                    {
+                      "name": "track_history",
+                      "val": []
+                    }
+                  ]
+                }
+              },
+              "bbox": []
+            }
+          },
+          "ee192cdb-983a-40f9-bf47-ccaa0343b220": {
+            "object_data": {
+              "name": "CAR_ee192cdb",
+              "type": "CAR",
+              "cuboid": {
+                "name": "shape3D",
+                "val": [
+                  41.416956019337746,
+                  10.656482987455583,
+                  -6.2699,
+                  0.0,
+                  0.0,
+                  -0.9979557069074811,
+                  0.0639093659082116,
+                  4.0984,
+                  1.895,
+                  1.4986
+                ],
+                "attributes": {
+                  "text": [
+                    {
+                      "name": "body_color",
+                      "val": "black"
+                    },
+                    {
+                      "name": "occlusion_level",
+                      "val": "NOT_OCCLUDED"
+                    },
+                    {
+                      "name": "sensor_id",
+                      "val": "s110_lidar_ouster_south"
+                    }
+                  ],
+                  "num": [
+                    {
+                      "name": "num_points",
+                      "val": 9
+                    }
+                  ],
+                  "vec": [
+                    {
+                      "name": "track_history",
+                      "val": []
+                    }
+                  ]
+                }
+              },
+              "bbox": []
+            }
+          },
+          "4489b308-da15-4f53-8de1-b5c97f28c2a2": {
+            "object_data": {
+              "name": "CAR_4489b308",
+              "type": "CAR",
+              "cuboid": {
+                "name": "shape3D",
+                "val": [
+                  37.55972203093144,
+                  14.235183832103782,
+                  -6.3408,
+                  0.0,
+                  0.0,
+                  -0.9977999905221309,
+                  0.06629614554433441,
+                  4.152,
+                  1.8954,
+                  1.5038
+                ],
+                "attributes": {
+                  "text": [
+                    {
+                      "name": "body_color",
+                      "val": "gray"
+                    },
+                    {
+                      "name": "occlusion_level",
+                      "val": "NOT_OCCLUDED"
+                    },
+                    {
+                      "name": "sensor_id",
+                      "val": "s110_lidar_ouster_south"
+                    }
+                  ],
+                  "num": [
+                    {
+                      "name": "num_points",
+                      "val": 19
+                    }
+                  ],
+                  "vec": [
+                    {
+                      "name": "track_history",
+                      "val": []
+                    }
+                  ]
+                }
+              },
+              "bbox": []
+            }
+          }
+        },
+        "frame_properties": {
+          "timestamp": 1646667398.2508543,
+          "point_cloud_file_name": "1646667398_250854241_s110_lidar_ouster_south.pcd",
+          "weather_type": "SUNNY",
+          "time_of_day": "DUSK",
+          "transforms": {
+            "s110_base_to_hd_map_origin": {
+              "src": "s110_base",
+              "dst": "hd_map_origin",
+              "transform_src_to_dst": {
+                "matrix4x4": [
+                  0.0,
+                  1.0,
+                  0.0,
+                  169.78483588,
+                  -1.0,
+                  -0.0,
+                  -0.0,
+                  -433.63036414,
+                  0.0,
+                  0.0,
+                  1.0,
+                  -5.08,
+                  0.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              }
+            },
+            "s110_lidar_ouster_south_to_s110_base": {
+              "src": "s110_lidar_ouster_south",
+              "dst": "s110_base",
+              "transform_src_to_dst": {
+                "matrix4x4": [
+                  0.99011437,
+                  -0.13753536,
+                  -0.02752358,
+                  4.81100903,
+                  0.13828977,
+                  0.99000475,
+                  0.02768645,
+                  -15.94524012,
+                  0.02344061,
+                  -0.03121898,
+                  0.99923766,
+                  -8.05225519,
+                  0.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              }
+            }
+          },
+          "image_file_names": [
+            "1646667398_272954445_s110_camera_basler_south1_8mm.jpg",
+            "1646667398_257182214_s110_camera_basler_south2_8mm.jpg"
+          ]
+        }
+      }
+    }
+  }
+}
