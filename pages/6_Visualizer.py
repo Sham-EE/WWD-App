@@ -29,6 +29,12 @@ def _all_centers(label_paths):
     return [lp.frame_centers(p) for p in label_paths]
 
 
+@st.cache_data(show_spinner=False, max_entries=128)
+def _load_pts(pcd_path, max_pts):
+    """Cached point load so stepping frames is instant (no reload flicker)."""
+    return lv.load_points(pcd_path, max_points=max_pts)
+
+
 # ======================= Camera (Road Viewer) tab =======================
 def render_camera_tab():
     cameras = rv.list_cameras(images_root)
@@ -220,18 +226,20 @@ def render_lidar_tab():
         i = st.slider("Scene frame", 0, max(n - 1, 1), st.session_state.lidar_frame)
         st.session_state.lidar_frame = i
 
-        with st.spinner("Loading scan…"):
-            pts = lv.load_points(pcds[i], max_points=int(max_pts))
-            objs = lp.load_objects(labels[i])
-        cbev, cside = st.columns(2)
-        with cbev:
-            st.markdown("**Bird's Eye View**")
-            st.plotly_chart(lv.build_figure(pts, objs, color_mode, "bev"),
-                            use_container_width=True, key="lv_bev")
-        with cside:
-            st.markdown("**Side View**")
-            st.plotly_chart(lv.build_figure(pts, objs, color_mode, "side"),
-                            use_container_width=True, key="lv_side")
+        pts = _load_pts(pcds[i], int(max_pts))     # cached -> instant on revisit
+        objs = lp.load_objects(labels[i])
+        # Fixed-height container keeps the page height stable between frames, so it
+        # doesn't collapse/scroll-to-top while stepping (the charts swap in place).
+        with st.container(height=600):
+            cbev, cside = st.columns(2)
+            with cbev:
+                st.markdown("**Bird's Eye View**")
+                st.plotly_chart(lv.build_figure(pts, objs, color_mode, "bev", height=520),
+                                use_container_width=True, key="lv_bev")
+            with cside:
+                st.markdown("**Side View**")
+                st.plotly_chart(lv.build_figure(pts, objs, color_mode, "side", height=520),
+                                use_container_width=True, key="lv_side")
         st.caption(f"Frame {i+1}/{n} · {len(objs)} labelled objects · {len(pts)} points shown")
 
         if playing and i < n - 1:
