@@ -82,6 +82,10 @@ class Dataset:
     def gt_dir(self):
         return self.d.get("gt_dir", os.path.join(self.workspace, "data", "labels"))
 
+    @property
+    def images_dir(self):
+        return self.d.get("images_dir", os.path.join(self.workspace, "data", "images"))
+
     # --- workspace (generated / edited) ---
     @property
     def config_dir(self):
