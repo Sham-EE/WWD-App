@@ -102,6 +102,11 @@ def load_objects(label_json_path):
     return objs
 
 
+def frame_centers(label_json_path):
+    """{object_id: (x, y, z)} centres for one frame — used to build track trails."""
+    return {o["id"]: (o["val"][0], o["val"][1], o["val"][2]) for o in load_objects(label_json_path)}
+
+
 def _project(points_xyz, K, T):
     """Project Nx3 LiDAR points -> (u, v, depth, valid_in_front)."""
     n = points_xyz.shape[0]
@@ -158,7 +163,8 @@ def load_pointcloud(pcd_path):
 
 def render_frame(image_path, label_json_path, camera_id, mode="box3d",
                  color_mode="by_category", pcd_path=None, depth_max=None,
-                 point_size=2, line_width=2, draw_labels=True, label_size=26):
+                 point_size=2, line_width=2, draw_labels=True, label_size=26,
+                 histories=None):
     """Render labels (and optionally the point cloud) onto one camera image.
     mode: 'box3d' (3D wireframes) or 'point_cloud' (points + 3D wireframes).
     Returns a PIL.Image."""
@@ -191,8 +197,21 @@ def render_frame(image_path, label_json_path, camera_id, mode="box3d",
                         arr[yy, xx] = cols
                 img = Image.fromarray(arr)
 
-    # --- 3D boxes ---
     draw = ImageDraw.Draw(img)
+
+    # --- track-history trails (cyan, tapering), under the boxes ---
+    if histories:
+        for seq in histories.values():
+            if len(seq) < 2:
+                continue
+            u, v, z, valid = _project(np.asarray(seq, dtype=float), K, T)
+            m = len(seq)
+            for k in range(1, m):
+                if valid[k - 1] and valid[k]:
+                    w = max(1, int(1 + 5 * k / m))          # older = thin, recent = thick
+                    draw.line([(u[k - 1], v[k - 1]), (u[k], v[k])], fill=(0, 255, 255), width=w)
+
+    # --- 3D boxes ---
     font = _font(label_size) if draw_labels else None
     for obj in load_objects(label_json_path):
         corners = cuboid_corners(obj["val"])
@@ -216,12 +235,16 @@ def render_frame(image_path, label_json_path, camera_id, mode="box3d",
 
 
 def render_cached(image_path, label_path, camera_id, mode, out_dir,
-                  color_mode="by_category", pcd_path=None, point_size=1, force=False):
-    """Render (or reuse a cached) labelled image. Returns the output path."""
+                  color_mode="by_category", pcd_path=None, point_size=2,
+                  histories=None, force=False):
+    """Render (or reuse a cached) labelled image. Returns the output path.
+    NOTE: the caller must encode params that change the image (point_size,
+    track-history) into out_dir, since the cache key is the output path."""
     os.makedirs(out_dir, exist_ok=True)
     out = os.path.join(out_dir, os.path.basename(image_path))
     if force or not os.path.exists(out):
         im = render_frame(image_path, label_path, camera_id, mode=mode,
-                          color_mode=color_mode, pcd_path=pcd_path, point_size=point_size)
+                          color_mode=color_mode, pcd_path=pcd_path,
+                          point_size=point_size, histories=histories)
         im.save(out, quality=90)
     return out

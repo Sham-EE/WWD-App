@@ -47,6 +47,7 @@ if not have_labels:
             "Add labels to enable generated box / point-cloud overlays.")
 
 color_mode, point_size = "by_category", 2
+track_hist, hist_window = False, 30
 if mode:
     oc1, oc2, oc3 = st.columns([1, 1.4, 1])
     color_mode = oc1.radio("Box colour", ["by_category", "by_track_id"], horizontal=True,
@@ -59,6 +60,12 @@ if mode:
         shutil.rmtree(os.path.join(ds.outputs_dir, "rendered"), ignore_errors=True)
         st.session_state.road_video = None
         st.rerun()
+    th1, th2 = st.columns([1, 2])
+    track_hist = th1.checkbox("🛤️ Track history (cyan trails)", value=False,
+                              help="Draw each object's recent path as a tapering cyan trail, "
+                                   "computed from its position in the preceding frames.")
+    if track_hist:
+        hist_window = th2.slider("Trail length (frames)", 5, 80, 30, 5)
 
 # ---------------- Frame resolution + pairing ----------------
 raw_left = rv.frames_for(images_root, left_cam, "raw")
@@ -79,8 +86,33 @@ left_id = lp.camera_id_from_image(raw_left[0])
 right_id = lp.camera_id_from_image(raw_right[0])
 
 
+@st.cache_data(show_spinner=False)
+def _all_centers(label_paths):
+    """Per-frame {object_id: (x,y,z)} for the whole sequence (cached)."""
+    return [lp.frame_centers(p) for p in label_paths]
+
+
+all_centers = _all_centers(tuple(labels)) if (mode and track_hist) else None
+
+
+def _histories(i):
+    """{object_id: [centres from frames i-window .. i]} for objects in frame i."""
+    if not (mode and track_hist and all_centers):
+        return None
+    cur = all_centers[i]
+    lo = max(0, i - hist_window)
+    out = {}
+    for oid in cur:
+        seq = [all_centers[f][oid] for f in range(lo, i + 1) if oid in all_centers[f]]
+        if len(seq) >= 2:
+            out[oid] = seq
+    return out
+
+
 def _cache_dir(cam):
-    return os.path.join(ds.outputs_dir, "rendered", cam, f"{mode}_{color_mode}_{lp.RENDER_VERSION}")
+    ps = f"_ps{point_size}" if mode == "point_cloud" else ""
+    th = f"_th{hist_window}" if track_hist else ""
+    return os.path.join(ds.outputs_dir, "rendered", cam, f"{mode}_{color_mode}{ps}{th}_{lp.RENDER_VERSION}")
 
 
 def _render(i, cam, cam_id, raw):
@@ -90,7 +122,7 @@ def _render(i, cam, cam_id, raw):
     return lp.render_cached(raw[i], labels[i], cam_id, mode, _cache_dir(cam),
                             color_mode=color_mode,
                             pcd_path=(pcds[i] if mode == "point_cloud" else None),
-                            point_size=point_size)
+                            point_size=point_size, histories=_histories(i))
 
 
 # ---------------- Playback ----------------
