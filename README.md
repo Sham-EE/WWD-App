@@ -1,8 +1,9 @@
 # LiDAR Wrong-Way Driving (WWD) Detection Toolkit
 
 A Streamlit pipeline for detecting wrong-way driving from roadside LiDAR point
-clouds (TUMTraf A9 `s110_ouster_south`). Four stages, each a page in the app:
+clouds. The pages:
 
+0. **Datasets** — choose which dataset the app works on, or add your own.
 1. **Background Filtering** — build a static-background model and keep only the
    moving foreground points.
 2. **Object Detection, Tracking & WWD** — cluster the foreground, track objects
@@ -13,17 +14,36 @@ clouds (TUMTraf A9 `s110_ouster_south`). Four stages, each a page in the app:
    GT-vs-detection visual comparison.
 4. **Lane Editor** — build/adjust the wrong-way lane geometry from data and
    export it.
+5. **WWD Simulator** — spawn a synthetic wrong-way driver through the real
+   detector and fire the V2X dashboard's messaging on detection.
+
+## Datasets
+
+The app is **multi-dataset**. Each dataset has its own self-contained workspace
+under `datasets/<id>/`:
+
+```
+datasets/A9_r02_s02/         # the bundled TUMTraf A9 template
+  config/   lanes.geojson, site_geometry.json     ← tracked in git (small)
+  data/     point_clouds/…, labels_point_clouds/… ← gitignored (local)
+  outputs/  background_model/, background_filtering/, object_detection/ ← gitignored
+```
+
+On the **Datasets** page you can switch the active dataset (every page reads/writes
+the active one) or **add your own**: point it at a folder of `.pcd` frames on disk
+(not copied) and optional OpenLABEL GT. A starter `site_geometry.json` is derived
+from the data extent so it runs immediately; datasets **without GT** still filter
+(the background model derives its height band from the point cloud). Build lanes
+for a new dataset on the **Lane Editor** page, then run Background Filtering →
+Detection → Evaluation.
 
 ## Running
 
 ```bash
-# Run from THIS directory (it contains data/ and outputs/), with your Python
-# environment active (needs shapely 2.x, scipy, scikit-learn, open3d, streamlit,
-# plotly, pandas, matplotlib, imageio):
+# From this folder, with your Python environment active (needs shapely 2.x, scipy,
+# scikit-learn, open3d, streamlit, plotly, pandas, matplotlib, imageio):
 streamlit run Home.py
 ```
-Run from *this* folder — the default paths (`data/...`, `outputs/...`) are
-relative to the working directory.
 
 ### End-to-end workflow
 1. **Background Filtering** → *Build Background Model* with **"Save filtered

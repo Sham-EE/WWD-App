@@ -20,8 +20,18 @@ behaviour is unchanged. User datasets get their own `datasets/<id>/` workspace.
 This module only RESOLVES paths and manages the registry; wiring the pipeline
 pages to use the active dataset is done separately.
 """
+import datetime
+import glob
 import json
 import os
+
+# Session-state keys that belong to ONE dataset's run; cleared when switching so
+# stale results from another dataset never linger in Detection/Eval/Simulator.
+SESSION_KEYS_TO_CLEAR = [
+    "detection_results", "bg_model",
+    "le_lanes", "le_v", "le_points",
+    "sim_step", "v2x_armed", "v2x_event", "ev_frame", "odt_frame",
+]
 
 _ROOT = os.path.dirname(__file__)
 DATASETS_DIR = os.path.join(_ROOT, "datasets")
@@ -189,9 +199,43 @@ def _slugify(name):
     return s or "dataset"
 
 
-def create_dataset(name, pcd_dir, gt_dir=""):
+def derive_site_geometry(pcd_dir, max_frames=10, pad=3.0):
+    """Build a starter site_geometry from the PCD extent: a research polygon
+    covering the data (padded), the whole area as one road polygon, no exclusion
+    rects. Lets a brand-new dataset run immediately; the user refines later."""
+    import numpy as np
+    try:
+        import open3d as o3d
+        files = sorted(glob.glob(os.path.join(pcd_dir, "*.pcd")))
+        xs, ys = [], []
+        if files:
+            idxs = np.unique(np.linspace(0, len(files) - 1, min(max_frames, len(files))).astype(int))
+            for i in idxs:
+                p = np.asarray(o3d.io.read_point_cloud(files[int(i)]).points)
+                if p.size:
+                    xs += [float(p[:, 0].min()), float(p[:, 0].max())]
+                    ys += [float(p[:, 1].min()), float(p[:, 1].max())]
+        if xs:
+            x0, x1, y0, y1 = min(xs) - pad, max(xs) + pad, min(ys) - pad, max(ys) + pad
+        else:
+            x0, x1, y0, y1 = -50.0, 50.0, -50.0, 50.0
+    except Exception:
+        x0, x1, y0, y1 = -50.0, 50.0, -50.0, 50.0
+    rect = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    return {
+        "_comment": "Auto-derived from PCD extent on dataset creation. Refine the "
+                    "research polygon / road polygons / exclusion rects as needed.",
+        "research_polygon": rect,
+        "road_polygons": [rect],
+        "foreground_exclusion_rects": [],
+        "coarse_grid": {"NX": 5, "NY": 5},
+    }
+
+
+def create_dataset(name, pcd_dir, gt_dir="", description=""):
     """Register a user dataset that points at an on-disk PCD folder (not copied),
-    with its own workspace under datasets/<id>/. Returns the Dataset."""
+    with its own workspace under datasets/<id>/. Scaffolds a starter
+    site_geometry.json (from the data extent) + a README. Returns the Dataset."""
     reg = load_registry()
     existing = {d["id"] for d in reg["datasets"]} | {t["id"] for t in TEMPLATES}
     base = _slugify(name)
@@ -201,13 +245,38 @@ def create_dataset(name, pcd_dir, gt_dir=""):
         ds_id = f"{base}_{n}"; n += 1
     d = {"id": ds_id, "name": name.strip() or ds_id, "template": False,
          "pcd_dir": pcd_dir.strip(), "gt_dir": gt_dir.strip(),
-         "workspace": os.path.join("datasets", ds_id)}
+         "workspace": os.path.join("datasets", ds_id),
+         "description": description.strip(),
+         "created": datetime.datetime.now().isoformat(timespec="seconds")}
     ds = Dataset(d)
     ds.ensure_workspace()
+    # scaffold starter geometry + readme so the dataset is immediately runnable
+    try:
+        with open(ds.site_geometry_path, "w", encoding="utf-8") as f:
+            json.dump(derive_site_geometry(pcd_dir), f, indent=2)
+    except Exception:
+        pass
+    try:
+        with open(os.path.join(ds.workspace, "README.md"), "w", encoding="utf-8") as f:
+            f.write(f"# {d['name']}\n\nCreated {d['created']}.\n\n"
+                    f"- PCD frames: `{pcd_dir}`\n- GT labels: `{gt_dir or '(none)'}`\n\n"
+                    "config/ (lane geometry, site geometry) and outputs/ (model, filtered clouds, "
+                    "detection results) for this dataset live in this folder.\n")
+    except Exception:
+        pass
     reg["datasets"].append(d)
     reg["active"] = ds_id
     save_registry(reg)
     return ds
+
+
+def rename_dataset(ds_id, new_name):
+    reg = load_registry()
+    for d in reg["datasets"]:
+        if d["id"] == ds_id:
+            d["name"] = new_name.strip() or d["name"]
+            save_registry(reg)
+            return
 
 
 def delete_dataset(ds_id):

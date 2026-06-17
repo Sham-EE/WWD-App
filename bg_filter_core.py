@@ -142,6 +142,26 @@ def compute_region_z_ranges(gt_dir, regions):
     z_ceil = float(max(all_zmaxs)) if all_zmaxs else 10.0
     return z_ranges, z_floor, z_ceil
 
+def compute_region_z_ranges_from_data(pcd_files, regions, config, max_frames=20,
+                                      object_height=5.0):
+    """Label-free fallback for datasets WITHOUT ground-truth: estimate the ground
+    level from the point cloud and keep a generous band (ground -> ground+height)
+    for every region. Anchored to the global low percentile so it works on any
+    site; without this a GT-less dataset would keep zero foreground."""
+    files = sorted_by_frame_index(pcd_files)
+    if not files:
+        return {name: {'zmin': None, 'zmax': None} for name, _ in regions}, -5.0, 10.0
+    idxs = np.unique(np.linspace(0, len(files) - 1, min(max_frames, len(files))).astype(int))
+    grounds = []
+    for i in idxs:
+        pts = np.asarray(o3d.io.read_point_cloud(files[int(i)]).points, dtype=np.float32)
+        if pts.size:
+            grounds.append(float(np.percentile(pts[:, 2], 1.0)))
+    ground = float(np.median(grounds)) if grounds else -5.0
+    zmin, zmax = ground - 0.5, ground + float(object_height)
+    z_ranges = {name: {'zmin': zmin, 'zmax': zmax} for name, _ in regions}
+    return z_ranges, zmin, zmax
+
 def cluster_shape_metrics(cluster_pts: np.ndarray):
     if cluster_pts.shape[0] < 3: return dict(H=0.0, area_xy=0.0, aspect_xy=0.0, L=0.0, P=0.0)
     H = float(cluster_pts[:,2].max() - cluster_pts[:,2].min())
@@ -192,7 +212,13 @@ def build_background_model(config: dict, pcd_files: list, gt_dir: str, progress_
     edge_band = road_poly.difference(road_poly.buffer(-config['inward_buffer_m'])) if config['inward_buffer_m'] > 0 else Polygon()
 
     regions = build_grid_regions(research_poly, cell_size=20.0)
-    z_ranges, z_floor, z_ceil = compute_region_z_ranges(gt_dir, regions)
+    # Use GT cuboids for per-region height bands when GT exists; otherwise derive
+    # a label-free band from the point cloud so GT-less datasets still filter.
+    has_gt = bool(gt_dir and glob.glob(os.path.join(gt_dir, '*.json')))
+    if has_gt:
+        z_ranges, z_floor, z_ceil = compute_region_z_ranges(gt_dir, regions)
+    else:
+        z_ranges, z_floor, z_ceil = compute_region_z_ranges_from_data(pcd_files, regions, config)
 
     # Init models
     Dx, Dy, Dz = (int(np.ceil((rmaxx - rminx) / config['bg_voxel'])),

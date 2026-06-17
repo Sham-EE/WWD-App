@@ -10,6 +10,13 @@ st.title("🚗 Home")
 
 st.sidebar.success("Select a tool above.")
 
+import dataset_manager as dm
+_active = dm.get_active()
+ab1, ab2 = st.columns([3, 1])
+ab1.info(f"🗂️ Active dataset: **{_active.name}**  (`{_active.id}`)")
+if ab2.button("Manage datasets", use_container_width=True):
+    st.switch_page("pages/0_Datasets.py")
+
 st.markdown(
     """
     Welcome to the Lidar Processing Toolkit!
