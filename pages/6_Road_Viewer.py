@@ -46,12 +46,19 @@ if not have_labels:
     st.info(f"No OpenLABEL label files in `{label_dir}` — only raw images can be shown. "
             "Add labels to enable generated box / point-cloud overlays.")
 
-color_mode, point_size = "by_category", 1
+color_mode, point_size = "by_category", 2
 if mode:
-    oc1, oc2 = st.columns([1, 2])
-    color_mode = oc1.radio("Box colour", ["by_category", "by_track_id"], horizontal=True)
+    oc1, oc2, oc3 = st.columns([1, 1.4, 1])
+    color_mode = oc1.radio("Box colour", ["by_category", "by_track_id"], horizontal=True,
+                           help="by_category: colour encodes the class (all cars cyan, trucks teal…). "
+                                "by_track_id: each object gets its own colour to follow it across frames.")
     if mode == "point_cloud":
         point_size = oc2.select_slider("Point size", [1, 2, 3], value=2)
+    if oc3.button("♻️ Regenerate (clear cache)", help="Delete cached overlays and re-render."):
+        import shutil
+        shutil.rmtree(os.path.join(ds.outputs_dir, "rendered"), ignore_errors=True)
+        st.session_state.road_video = None
+        st.rerun()
 
 # ---------------- Frame resolution + pairing ----------------
 raw_left = rv.frames_for(images_root, left_cam, "raw")
@@ -73,7 +80,7 @@ right_id = lp.camera_id_from_image(raw_right[0])
 
 
 def _cache_dir(cam):
-    return os.path.join(ds.outputs_dir, "rendered", cam, f"{mode}_{color_mode}")
+    return os.path.join(ds.outputs_dir, "rendered", cam, f"{mode}_{color_mode}_{lp.RENDER_VERSION}")
 
 
 def _render(i, cam, cam_id, raw):
