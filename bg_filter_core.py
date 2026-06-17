@@ -19,9 +19,11 @@ from geometry_config import (
     points_in_polygon,
 )
 
-# --- Geometry and Constants ---
-FG_RECTS = get_fg_exclusion_rects()
-FG_RECTS_BUFFERED = [p.buffer(0) for p in FG_RECTS]
+# FG exclusion rects are resolved lazily (per active dataset), not cached at
+# import — so switching datasets uses the right geometry. geometry_config caches
+# the parse, so calling this per frame is cheap.
+def _fg_rects_buffered():
+    return [p.buffer(0) for p in get_fg_exclusion_rects()]
 
 # --- Core Utility Functions (from original script) ---
 
@@ -58,7 +60,7 @@ def parse_gt_bboxes(json_path):
 def remove_fg_rects(pts: np.ndarray):
     if pts.size == 0: return pts
     keep = np.ones(pts.shape[0], dtype=bool)
-    for poly in FG_RECTS_BUFFERED:
+    for poly in _fg_rects_buffered():
         keep &= ~points_in_polygon(poly, pts[:, :2])
     return pts[keep]
 

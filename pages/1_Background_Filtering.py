@@ -18,12 +18,14 @@ st.set_page_config(layout="wide", page_title="Background Filtering")
 st.title("🔬 Background Filtering")
 logging.info("--- Background Filter Page Loaded ---")
 
-# ---------------- Helper functions -----------------
-# Use relative paths so the app is portable inside the project folder
-DEFAULT_MODEL_PATH = "outputs/background_model/background_model.pkl"
-DEFAULT_PCD = "data/point_clouds/cropped/cropped_pcd"
-DEFAULT_GT = "data/labels_point_clouds/a9_gt_visible_only_south"
-DEFAULT_OUT = "outputs/background_filtering"
+# ---------------- Active-dataset paths -----------------
+import dataset_manager as dm
+_ds = dm.get_active()
+st.sidebar.caption(f"📂 Dataset: **{_ds.name}**")
+DEFAULT_MODEL_PATH = _ds.model_path
+DEFAULT_PCD = _ds.pcd_dir
+DEFAULT_GT = _ds.gt_dir
+DEFAULT_OUT = _ds.filtered_dir
 
 @st.cache_data(show_spinner="Discovering PCD files...")
 def discover_pcd_files(dir_path: str):

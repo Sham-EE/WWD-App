@@ -42,9 +42,13 @@ if not st.session_state.get('detection_results'):
 
 results = st.session_state.detection_results
 
+import dataset_manager as dm
+_ds = dm.get_active()
+st.caption(f"📂 Dataset: **{_ds.name}**")
+
 gt_dir = st.text_input(
     "Ground-truth directory (OpenLABEL .json files)",
-    value="data/labels_point_clouds/a9_gt_visible_only_south",
+    value=_ds.gt_dir,
 )
 ec1, ec2, ec3 = st.columns(3)
 match_dist = ec1.slider("BEV match distance gate (m)", 0.5, 5.0, 2.0, 0.5,
@@ -55,7 +59,7 @@ roi_only = ec3.checkbox("Restrict to processed region (ROI)", value=True,
                         help="Only score GT inside the area the detector actually processes "
                              "(research polygon ∩ |y|≤ROI). Objects outside the sensor's operational "
                              "region aren't counted as misses — this is the fair number.")
-output_dir = "outputs/object_detection"
+output_dir = _ds.detection_dir
 
 if st.button("📐 Run Evaluation", use_container_width=True, type="primary"):
     if not os.path.isdir(gt_dir):

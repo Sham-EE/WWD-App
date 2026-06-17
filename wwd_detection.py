@@ -34,6 +34,15 @@ from geometry_config import points_in_polygon
 
 DEFAULT_LANES_PATH = os.path.join(os.path.dirname(__file__), "config", "lanes.geojson")
 
+
+def _active_lanes_path():
+    """Active dataset's lanes.geojson (falls back to the top-level config/)."""
+    try:
+        import dataset_manager as dm
+        return dm.get_active().lanes_path
+    except Exception:
+        return DEFAULT_LANES_PATH
+
 DEFAULT_PARAMS = {
     "angle_thresh_deg": 120.0,   # how far against the flow counts as wrong-way
     "min_speed": 2.0,            # m/s; below this, heading is unreliable
@@ -44,12 +53,15 @@ DEFAULT_PARAMS = {
 }
 
 
-def load_lane_config(path: str = DEFAULT_LANES_PATH):
+def load_lane_config(path: str = None):
     """Load lane regions + expected headings from a GeoJSON FeatureCollection.
+    Defaults to the active dataset's lanes.geojson.
 
     Returns a list of dicts: {lane_id, name, heading_deg, calibrated, polygon}.
     Returns an empty list (WWD effectively disabled) if the file is missing.
     """
+    if path is None:
+        path = _active_lanes_path()
     if not os.path.exists(path):
         return []
     with open(path, "r", encoding="utf-8") as f:

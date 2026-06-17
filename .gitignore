@@ -13,6 +13,8 @@ venv/
 
 # --- Large data & generated artifacts (track code, not data) ---
 
-# --- Per-dataset local workspaces (inputs/outputs/models live here, not in git) ---
-datasets/
+# --- Per-dataset workspaces: track each dataset's small config, NOT its data/outputs ---
+datasets/registry.json
+datasets/*/data/
+datasets/*/outputs/
 

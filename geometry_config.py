@@ -24,7 +24,16 @@ from shapely import contains_xy
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
-_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config", "site_geometry.json")
+_FALLBACK_PATH = os.path.join(os.path.dirname(__file__), "config", "site_geometry.json")
+
+
+def _site_geometry_path():
+    """Active dataset's site_geometry.json (falls back to a top-level config/)."""
+    try:
+        import dataset_manager as dm
+        return dm.get_active().site_geometry_path
+    except Exception:
+        return _FALLBACK_PATH
 
 # --- Hard-coded fallback (original TUMTraf s110_ouster_south values) ----------
 _FALLBACK = {
@@ -45,36 +54,47 @@ _FALLBACK = {
 }
 
 
+_cache = {"key": None, "cfg": None}
+
+
 def _load_config():
+    """Load the active dataset's site geometry, cached by (path, mtime) so it
+    reloads when you switch datasets or edit the file; merged over the fallback."""
+    path = _site_geometry_path()
     try:
-        with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        # Merge so a partial config still works.
-        merged = dict(_FALLBACK)
-        merged.update({k: v for k, v in cfg.items() if not k.startswith("_")})
-        return merged
-    except Exception:
-        return dict(_FALLBACK)
-
-
-_CFG = _load_config()
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = None
+    key = (path, mtime)
+    if _cache["key"] == key and _cache["cfg"] is not None:
+        return _cache["cfg"]
+    cfg = dict(_FALLBACK)
+    if mtime is not None:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            cfg.update({k: v for k, v in loaded.items() if not k.startswith("_")})
+        except Exception:
+            pass
+    _cache["key"], _cache["cfg"] = key, cfg
+    return cfg
 
 
 def get_research_polygon() -> Polygon:
-    return Polygon(_CFG["research_polygon"])
+    return Polygon(_load_config()["research_polygon"])
 
 
 def get_road_polygon():
-    polys = [Polygon(ring).buffer(0) for ring in _CFG["road_polygons"]]
+    polys = [Polygon(ring).buffer(0) for ring in _load_config()["road_polygons"]]
     return unary_union(polys)
 
 
 def get_fg_exclusion_rects():
-    return [Polygon(r) for r in _CFG["foreground_exclusion_rects"]]
+    return [Polygon(r) for r in _load_config()["foreground_exclusion_rects"]]
 
 
 def get_coarse_grid():
-    g = _CFG.get("coarse_grid", {"NX": 5, "NY": 5})
+    g = _load_config().get("coarse_grid", {"NX": 5, "NY": 5})
     return int(g["NX"]), int(g["NY"])
 
 

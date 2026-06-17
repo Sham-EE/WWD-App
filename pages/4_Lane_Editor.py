@@ -17,8 +17,11 @@ def _cached_background(pcd_dir, n_frames):
     return load_pcd_background(pcd_dir, n_frames=n_frames)
 
 
-LANES_PATH = "config/lanes.geojson"
-DEFAULT_TRACKS = "outputs/object_detection/tracks.csv"
+import dataset_manager as dm
+_ds = dm.get_active()
+LANES_PATH = _ds.lanes_path
+DEFAULT_TRACKS = os.path.join(_ds.detection_dir, "tracks.csv")
+DEFAULT_PCD_BG = _ds.pcd_dir
 PREVIEW_H = 640
 
 st.session_state.setdefault('le_lanes', [])
@@ -129,9 +132,9 @@ with right:
 
     show_bg = st.checkbox("🛰️ Point cloud background", value=False)
     bg_xyz = None
-    if show_bg and os.path.isdir("data/point_clouds/cropped/cropped_pcd"):
+    if show_bg and os.path.isdir(DEFAULT_PCD_BG):
         try:
-            bg_xyz = _cached_background("data/point_clouds/cropped/cropped_pcd", 15)
+            bg_xyz = _cached_background(DEFAULT_PCD_BG, 15)
         except Exception as e:
             st.warning(f"Background load failed: {e}")
 

@@ -30,12 +30,12 @@ REGISTRY_PATH = os.path.join(DATASETS_DIR, "registry.json")
 # Built-in template(s). Paths are relative to the repo root (the app's CWD).
 TEMPLATES = [
     {
-        "id": "tumtraf_s110",
-        "name": "TUMTraf s110 (ouster south) — template",
+        "id": "A9_r02_s02",
+        "name": "TUMTraf A9 r02_s02 (s110 ouster south) — template",
         "template": True,
-        "pcd_dir": "data/point_clouds/cropped/cropped_pcd",
-        "gt_dir": "data/labels_point_clouds/a9_gt_visible_only_south",
-        "workspace": ".",   # uses the existing top-level config/ and outputs/
+        "pcd_dir": "datasets/A9_r02_s02/data/point_clouds/cropped/cropped_pcd",
+        "gt_dir": "datasets/A9_r02_s02/data/labels_point_clouds/a9_gt_visible_only_south",
+        "workspace": "datasets/A9_r02_s02",
     },
 ]
 

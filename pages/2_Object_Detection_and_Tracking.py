@@ -17,17 +17,21 @@ if 'detection_results' not in st.session_state:
 # --- Input and Output Paths ---
 st.subheader("📁 Input and Output")
 
+import dataset_manager as dm
+_ds = dm.get_active()
+st.caption(f"📂 Dataset: **{_ds.name}**")
+
 filtered_pcd_dir = st.text_input(
     "Enter the path to the FILTERED PCD files (for detection):",
-    value=r"outputs/background_filtering"
+    value=_ds.filtered_dir
 )
 
 original_pcd_dir = st.text_input(
     "Enter the path to the ORIGINAL PCD files (for visualization):",
-    value=r"data/point_clouds/cropped/cropped_pcd"
+    value=_ds.pcd_dir
 )
 
-output_dir = "outputs/object_detection"
+output_dir = _ds.detection_dir
 
 # --- Parameters ---
 st.subheader("⚙️ Algorithm Parameters")
