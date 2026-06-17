@@ -15,7 +15,7 @@ import numpy as np
 
 # Bump when the rendering/palette changes so cached overlays auto-invalidate
 # (the Road Viewer includes this in the cache folder name).
-RENDER_VERSION = "v4"
+RENDER_VERSION = "v5"
 
 # Per-category colours (RGB) — EXACTLY the TUM Traffic dev-kit values
 # (id_to_class_name_mapping[...]["color_rgb"] in src/utils/utils.py).
@@ -158,7 +158,7 @@ def load_pointcloud(pcd_path):
 
 def render_frame(image_path, label_json_path, camera_id, mode="box3d",
                  color_mode="by_category", pcd_path=None, depth_max=None,
-                 point_size=2, line_width=2, draw_labels=True):
+                 point_size=2, line_width=2, draw_labels=True, label_size=26):
     """Render labels (and optionally the point cloud) onto one camera image.
     mode: 'box3d' (3D wireframes) or 'point_cloud' (points + 3D wireframes).
     Returns a PIL.Image."""
@@ -193,7 +193,7 @@ def render_frame(image_path, label_json_path, camera_id, mode="box3d",
 
     # --- 3D boxes ---
     draw = ImageDraw.Draw(img)
-    font = _font() if draw_labels else None
+    font = _font(label_size) if draw_labels else None
     for obj in load_objects(label_json_path):
         corners = cuboid_corners(obj["val"])
         u, v, z, valid = _project(corners, K, T)
@@ -208,9 +208,9 @@ def render_frame(image_path, label_json_path, camera_id, mode="box3d",
             tx = float(np.min(u[valid])); ty = float(np.min(v[valid]))
             if 0 <= tx < W and 0 <= ty < H:
                 text = _label_text(obj)
-                tx = min(max(tx, 0), W - 1); ty = max(0, ty - 18)
+                tx = min(max(tx, 0), W - 1); ty = max(0, ty - label_size - 6)
                 bb = draw.textbbox((tx, ty), text, font=font)
-                draw.rectangle([bb[0] - 2, bb[1] - 1, bb[2] + 2, bb[3] + 1], fill=col)  # solid tag
+                draw.rectangle([bb[0] - 3, bb[1] - 2, bb[2] + 3, bb[3] + 2], fill=col)  # solid tag
                 draw.text((tx, ty), text, fill=(0, 0, 0), font=font)                    # black text
     return img
 
