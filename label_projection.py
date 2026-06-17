@@ -13,14 +13,33 @@ import os
 
 import numpy as np
 
-# Per-category colours (RGB). Matches the dev-kit's spirit (one colour per class).
+# Per-category colours (RGB) — EXACTLY the TUM Traffic dev-kit values
+# (id_to_class_name_mapping[...]["color_rgb"] in src/utils/utils.py).
 CATEGORY_COLORS = {
-    "CAR": (0, 220, 0), "TRUCK": (0, 160, 255), "BUS": (255, 140, 0),
-    "TRAILER": (0, 200, 200), "VAN": (170, 110, 255), "PEDESTRIAN": (255, 40, 40),
-    "BICYCLE": (255, 220, 0), "MOTORCYCLE": (255, 120, 0), "BICYCLE_RIDER": (255, 220, 0),
-    "EMERGENCY_VEHICLE": (255, 0, 255), "OTHER": (180, 180, 180),
+    "CAR": (0, 204, 246), "TRUCK": (63, 233, 185), "TRAILER": (90, 255, 126),
+    "VAN": (235, 207, 54), "MOTORCYCLE": (185, 164, 84), "BUS": (217, 138, 134),
+    "PEDESTRIAN": (233, 118, 249), "BICYCLE": (177, 140, 255),
+    "EMERGENCY_VEHICLE": (102, 107, 250), "OTHER": (199, 199, 199),
+    "LICENSE_PLATE_LOCATION": (0, 0, 0),
 }
-_DEFAULT_COLOR = (200, 200, 200)
+_DEFAULT_COLOR = (199, 199, 199)
+
+
+def _font(size=15):
+    from PIL import ImageFont
+    try:
+        import matplotlib
+        return ImageFont.truetype(
+            os.path.join(matplotlib.get_data_path(), "fonts", "ttf", "DejaVuSans.ttf"), size)
+    except Exception:
+        return ImageFont.load_default()
+
+
+def _label_text(obj):
+    """Dev-kit style: TYPE_<first 3 chars of the id suffix>, e.g. CAR_048."""
+    name = obj.get("name") or ""
+    suffix = name.rsplit("_", 1)[-1] if "_" in name else str(obj.get("id", ""))
+    return f"{obj['type']}_{suffix[:3]}" if suffix else str(obj["type"])
 
 # Box edges (corner indices); corners 0-3 = top face (+z), 4-7 = bottom face.
 _EDGES = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
@@ -74,7 +93,8 @@ def load_objects(label_json_path):
         od = o.get("object_data", {})
         val = od.get("cuboid", {}).get("val")
         if val and len(val) >= 10:
-            objs.append({"id": oid, "type": od.get("type", "OTHER"), "val": val})
+            objs.append({"id": oid, "type": od.get("type", "OTHER"),
+                         "name": od.get("name", ""), "val": val})
     return objs
 
 
@@ -160,6 +180,7 @@ def render_frame(image_path, label_json_path, camera_id, mode="box3d",
 
     # --- 3D boxes ---
     draw = ImageDraw.Draw(img)
+    font = _font() if draw_labels else None
     for obj in load_objects(label_json_path):
         corners = cuboid_corners(obj["val"])
         u, v, z, valid = _project(corners, K, T)
@@ -173,7 +194,10 @@ def render_frame(image_path, label_json_path, camera_id, mode="box3d",
         if draw_labels and valid.any():
             tx = float(np.min(u[valid])); ty = float(np.min(v[valid]))
             if 0 <= tx < W and 0 <= ty < H:
-                draw.text((tx, max(0, ty - 11)), str(obj["type"]), fill=col)
+                ty = max(0, ty - 17)
+                text = _label_text(obj)
+                draw.text((tx + 1, ty + 1), text, fill=(0, 0, 0), font=font)   # shadow
+                draw.text((tx, ty), text, fill=col, font=font)
     return img
 
 
