@@ -50,9 +50,24 @@ start_frac = c3.slider("Entry point along lane", 0.0, 0.8, 0.0, 0.05,
 lateral_frac = c4.slider("Lane position (across)", 0.0, 1.0, 0.5, 0.05)
 fps = c5.number_input("FPS", 1.0, 30.0, 10.0, 1.0, help="Simulation frame rate.")
 
+st.markdown("##### Detector settings")
+d1, d2, d3 = st.columns(3)
+conf_frames = d1.slider("Confirmation frames", 1, 30, 5, 1,
+                        help="Consecutive wrong-way frames required before the detector confirms it "
+                             "(WWD min_frames). Higher = more cautious, later detection.")
+min_speed_wwd = d2.slider("Min speed (m/s)", 0.5, 10.0, 1.0, 0.5,
+                          help="Below this the heading is treated as unreliable.")
+angle_thresh = d3.slider("Angle vs. flow (deg)", 90, 180, 120, 5,
+                         help="How far against the lane's legal direction counts as wrong-way.")
+
 mix_real = False
-if st.session_state.get("detection_results"):
-    mix_real = st.checkbox("Mix with real traffic from the last detection run", value=False)
+have_real = bool(st.session_state.get("detection_results"))
+if have_real:
+    mix_real = st.checkbox("🚗 Overlay real traffic (animates frame-by-frame from the last detection run)",
+                           value=True, help="Shows the actual detected vehicles moving alongside the "
+                                            "simulated wrong-way driver, colored by direction.")
+else:
+    st.caption("Run **Object Detection and Tracking** first to overlay real moving traffic here.")
 
 # ---------------- Build + detect ----------------
 sim_track = make_wrong_way_track(opt["lane"], fps=fps, speed=speed,
@@ -69,7 +84,8 @@ if mix_real:
 
 det_frames = build_sim_det_frames(sim_track, start_frame=start_frame, base_det_frames=base,
                                   total_frames=len(sim_track) + 5)
-ww = detect_wrong_way(det_frames, lanes, {"min_speed": 1.0})
+ww = detect_wrong_way(det_frames, lanes, {"min_speed": min_speed_wwd, "min_frames": int(conf_frames),
+                                          "angle_thresh_deg": float(angle_thresh)})
 sim_res = ww["tracks"].get(SIM_TID, {})
 is_flagged = SIM_TID in ww["wrong_way_tids"]
 first_flag = sim_res.get("first_flag_frame")  # det-frame index
