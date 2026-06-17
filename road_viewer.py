@@ -90,23 +90,57 @@ def combine_side_by_side(left_path, right_path, height=480, gap=8):
     return canvas
 
 
-def generate_side_by_side_video(left_frames, right_frames, out_path, fps=10,
+def mp4_available():
+    """Whether an MP4 (ffmpeg) backend is usable in the current environment."""
+    try:
+        import imageio_ffmpeg  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def generate_side_by_side_video(left_frames, right_frames, out_dir, basename, fps=10,
                                 height=480, max_frames=0, progress=None):
-    """Write an MP4 of left|right frames. Returns the path."""
+    """Render left|right frames to a video. Tries MP4 (needs imageio-ffmpeg) and
+    falls back to an animated GIF (no extra deps) if the ffmpeg backend is missing.
+    Returns (path, kind) where kind is 'mp4' or 'gif'."""
     import imageio.v2 as imageio
     import numpy as np
     n = min(len(left_frames), len(right_frames))
     if max_frames and max_frames > 0:
         n = min(n, max_frames)
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    writer = imageio.get_writer(out_path, fps=fps, codec="libx264",
-                                macro_block_size=16, quality=7)
+    os.makedirs(out_dir, exist_ok=True)
+
+    # --- try MP4 ---
+    mp4 = os.path.join(out_dir, basename + ".mp4")
     try:
-        for i in range(n):
-            frame = combine_side_by_side(left_frames[i], right_frames[i], height=height)
-            writer.append_data(np.asarray(frame))
+        writer = imageio.get_writer(mp4, fps=fps, codec="libx264",
+                                    macro_block_size=16, quality=7)
+        try:
+            for i in range(n):
+                writer.append_data(np.asarray(combine_side_by_side(left_frames[i], right_frames[i], height)))
+                if progress:
+                    progress(i + 1, n)
+        finally:
+            writer.close()
+        return mp4, "mp4"
+    except Exception:
+        try:
+            os.remove(mp4)
+        except OSError:
+            pass
+
+    # --- GIF fallback (subsampled + capped height to keep the file sane) ---
+    gif = os.path.join(out_dir, basename + ".gif")
+    gh = min(int(height), 320)
+    stride = max(1, n // 120)
+    idxs = list(range(0, n, stride))
+    writer = imageio.get_writer(gif, mode="I", duration=1.0 / max(1, fps), loop=0)
+    try:
+        for k, i in enumerate(idxs):
+            writer.append_data(np.asarray(combine_side_by_side(left_frames[i], right_frames[i], gh)))
             if progress:
-                progress(i + 1, n)
+                progress(k + 1, len(idxs))
     finally:
         writer.close()
-    return out_path
+    return gif, "gif"

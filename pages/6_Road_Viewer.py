@@ -75,26 +75,37 @@ if playing and i < n - 1:
 # ---------------- Generate video ----------------
 st.divider()
 st.subheader("🎬 Generate road video")
+if not rv.mp4_available():
+    st.caption("ℹ️ MP4 export needs `imageio-ffmpeg` in the environment running this app "
+               "(`pip install imageio-ffmpeg`). Until then, an animated **GIF** is produced instead.")
 g1, g2, g3 = st.columns(3)
 v_fps = g1.slider("Video FPS", 1, 30, 10, 1)
 v_height = g2.select_slider("Frame height (px)", [360, 480, 540, 720], value=480)
 v_max = g3.number_input("Max frames (0 = all)", 0, n, 0)
 
 video_dir = os.path.join(ds.outputs_dir, "road_videos")
-video_path = os.path.join(video_dir, f"road_{left_cam}_{right_cam}_{vkey}.mp4")
+basename = f"road_{left_cam}_{right_cam}_{vkey}"
+st.session_state.setdefault("road_video", None)
 
 if st.button("🎬 Generate side-by-side video", type="primary", use_container_width=True):
     bar = st.progress(0.0, text="Rendering…")
     try:
-        rv.generate_side_by_side_video(
-            left_frames, right_frames, video_path, fps=int(v_fps), height=int(v_height),
+        path, kind = rv.generate_side_by_side_video(
+            left_frames, right_frames, video_dir, basename, fps=int(v_fps), height=int(v_height),
             max_frames=int(v_max), progress=lambda c, t: bar.progress(c / t, text=f"Frame {c}/{t}"))
         bar.empty()
-        st.success(f"Saved video → `{video_path}`")
+        st.session_state.road_video = (path, kind)
+        st.success(f"Saved {kind.upper()} → `{path}`"
+                   + ("  (GIF fallback — install imageio-ffmpeg for MP4)" if kind == "gif" else ""))
     except Exception as e:
         bar.empty()
         st.error(f"Video generation failed: {e}")
 
-if os.path.exists(video_path):
-    st.video(video_path)
-    st.caption(f"Last generated: `{video_path}`")
+rvid = st.session_state.get("road_video")
+if rvid and os.path.exists(rvid[0]):
+    path, kind = rvid
+    if kind == "mp4":
+        st.video(path)
+    else:
+        st.image(path, caption="Road animation (GIF)")
+    st.caption(f"Last generated: `{path}`")
