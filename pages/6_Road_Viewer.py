@@ -47,7 +47,7 @@ if not have_labels:
             "Add labels to enable generated box / point-cloud overlays.")
 
 color_mode, point_size = "by_category", 2
-track_hist, hist_window = False, 30
+track_hist, hist_window, trail_width = False, 30, 8
 if mode:
     oc1, oc2, oc3 = st.columns([1, 1.4, 1])
     color_mode = oc1.radio("Box colour", ["by_category", "by_track_id"], horizontal=True,
@@ -60,12 +60,13 @@ if mode:
         shutil.rmtree(os.path.join(ds.outputs_dir, "rendered"), ignore_errors=True)
         st.session_state.road_video = None
         st.rerun()
-    th1, th2 = st.columns([1, 2])
-    track_hist = th1.checkbox("🛤️ Track history (cyan trails)", value=False,
-                              help="Draw each object's recent path as a tapering cyan trail, "
-                                   "computed from its position in the preceding frames.")
+    th1, th2, th3 = st.columns([1.3, 1, 1])
+    track_hist = th1.checkbox("🛤️ Track history (trails)", value=False,
+                              help="Draw each object's recent path as a tapering trail (coloured to "
+                                   "match its box), computed from its position in the preceding frames.")
     if track_hist:
         hist_window = th2.slider("Trail length (frames)", 5, 80, 30, 5)
+        trail_width = th3.slider("Trail thickness (px)", 2, 24, 8, 1)
 
 # ---------------- Frame resolution + pairing ----------------
 raw_left = rv.frames_for(images_root, left_cam, "raw")
@@ -111,7 +112,7 @@ def _histories(i):
 
 def _cache_dir(cam):
     ps = f"_ps{point_size}" if mode == "point_cloud" else ""
-    th = f"_th{hist_window}" if track_hist else ""
+    th = f"_th{hist_window}w{trail_width}" if track_hist else ""
     return os.path.join(ds.outputs_dir, "rendered", cam, f"{mode}_{color_mode}{ps}{th}_{lp.RENDER_VERSION}")
 
 
@@ -122,7 +123,7 @@ def _render(i, cam, cam_id, raw):
     return lp.render_cached(raw[i], labels[i], cam_id, mode, _cache_dir(cam),
                             color_mode=color_mode,
                             pcd_path=(pcds[i] if mode == "point_cloud" else None),
-                            point_size=point_size, histories=_histories(i))
+                            point_size=point_size, histories=_histories(i), trail_width=trail_width)
 
 
 # ---------------- Playback ----------------

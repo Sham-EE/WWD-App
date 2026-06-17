@@ -164,7 +164,7 @@ def load_pointcloud(pcd_path):
 def render_frame(image_path, label_json_path, camera_id, mode="box3d",
                  color_mode="by_category", pcd_path=None, depth_max=None,
                  point_size=2, line_width=2, draw_labels=True, label_size=26,
-                 histories=None):
+                 histories=None, trail_width=8):
     """Render labels (and optionally the point cloud) onto one camera image.
     mode: 'box3d' (3D wireframes) or 'point_cloud' (points + 3D wireframes).
     Returns a PIL.Image."""
@@ -211,7 +211,7 @@ def render_frame(image_path, label_json_path, camera_id, mode="box3d",
             m = len(seq)
             for k in range(1, m):
                 if valid[k - 1] and valid[k]:
-                    w = max(3, int(4 + 8 * k / m))          # older = thinner, recent = thick
+                    w = max(1, int(round(trail_width * (0.35 + 0.65 * k / m))))  # taper to trail_width
                     draw.line([(u[k - 1], v[k - 1]), (u[k], v[k])], fill=tcol, width=w)
 
     # --- 3D boxes ---
@@ -239,7 +239,7 @@ def render_frame(image_path, label_json_path, camera_id, mode="box3d",
 
 def render_cached(image_path, label_path, camera_id, mode, out_dir,
                   color_mode="by_category", pcd_path=None, point_size=2,
-                  histories=None, force=False):
+                  histories=None, trail_width=8, force=False):
     """Render (or reuse a cached) labelled image. Returns the output path.
     NOTE: the caller must encode params that change the image (point_size,
     track-history) into out_dir, since the cache key is the output path."""
@@ -248,6 +248,6 @@ def render_cached(image_path, label_path, camera_id, mode, out_dir,
     if force or not os.path.exists(out):
         im = render_frame(image_path, label_path, camera_id, mode=mode,
                           color_mode=color_mode, pcd_path=pcd_path,
-                          point_size=point_size, histories=histories)
+                          point_size=point_size, histories=histories, trail_width=trail_width)
         im.save(out, quality=90)
     return out
