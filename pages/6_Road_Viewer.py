@@ -94,34 +94,42 @@ def _render(i, cam, cam_id, raw):
 
 
 # ---------------- Playback ----------------
+# Isolated in a fragment so stepping frames reruns ONLY this block, not the whole
+# page — no full-page refresh/flicker between frames.
 st.session_state.setdefault("road_frame", 0)
-st.session_state.road_frame = max(0, min(st.session_state.road_frame, n - 1))
-nav = st.columns([1, 1, 1, 1, 1.3, 3])
-if nav[0].button("⏮ First", use_container_width=True):
-    st.session_state.road_frame = 0; st.rerun()
-if nav[1].button("◀ Prev", use_container_width=True):
-    st.session_state.road_frame = max(0, st.session_state.road_frame - 1); st.rerun()
-if nav[2].button("Next ▶", use_container_width=True):
-    st.session_state.road_frame = min(n - 1, st.session_state.road_frame + 1); st.rerun()
-if nav[3].button("Last ⏭", use_container_width=True):
-    st.session_state.road_frame = n - 1; st.rerun()
-playing = nav[4].toggle("▶ Play", value=False)
-play_delay = nav[5].slider("Play delay (s)", 0.0, 1.0, 0.15, 0.05)
-i = st.slider("Frame", 0, max(n - 1, 1), st.session_state.road_frame)
-st.session_state.road_frame = i
 
-with st.spinner("Rendering…" if mode else ""):
+
+@st.fragment
+def _viewer():
+    st.session_state.road_frame = max(0, min(st.session_state.road_frame, n - 1))
+    nav = st.columns([1, 1, 1, 1, 1.3, 3])
+    if nav[0].button("⏮ First", use_container_width=True):
+        st.session_state.road_frame = 0
+    if nav[1].button("◀ Prev", use_container_width=True):
+        st.session_state.road_frame = max(0, st.session_state.road_frame - 1)
+    if nav[2].button("Next ▶", use_container_width=True):
+        st.session_state.road_frame = min(n - 1, st.session_state.road_frame + 1)
+    if nav[3].button("Last ⏭", use_container_width=True):
+        st.session_state.road_frame = n - 1
+    playing = nav[4].toggle("▶ Play", value=False)
+    play_delay = nav[5].slider("Play delay (s)", 0.0, 1.0, 0.15, 0.05)
+    i = st.slider("Frame", 0, max(n - 1, 1), st.session_state.road_frame)
+    st.session_state.road_frame = i
+
     left_img = _render(i, left_cam, left_id, raw_left)
     right_img = _render(i, right_cam, right_id, raw_right)
-lc, rc = st.columns(2)
-lc.image(left_img, use_container_width=True, caption=f"{left_cam} (left) · frame {i+1}/{n}")
-rc.image(right_img, use_container_width=True, caption=f"{right_cam} (right) · frame {i+1}/{n}")
+    lc, rc = st.columns(2)
+    lc.image(left_img, use_container_width=True, caption=f"{left_cam} (left) · frame {i+1}/{n}")
+    rc.image(right_img, use_container_width=True, caption=f"{right_cam} (right) · frame {i+1}/{n}")
 
-if playing and i < n - 1:
-    import time
-    time.sleep(float(play_delay))
-    st.session_state.road_frame = i + 1
-    st.rerun()
+    if playing and i < n - 1:
+        import time
+        time.sleep(float(play_delay))
+        st.session_state.road_frame = i + 1
+        st.rerun(scope="fragment")
+
+
+_viewer()
 
 # ---------------- Generate video ----------------
 st.divider()

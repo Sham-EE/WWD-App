@@ -15,7 +15,7 @@ import numpy as np
 
 # Bump when the rendering/palette changes so cached overlays auto-invalidate
 # (the Road Viewer includes this in the cache folder name).
-RENDER_VERSION = "v3"
+RENDER_VERSION = "v4"
 
 # Per-category colours (RGB) — EXACTLY the TUM Traffic dev-kit values
 # (id_to_class_name_mapping[...]["color_rgb"] in src/utils/utils.py).
@@ -135,12 +135,18 @@ def _color_for(obj, color_mode):
 
 
 def _depth_colors(distances, dmax=None):
-    """Distance -> RGB via the 'jet' colormap, matching the dev-kit:
-    near = blue, far = red. dmax auto-scales to the 95th-percentile range."""
+    """Distance -> RGB via 'jet' (near=blue, far=red). The full spectrum is
+    stretched across the 1st–99th percentile of the visible ranges, so the
+    gradient uses its whole range (wider colour spread, like the dev-kit)."""
     from matplotlib import cm
-    if dmax is None:
-        dmax = max(float(np.percentile(distances, 95)), 30.0) if len(distances) else 90.0
-    norm = np.clip(distances / float(dmax), 0, 1)      # near 0 -> blue, far 1 -> red
+    d = np.asarray(distances, dtype=float)
+    if d.size == 0:
+        return np.zeros((0, 3), dtype=np.uint8)
+    lo = float(np.percentile(d, 1))
+    hi = float(dmax) if dmax else float(np.percentile(d, 99))
+    if hi <= lo:
+        hi = lo + 1.0
+    norm = np.clip((d - lo) / (hi - lo), 0, 1)          # near 0 -> blue, far 1 -> red
     rgba = cm.get_cmap("jet")(norm)
     return (rgba[:, :3] * 255).astype(np.uint8)
 
