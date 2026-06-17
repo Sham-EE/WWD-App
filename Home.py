@@ -50,7 +50,7 @@ st.write("")
 GROUPS = [
     ("📂 Data & setup", [
         ("🗂️", "Datasets", "Choose the active dataset or add your own.", "pages/0_Datasets.py"),
-        ("🛣️", "Road Viewer", "Both cameras side by side with generated box / point-cloud overlays + road video.", "pages/6_Road_Viewer.py"),
+        ("🎬", "Visualizer", "Cameras side by side + 3D LiDAR labels (BEV/side); generated overlays, trails, video.", "pages/6_Visualizer.py"),
     ]),
     ("⚙️ Detection pipeline", [
         ("🔬", "Background Filtering", "Build a background model; keep moving foreground points.", "pages/1_Background_Filtering.py"),
