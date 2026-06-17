@@ -1,75 +1,76 @@
 import streamlit as st
-
-st.set_page_config(
-    page_title="Home",
-    page_icon="🚗",
-    layout="centered",
-)
-
-st.title("🚗 Home")
-
-st.sidebar.success("Select a tool above.")
-
 import dataset_manager as dm
-_active = dm.get_active()
-ab1, ab2 = st.columns([3, 1])
-ab1.info(f"🗂️ Active dataset: **{_active.name}**  (`{_active.id}`)")
-if ab2.button("Manage datasets", use_container_width=True):
-    st.switch_page("pages/0_Datasets.py")
 
+st.set_page_config(page_title="LiDAR WWD Toolkit", page_icon="🚗", layout="wide")
+
+# ---------------- Header ----------------
 st.markdown(
     """
-    Welcome to the Lidar Processing Toolkit!
-
-    This application provides tools for visualizing and processing 3D point cloud data.
-
-    **👈 Select a tool from the sidebar** to get started.
-
-    ### Available Tools:
-    """
+    <div style="padding:6px 0 2px 0">
+      <h1 style="margin-bottom:0">🚗 LiDAR Wrong-Way Driving Toolkit</h1>
+      <p style="color:#8b97a7;margin-top:4px;font-size:1.02rem">
+        Roadside-LiDAR pipeline — background filtering · detection &amp; tracking ·
+        wrong-way detection · evaluation · V2X alerting.
+      </p>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
+st.sidebar.success("Select a tool above.")
 
-col1, col2 = st.columns(2)
+# ---------------- Active dataset banner ----------------
+_active = dm.get_active()
+_status = _active.status()
+_chips = " ".join(c for c in [
+    "🟢 PCDs" if _status["pcd"] else "⚪ no PCDs",
+    "🏷️ GT" if _status["gt"] else "",
+    "🛣️ lanes" if _status["lanes"] else "",
+    "📦 model" if _status["model"] else "",
+    "✨ filtered" if _status["filtered"] else "",
+] if c)
+ab1, ab2 = st.columns([4, 1])
+with ab1:
+    st.markdown(
+        f"""<div style="background:#14181f;border:1px solid #2a3340;border-radius:12px;padding:12px 16px">
+              <span style="color:#8b97a7;font-size:.8rem;text-transform:uppercase;letter-spacing:.05em">Active dataset</span><br>
+              <span style="font-size:1.15rem;font-weight:600">🗂️ {_active.name}</span>
+              <span style="color:#8b97a7"> · <code>{_active.id}</code></span><br>
+              <span style="color:#8b97a7;font-size:.9rem">{_chips}</span>
+            </div>""",
+        unsafe_allow_html=True,
+    )
+with ab2:
+    st.write("")
+    if st.button("Manage datasets →", use_container_width=True):
+        st.switch_page("pages/0_Datasets.py")
 
-with col1:
-    st.subheader("Background Filtering")
-    st.write("Build a background model and filter dynamic objects.")
-    if st.button("Go to Background Filtering", use_container_width=True):
-        st.switch_page("pages/1_Background_Filtering.py")
+st.write("")
 
-with col2:
-    st.subheader("Detection, Tracking & WWD")
-    st.write("Detect, track, and flag wrong-way vehicles in filtered clouds.")
-    if st.button("Go to Object Detection and Tracking", use_container_width=True):
-        st.switch_page("pages/2_Object_Detection_and_Tracking.py")
+# ---------------- Tool groups ----------------
+GROUPS = [
+    ("📂 Data & setup", [
+        ("🗂️", "Datasets", "Choose the active dataset or add your own.", "pages/0_Datasets.py"),
+        ("🛣️", "Road Viewer", "Click through both cameras side by side; render a road video.", "pages/6_Road_Viewer.py"),
+    ]),
+    ("⚙️ Detection pipeline", [
+        ("🔬", "Background Filtering", "Build a background model; keep moving foreground points.", "pages/1_Background_Filtering.py"),
+        ("📦", "Detection & Tracking", "Cluster, Kalman-track, and flag wrong-way vehicles.", "pages/2_Object_Detection_and_Tracking.py"),
+        ("📊", "Evaluation", "Score vs ground truth (P/R/F1, MOTA) + visual compare.", "pages/3_Evaluation.py"),
+    ]),
+    ("🚨 Wrong-way driving", [
+        ("🛣️", "Lane Editor", "Build/adjust the lane directions used for WWD.", "pages/4_Lane_Editor.py"),
+        ("🚨", "WWD Simulator", "Spawn a synthetic wrong-way driver; fire the V2X alert.", "pages/5_WWD_Simulator.py"),
+    ]),
+]
 
-col3, col4 = st.columns(2)
-
-with col3:
-    st.subheader("Evaluation")
-    st.write("Score detection/tracking against ground truth (P/R/F1, MOTA).")
-    if st.button("Go to Evaluation", use_container_width=True):
-        st.switch_page("pages/3_Evaluation.py")
-
-with col4:
-    st.subheader("Lane Editor")
-    st.write("Build/adjust wrong-way lane geometry from tracks.csv and export it.")
-    if st.button("Go to Lane Editor", use_container_width=True):
-        st.switch_page("pages/4_Lane_Editor.py")
-
-col5, col6 = st.columns(2)
-
-with col5:
-    st.subheader("🚨 WWD Simulator")
-    st.write("Spawn a synthetic wrong-way driver, watch the detector flag it, fire the alert.")
-    if st.button("Go to WWD Simulator", use_container_width=True):
-        st.switch_page("pages/5_WWD_Simulator.py")
-
-with col6:
-    st.subheader("🛣️ Road Viewer")
-    st.write("Click through both cameras side by side and render a continuous road video.")
-    if st.button("Go to Road Viewer", use_container_width=True):
-        st.switch_page("pages/6_Road_Viewer.py")
-
-
-
+for title, tools in GROUPS:
+    st.markdown(f"#### {title}")
+    cols = st.columns(3)
+    for i, (icon, name, desc, page) in enumerate(tools):
+        with cols[i % 3]:
+            with st.container(border=True):
+                st.markdown(f"**{icon}&nbsp; {name}**", unsafe_allow_html=True)
+                st.caption(desc)
+                if st.button("Open", key=f"go_{page}", use_container_width=True):
+                    st.switch_page(page)
+    st.write("")

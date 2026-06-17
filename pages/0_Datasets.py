@@ -90,9 +90,19 @@ with st.expander("📁 Workspace paths"):
     })
     if not ds.status()["pcd"]:
         st.warning(f"No .pcd files found in `{ds.pcd_dir}`.")
+        if ds.is_template:
+            st.info("Template **config** ships with the repo, but its large LiDAR/image **data** "
+                    "does not. Download the dataset and place the frames under "
+                    f"`{os.path.join(ds.workspace, 'data')}` (see that folder's README). "
+                    "You don't edit any paths — the template already points here.")
 
 # --- site geometry view (and edit for user datasets) ---
-with st.expander("🗺️ Site geometry (processed region)"):
+with st.expander("🗺️ Site geometry (background-filtering region)"):
+    st.caption("**Site geometry** (`site_geometry.json`) is the *processed region* used by "
+               "**Background Filtering** — the research polygon, road polygons, and exclusion "
+               "rectangles. It is **separate from the WWD lanes** you draw in the Lane Editor "
+               "(`lanes.geojson`): editing lanes does NOT change this. For the A9 template these "
+               "are curated values; for a new dataset they're auto-derived from the data extent.")
     geo = None
     if os.path.exists(ds.site_geometry_path):
         try:
