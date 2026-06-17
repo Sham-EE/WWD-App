@@ -16,6 +16,10 @@ clouds. The pages:
    export it.
 5. **WWD Simulator** — spawn a synthetic wrong-way driver through the real
    detector and fire the V2X dashboard's messaging on detection.
+6. **Visualizer** — two tabs: a **camera** viewer (both cameras side by side with
+   generated bounding-box / point-cloud overlays + track-history trails + video),
+   and a **3D LiDAR** viewer (the scan + ground-truth boxes in Bird's-Eye and Side
+   views). A native, dependency-light replacement for the TUM Traffic dev-kit.
 
 ## Datasets
 
@@ -37,11 +41,33 @@ from the data extent so it runs immediately; datasets **without GT** still filte
 for a new dataset on the **Lane Editor** page, then run Background Filtering →
 Detection → Evaluation.
 
+## Visualizer (page 6) — native dev-kit replacement
+
+The TUM Traffic dev-kit's label visualizations need a heavy native/OpenGL setup
+that's painful to install on Mac/Windows. This page reproduces them with pure
+Python (PIL + Plotly), reading the camera calibration **straight out of each
+OpenLABEL label JSON** (`coordinate_systems` extrinsics + `streams` intrinsics) —
+so no dev-kit, no calibration files, and no extra dependencies.
+
+- **Camera tab** — both cameras side by side (south2 left, south1 right by
+  default). Switch between **Raw**, **Bounding boxes (3D)**, and **Boxes + point
+  cloud** (LiDAR projected onto the image, depth-coloured blue→red). Overlays are
+  generated on the fly from labels + calibration and cached under
+  `outputs/rendered/`. Optional **track-history trails** (coloured per object,
+  adjustable length/thickness). Exact dev-kit class colours + `TYPE_id` labels.
+  **Generate** a side-by-side MP4 (GIF fallback) of any variant.
+- **3D LiDAR tab** — the point cloud + ground-truth 3D boxes in the sensor frame,
+  shown as **Bird's-Eye** and **Side** views (rotate/zoom), coloured by category.
+
+Frame stepping is isolated with `st.fragment` + cached loads so playback is smooth
+(no full-page refresh). The same playback control is on **Background Filtering**.
+
 ## Running
 
 ```bash
-# From this folder, with your Python environment active (needs shapely 2.x, scipy,
-# scikit-learn, open3d, streamlit, plotly, pandas, matplotlib, imageio):
+# From this folder, with your Python environment active (see requirements.txt:
+# shapely 2.x, scipy, scikit-learn, open3d, streamlit, plotly, pandas, matplotlib,
+# imageio + imageio-ffmpeg for MP4 export):
 streamlit run Home.py
 ```
 
@@ -64,20 +90,28 @@ streamlit run Home.py
 
 | File | Purpose |
 |------|---------|
-| `Home.py` | Landing page / navigation |
+| `Home.py` | Landing page / navigation (grouped tool cards + active dataset) |
+| `pages/0_Datasets.py` | Select active dataset / add your own; per-dataset workspace |
 | `pages/1_Background_Filtering.py` | Background model build + foreground viewer |
 | `pages/2_Object_Detection_and_Tracking.py` | Detection, tracking, **WWD**, viewer + GIF |
 | `pages/3_Evaluation.py` | Metrics + **visual GT-vs-detection** comparison |
 | `pages/4_Lane_Editor.py` | Build/adjust lane geometry, export `lanes.geojson` |
-| `bg_filter_core.py` | Background modelling + filtering algorithms |
-| `detection_logic.py` | Candidate extraction, Kalman tracker, association |
+| `pages/5_WWD_Simulator.py` | Synthetic wrong-way driver + **V2X dashboard** broadcast |
+| `pages/6_Visualizer.py` | Camera overlays + **3D LiDAR labels** (dev-kit replacement) |
+| `dataset_manager.py` | Dataset registry, active-dataset, per-dataset path resolution |
+| `bg_filter_core.py` | Background modelling + filtering (GT-less z-band fallback) |
+| `detection_logic.py` | Candidate extraction (adaptive eps), Kalman tracker, association |
 | `wwd_detection.py` | **Wrong-way logic** (velocity vs. lane direction) |
 | `evaluation.py` | CLEAR-MOT metrics + BEV figures + class/ROI filters |
-| `geometry_config.py` | Loads scene geometry + fast point-in-polygon |
+| `geometry_config.py` | Loads the active dataset's scene geometry + point-in-polygon |
 | `lane_tools.py` | Lane Editor helpers (auto-cluster, geojson, 3D preview) |
 | `visualization.py` | 3D interactive view + matplotlib GIF (cardinal arrows) |
-| `config/site_geometry.json` | Editable scene geometry (research/road/exclusion) |
-| `config/lanes.geojson` | **Lane directions for WWD** (currently calibrated) |
+| `label_projection.py` | OpenLABEL boxes/point-cloud → camera image (calibration from JSON) |
+| `lidar_viewer.py` | 3D LiDAR scan + GT boxes (BEV / side) via Plotly |
+| `road_viewer.py` | Camera browsing + side-by-side video helpers |
+| `wwd_simulator.py` | Synthetic wrong-way track + V2X dashboard integration |
+| `datasets/<id>/config/site_geometry.json` | Per-dataset scene geometry (research/road/exclusion) |
+| `datasets/<id>/config/lanes.geojson` | Per-dataset **lane directions for WWD** |
 
 ---
 
@@ -86,7 +120,7 @@ streamlit run Home.py
 The bounding-box yaw from PCA is 180°-ambiguous, so it can't distinguish
 wrong-way from right-way. Instead WWD uses the **Kalman velocity** direction
 (`atan2(vy, vx)`) and compares it to the **expected heading** of the lane the
-vehicle is in (`config/lanes.geojson`). A track is flagged only when, for a
+vehicle is in (the active dataset's `config/lanes.geojson`). A track is flagged only when, for a
 sustained run of frames, it is fast enough, points far enough against the lane,
 travels far enough, **and** holds a steady heading — with the **intersection
 interior exempted** (where lane boxes overlap and turning is legal). This is what
@@ -106,8 +140,8 @@ steadiness*.
 
 ## Calibrating lane geometry (Lane Editor — page 4)
 
-`config/lanes.geojson` defines, per road region, the **expected legal direction
-of travel** (degrees, math convention: `0=+X`, `90=+Y`, `180/-180=-X`, `-90=-Y`,
+Each dataset's `config/lanes.geojson` defines, per road region, the **expected
+legal direction of travel** (degrees, math convention: `0=+X`, `90=+Y`, `180/-180=-X`, `-90=-Y`,
 i.e. `atan2(vy,vx)` in the sensor frame). The file is **currently calibrated**
 (eastbound / westbound / northbound / southbound). To recalibrate or retarget:
 
@@ -117,7 +151,7 @@ i.e. `atan2(vy,vx)` in the sensor frame). The file is **currently calibrated**
 3. **Adjust** each lane's box (X/Y min/max) and heading in the table; watch the
    live top-down preview (color points by *Cardinal*, *Lane membership*, or
    *Heading*; toggle the point-cloud backdrop; pan/scroll-zoom).
-4. **Save to config** (overwrites `config/lanes.geojson`).
+4. **Save to config** (overwrites the active dataset's `config/lanes.geojson`).
 5. **Validate:** re-run on normal traffic → expect zero wrong-way flags; run a
    known wrong-way clip → expect it flagged. Tune the WWD sliders.
 
@@ -155,38 +189,43 @@ i.e. `atan2(vy,vx)` in the sensor frame). The file is **currently calibrated**
 
 ---
 
-## Recent work / changelog (this session)
+## Changelog (highlights since the pipeline came together)
 
-- **WWD implemented** (velocity vs. lane direction) — was missing entirely.
-- **Quantitative evaluation** added (P/R/F1, MOTA/MOTP/ID-switches) + **visual
-  GT-vs-detection** comparison with point-cloud overlay and missed-object view.
-- **Lane Editor** page (auto-cluster from `tracks.csv`, editable table, live 3D
-  preview, export). Lanes calibrated for this site.
-- **Cardinal-direction color encoding** for object markers + heading arrows
-  (interactive view and GIF).
-- Repo flattened to a single project; geometry/lanes moved to `config/`;
-  point-in-polygon vectorized; tracker exposes real velocity + box size; Hungarian
-  association; classification by size.
-- **Bug fixes that improved recall:**
-  - Pole-like geometry filter was deleting **trucks** (tall + compact ⇒ mistaken
-    for poles). Now a small footprint only counts as a pole if also *sparse*
-    (`pole_max_points`).
-  - Fast vehicles were rejected by temporal confirmation (per-frame motion >
-    gate). Now large dense clusters (`strong_pts`, default 200) are accepted
-    without temporal confirmation — keeps precision, catches fast trucks/cars.
-  - Evaluation: added **class** and **ROI** filters so recall reflects the
-    detector's operational domain.
-  - WWD: **junction exemption + heading-steadiness** stop turning vehicles being
-    mis-flagged as wrong-way.
+**Core detection / WWD**
+- **WWD** implemented (Kalman velocity vs. lane direction) with junction
+  exemption + heading-steadiness so turning vehicles aren't mis-flagged.
+- **Quantitative evaluation** (P/R/F1, MOTA/MOTP/ID-switches) + **visual
+  GT-vs-detection** comparison; **class** and **ROI** filters; the **settings
+  used** are written into `evaluation_report.json` and shown in-app.
+- **Lane Editor** (auto-cluster from `tracks.csv`, editable table, live 3D
+  preview, export). **Cardinal-direction colour encoding** for markers/arrows.
+- **Range-adaptive DBSCAN eps** (`eps = eps0 + eps_k·range`, clipped) — better on
+  both precision and recall for near/dense vs far/sparse objects. Optional
+  **vehicle class gate**.
+- Recall bug-fixes: pole filter no longer deletes dense **trucks**
+  (`pole_max_points`); fast dense clusters bypass temporal confirmation
+  (`strong_pts`).
 
-## Open follow-ups (next session)
-- **Precision lever:** add a size/point-count **vehicle class gate** so
-  pedestrian/bicycle clusters aren't emitted as vehicle detections (would raise
-  precision and make "vehicles-only" eval fair).
-- Reduce **ID switches** (tracking association / `max_missed` tuning).
-- Push recall on distant/sparse vehicles (DBSCAN `eps` / min-points trade-off).
-- Optional: remove the remaining **GT leakage** in the background filter (it uses
-  GT cuboids to set per-region z-height bands; derive them from data instead for
-  a fully label-free detector).
-- Optional: write the **settings used** into `evaluation_report.json` so each
-  result is self-documenting.
+**Datasets**
+- **Multi-dataset workspaces** (`datasets/<id>/`): switch the active dataset or
+  add your own (point at a PCD folder); per-dataset config/model/outputs; starter
+  site-geometry auto-derived from data; **GT-less datasets still filter** (z-band
+  derived from the point cloud). The whole pipeline is dataset-aware.
+
+**Visualization (V2X + dev-kit replacement)**
+- **WWD Simulator** + embedded **V2X dashboard**: a synthetic wrong-way driver
+  runs through the real detector and auto-fires the dashboard's TIM/C-V2X messaging
+  on detection.
+- **Visualizer** page reproduces the TUM Traffic dev-kit's label visualizations
+  natively (calibration read from the OpenLABEL JSON): camera box / point-cloud
+  overlays with track-history trails + video, and a 3D LiDAR BEV/Side view.
+- Smooth playback everywhere (`st.fragment` + cached loads).
+
+## Open follow-ups
+- Reduce **ID switches** further (association / `max_missed` tuning).
+- Remaining **GT leakage** for the bundled A9 dataset: the background filter still
+  uses GT cuboids to set per-region z-bands when GT is present (new datasets
+  already use the label-free fallback).
+- **Raw (uncropped) point clouds**: the bundled data is cropped (~63 m), so the
+  point-cloud overlays / 3D view don't reach distant structures — adding the full
+  clouds would extend them automatically.
