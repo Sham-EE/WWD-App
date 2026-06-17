@@ -57,15 +57,17 @@ def _arrow_segments(cx, cy, hdg, z, length=4.0, head=1.6, head_ang=np.radians(30
     return xs, ys, zs
 
 
-def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_dict=None):
+def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_dict=None, points=None):
     """
     Creates an interactive 3D Plotly figure for a given frame.
     (Keep this for interactive UI display as it doesn't need Kaleido)
+    `points` may be passed pre-loaded (e.g. from a cache) to avoid re-reading the PCD.
     """
     fig = go.Figure()
 
     # 1. Add Original Point Cloud
-    points = load_points_from_pcd(original_pcd_path)
+    if points is None:
+        points = load_points_from_pcd(original_pcd_path)
     fig.add_trace(go.Scatter3d(
         x=points[:, 0], y=points[:, 1], z=points[:, 2],
         mode='markers', name='Original Point Cloud',

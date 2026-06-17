@@ -156,19 +156,50 @@ if side.button("Build Background Model", use_container_width=True, type="primary
             st.success(f"Saved all filtered point clouds to: {output_dir}")
 
 # ---------------- Visualization ----------------
+@st.cache_data(show_spinner=False, max_entries=128)
+def _load_raw(path):
+    return np.asarray(o3d.io.read_point_cloud(path).points)
+
+
 if st.session_state.bg_model:
     st.divider()
     st.subheader("Filtered Point Cloud Viewer")
 
     pcd_files = discover_pcd_files(config["pcd_dir"])
     if pcd_files:
-        frame_idx = st.slider("Frame", 0, len(pcd_files) - 1, 0, key="browse_slider")
-        current_pcd = pcd_files[frame_idx]
-        st.caption(os.path.basename(current_pcd))
+        n_bf = len(pcd_files)
+        st.session_state.setdefault("bf_frame", 0)
 
-        pts = np.asarray(o3d.io.read_point_cloud(current_pcd).points)
-        fg, _ = filter_points_with_model(pts, st.session_state.bg_model, config)
+        @st.fragment
+        def _bf_viewer():
+            st.session_state.bf_frame = max(0, min(st.session_state.bf_frame, n_bf - 1))
+            nav = st.columns([1, 1, 1, 1, 1.3, 3])
+            if nav[0].button("⏮ First", use_container_width=True):
+                st.session_state.bf_frame = 0
+            if nav[1].button("◀ Prev", use_container_width=True):
+                st.session_state.bf_frame = max(0, st.session_state.bf_frame - 1)
+            if nav[2].button("Next ▶", use_container_width=True):
+                st.session_state.bf_frame = min(n_bf - 1, st.session_state.bf_frame + 1)
+            if nav[3].button("Last ⏭", use_container_width=True):
+                st.session_state.bf_frame = n_bf - 1
+            playing = nav[4].toggle("▶ Play", value=False)
+            play_delay = nav[5].slider("Play delay (s)", 0.0, 1.0, 0.15, 0.05)
+            i = st.slider("Frame", 0, max(n_bf - 1, 1), st.session_state.bf_frame)
+            st.session_state.bf_frame = i
 
-        st.plotly_chart(create_filtered_figure(fg, pts), use_container_width=True, height=700)
+            pts = _load_raw(pcd_files[i])
+            fg, _ = filter_points_with_model(pts, st.session_state.bg_model, config)
+            with st.container(height=560):
+                st.plotly_chart(create_filtered_figure(fg, pts), use_container_width=True, key="bf_fig")
+            st.caption(f"{os.path.basename(pcd_files[i])} · frame {i+1}/{n_bf} · "
+                       f"{len(fg)} foreground / {len(pts)} points")
+
+            if playing and i < n_bf - 1:
+                import time
+                time.sleep(float(play_delay))
+                st.session_state.bf_frame = i + 1
+                st.rerun(scope="fragment")
+
+        _bf_viewer()
 else:
     st.info("Adjust parameters and click 'Build Background Model' to begin.")
