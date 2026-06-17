@@ -109,7 +109,10 @@ step = st.slider("Step", 0, max(n_steps - 1, 1), st.session_state.sim_step)
 st.session_state.sim_step = step
 
 cur_frame_idx = start_frame + step
-flagged_now = is_flagged and first_flag is not None and cur_frame_idx >= first_flag
+# The detector confirms only AFTER `conf_frames` consecutive wrong-way frames, so
+# the alert/"flagged at" moment is the run start + (confirmation frames - 1).
+confirm_frame = (first_flag + int(conf_frames) - 1) if (is_flagged and first_flag is not None) else None
+flagged_now = confirm_frame is not None and cur_frame_idx >= confirm_frame
 
 left, right = st.columns([3, 2], gap="medium")
 with left:
@@ -124,21 +127,25 @@ with left:
 with right:
     st.markdown("#### Detector verdict")
     if is_flagged:
-        t_s = (first_flag - start_frame) / float(fps) if first_flag is not None else 0.0
-        st.error(f"🚨 **WRONG-WAY DRIVING DETECTED**")
+        start_step = first_flag - start_frame
+        confirm_step = confirm_frame - start_frame
+        t_s = confirm_step / float(fps)
+        st.error("🚨 **WRONG-WAY DRIVING DETECTED**")
         st.write(f"- **Direction:** {opt['wrong_name']}-bound in the **{opt['lane_id']}** lane "
                  f"(legal: {opt['legal_name']})")
-        st.write(f"- **Flagged at:** step {first_flag - start_frame} (~{t_s:.1f}s), "
-                 f"sustained {sim_res.get('run_len','?')} frames")
+        st.write(f"- **Wrong-way motion starts:** step {start_step}")
+        st.write(f"- **Confirmed (alert fires):** step {confirm_step} (~{t_s:.1f}s) — "
+                 f"after {int(conf_frames)} confirmation frames")
         st.write(f"- **Max angle vs flow:** {sim_res.get('max_angle_deg',0):.0f}°  ·  "
                  f"**speed:** {speed:.1f} m/s")
         if flagged_now:
             st.success("Alert is ACTIVE at the current step.")
         else:
-            st.info(f"Scrub to step {first_flag - start_frame} to reach the alert.")
+            st.info(f"Scrub to step {confirm_step} to reach the confirmation/alert.")
     else:
-        st.success("No wrong-way flag — the driver did not trigger the detector. "
-                   "Increase speed/length or check lane calibration.")
+        st.success("No wrong-way flag — the driver did not sustain wrong-way motion for "
+                   f"{int(conf_frames)} frames. Lower the confirmation frames, increase speed/length, "
+                   "or check lane calibration.")
 
 # ---------------- V2X broadcast (external dashboard) ----------------
 st.divider()
@@ -165,8 +172,8 @@ else:
         st.session_state.v2x_armed = False
         st.session_state.v2x_event = None
         st.rerun()
-    if not flagged_now and not st.session_state.v2x_armed:
-        st.caption(f"Scrub to step {first_flag - start_frame} (the detection moment) to enable the broadcast.")
+    if not flagged_now and not st.session_state.v2x_armed and confirm_frame is not None:
+        st.caption(f"Scrub to step {confirm_frame - start_frame} (the confirmation moment) to enable the broadcast.")
 
 if st.session_state.v2x_armed and st.session_state.v2x_event:
     html = v2x_dashboard_html(st.session_state.v2x_event)

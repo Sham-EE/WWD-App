@@ -66,22 +66,12 @@ def v2x_dashboard_html(event):
 
 
 def cardinal_color(heading_rad) -> str:
-    """Cardinal travel-direction colour, matching the Detection view:
-    E=+X red, N=+Y green, W=-X blue, S=-Y orange."""
+    """Cardinal travel-direction colour — sourced from the Detection view
+    (visualization.CARDINAL_BINS) so the two pages always use the same palette."""
     if heading_rad is None:
         return "#9a9a9a"
-    d = (np.degrees(heading_rad) + 180.0) % 360.0 - 180.0
-    if -45 <= d < 45:
-        return "#d62728"   # E
-    if 45 <= d < 135:
-        return "#2ca02c"   # N
-    if d >= 135 or d < -135:
-        return "#1f77b4"   # W
-    return "#ff7f0e"       # S
-
-
-CARDINAL_LEGEND = [("E (+X)", "#d62728"), ("N (+Y)", "#2ca02c"),
-                   ("W (-X)", "#1f77b4"), ("S (-Y)", "#ff7f0e")]
+    from visualization import cardinal_color as _vc  # lazy import (open3d is heavy)
+    return _vc(heading_rad)
 
 
 def cardinal_name(deg: float) -> str:
@@ -171,26 +161,29 @@ def simulator_figure(lanes, sim_track, frame_idx, flagged, base_dets=None,
     import plotly.graph_objects as go
     fig = go.Figure()
 
-    # lanes: outline (grey) + legal-direction arrow (green)
+    # lanes: outline coloured by the lane's LEGAL travel direction (so the legend
+    # is just the lanes, each in its direction colour) + a matching legal arrow.
     for ln in lanes:
+        lcol = cardinal_color(np.radians(ln["heading_deg"]))
         xs, ys = ln["polygon"].exterior.xy
         fig.add_trace(go.Scatter(x=list(xs), y=list(ys), mode="lines",
-                                 line=dict(color="#888", width=1.5),
-                                 name=f"lane {ln['lane_id']}", hoverinfo="skip"))
+                                 line=dict(color=lcol, width=2),
+                                 name=f"{ln['lane_id']} (legal {cardinal_name(ln['heading_deg'])})",
+                                 hoverinfo="skip"))
         cx, cy = ln["polygon"].centroid.x, ln["polygon"].centroid.y
         hd = np.radians(ln["heading_deg"])
         L = 8.0
         fig.add_annotation(x=cx + L * np.cos(hd), y=cy + L * np.sin(hd), ax=cx, ay=cy,
                            xref="x", yref="y", axref="x", ayref="y", showarrow=True,
-                           arrowhead=2, arrowsize=1.4, arrowwidth=2, arrowcolor="#2ca02c")
+                           arrowhead=2, arrowsize=1.4, arrowwidth=2, arrowcolor=lcol)
 
-    # real traffic backdrop (optional), coloured by cardinal travel direction
+    # real traffic backdrop (optional), spheres coloured by cardinal travel direction
     if base_dets:
         cols = [cardinal_color(d.get("heading")) for d in base_dets]
         fig.add_trace(go.Scatter(x=[d["cx"] for d in base_dets], y=[d["cy"] for d in base_dets],
                                  mode="markers", marker=dict(size=7, color=cols,
                                  line=dict(color="#000", width=0.5)),
-                                 name="real traffic", hoverinfo="skip"))
+                                 name="real traffic", showlegend=False, hoverinfo="skip"))
 
     # driver full path (faint) + travelled path + box, coloured by cardinal direction
     if sim_track:
@@ -200,26 +193,22 @@ def simulator_figure(lanes, sim_track, frame_idx, flagged, base_dets=None,
         d = sim_track[k]
         ccol = cardinal_color(d["heading"])   # the driver's (wrong-way) direction colour
         fig.add_trace(go.Scatter(x=px, y=py, mode="lines", line=dict(color="#ddd", width=1, dash="dot"),
-                                 name="planned path", hoverinfo="skip"))
+                                 name="planned path", showlegend=False, hoverinfo="skip"))
         fig.add_trace(go.Scatter(x=px[:k + 1], y=py[:k + 1], mode="lines",
                                  line=dict(color=ccol, width=2),
-                                 name="driver path", hoverinfo="skip"))
+                                 name="driver path", showlegend=False, hoverinfo="skip"))
         corners = _box_corners(d["cx"], d["cy"], d["yaw"], d["l"], d["w"])
         # cardinal fill; red outline (thicker) once flagged wrong-way
         fig.add_trace(go.Scatter(x=[c[0] for c in corners], y=[c[1] for c in corners],
                                  mode="lines", fill="toself", fillcolor=ccol, opacity=0.85,
                                  line=dict(color="#ff2b2b" if flagged else "#000",
                                            width=4 if flagged else 2),
-                                 name="⚠ wrong-way driver" if flagged else "driver", hoverinfo="skip"))
+                                 name="⚠ wrong-way driver" if flagged else "driver",
+                                 showlegend=False, hoverinfo="skip"))
         hd = d["heading"]; L = 6.0
         fig.add_annotation(x=d["cx"] + L * np.cos(hd), y=d["cy"] + L * np.sin(hd),
                            ax=d["cx"], ay=d["cy"], xref="x", yref="y", axref="x", ayref="y",
                            showarrow=True, arrowhead=3, arrowsize=2, arrowwidth=3, arrowcolor=ccol)
-
-    # cardinal colour legend (direction key, matches the Detection view)
-    for name, col in CARDINAL_LEGEND:
-        fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers",
-                                 marker=dict(size=8, color=col), name=name))
 
     if x_range:
         fig.update_xaxes(range=list(x_range))
