@@ -130,16 +130,15 @@ def _color_for(obj, color_mode):
     return CATEGORY_COLORS.get(str(obj["type"]).upper(), _DEFAULT_COLOR)
 
 
-def _depth_colors(depths, dmax=80.0):
-    """Map depths -> RGB uint8 via a perceptual colormap (near=warm, far=cool)."""
-    try:
-        from matplotlib import cm
-        norm = np.clip(depths / float(dmax), 0, 1)
-        rgba = cm.get_cmap("turbo")(1.0 - norm)        # near = red, far = blue
-        return (rgba[:, :3] * 255).astype(np.uint8)
-    except Exception:
-        g = np.clip(255 - depths / float(dmax) * 255, 0, 255).astype(np.uint8)
-        return np.stack([g, g, np.full_like(g, 80)], axis=1)
+def _depth_colors(distances, dmax=None):
+    """Distance -> RGB via the 'jet' colormap, matching the dev-kit:
+    near = blue, far = red. dmax auto-scales to the 95th-percentile range."""
+    from matplotlib import cm
+    if dmax is None:
+        dmax = max(float(np.percentile(distances, 95)), 30.0) if len(distances) else 90.0
+    norm = np.clip(distances / float(dmax), 0, 1)      # near 0 -> blue, far 1 -> red
+    rgba = cm.get_cmap("jet")(norm)
+    return (rgba[:, :3] * 255).astype(np.uint8)
 
 
 def load_pointcloud(pcd_path):
@@ -148,8 +147,8 @@ def load_pointcloud(pcd_path):
 
 
 def render_frame(image_path, label_json_path, camera_id, mode="box3d",
-                 color_mode="by_category", pcd_path=None, depth_max=80.0,
-                 point_size=1, line_width=2, draw_labels=True):
+                 color_mode="by_category", pcd_path=None, depth_max=None,
+                 point_size=2, line_width=2, draw_labels=True):
     """Render labels (and optionally the point cloud) onto one camera image.
     mode: 'box3d' (3D wireframes) or 'point_cloud' (points + 3D wireframes).
     Returns a PIL.Image."""
@@ -166,14 +165,18 @@ def render_frame(image_path, label_json_path, camera_id, mode="box3d",
         pts = load_pointcloud(pcd_path)
         if pts.size:
             u, v, z, valid = _project(pts, K, T)
+            rng = np.linalg.norm(pts[:, :3], axis=1)         # range from the sensor
             ui, vi = np.round(u).astype(int), np.round(v).astype(int)
             inb = valid & (ui >= 0) & (ui < W) & (vi >= 0) & (vi < H)
             if np.any(inb):
                 arr = np.asarray(img).copy()
-                cols = _depth_colors(z[inb], depth_max)
-                uu, vv = ui[inb], vi[inb]
-                for dxp in range(point_size + 1):
-                    for dyp in range(point_size + 1):
+                d, uu, vv = rng[inb], ui[inb], vi[inb]
+                order = np.argsort(-d)                        # far first; near drawn on top
+                d, uu, vv = d[order], uu[order], vv[order]
+                cols = _depth_colors(d, depth_max)
+                r = max(1, int(point_size))                  # filled square, radius r
+                for dyp in range(-r, r + 1):
+                    for dxp in range(-r, r + 1):
                         yy, xx = np.clip(vv + dyp, 0, H - 1), np.clip(uu + dxp, 0, W - 1)
                         arr[yy, xx] = cols
                 img = Image.fromarray(arr)
@@ -194,10 +197,11 @@ def render_frame(image_path, label_json_path, camera_id, mode="box3d",
         if draw_labels and valid.any():
             tx = float(np.min(u[valid])); ty = float(np.min(v[valid]))
             if 0 <= tx < W and 0 <= ty < H:
-                ty = max(0, ty - 17)
                 text = _label_text(obj)
-                draw.text((tx + 1, ty + 1), text, fill=(0, 0, 0), font=font)   # shadow
-                draw.text((tx, ty), text, fill=col, font=font)
+                tx = min(max(tx, 0), W - 1); ty = max(0, ty - 18)
+                bb = draw.textbbox((tx, ty), text, font=font)
+                draw.rectangle([bb[0] - 2, bb[1] - 1, bb[2] + 2, bb[3] + 1], fill=col)  # solid tag
+                draw.text((tx, ty), text, fill=(0, 0, 0), font=font)                    # black text
     return img
 
 

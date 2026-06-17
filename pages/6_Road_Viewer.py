@@ -51,7 +51,7 @@ if mode:
     oc1, oc2 = st.columns([1, 2])
     color_mode = oc1.radio("Box colour", ["by_category", "by_track_id"], horizontal=True)
     if mode == "point_cloud":
-        point_size = oc2.select_slider("Point size", [1, 2, 3], value=1)
+        point_size = oc2.select_slider("Point size", [1, 2, 3], value=2)
 
 # ---------------- Frame resolution + pairing ----------------
 raw_left = rv.frames_for(images_root, left_cam, "raw")
