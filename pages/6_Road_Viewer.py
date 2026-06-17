@@ -4,49 +4,92 @@ import streamlit as st
 
 import dataset_manager as dm
 import road_viewer as rv
+import label_projection as lp
 
 st.set_page_config(layout="wide", page_title="Road Viewer")
 st.title("🛣️ Road Viewer")
-st.markdown("Browse the camera images of the road — both cameras side by side — and render a "
-            "continuous side-by-side video to showcase the scene.")
+st.markdown("Browse the cameras side by side and **generate** label/point-cloud overlays on the fly "
+            "(no dev-kit needed) — then render a continuous road video.")
 
 ds = dm.get_active()
 st.caption(f"📂 Dataset: **{ds.name}**")
 
-images_root = st.text_input("Path to the images folder (one subfolder per camera)",
-                            value=ds.images_dir)
+with st.expander("📁 Input folders", expanded=False):
+    images_root = st.text_input("Images folder (one subfolder per camera)", value=ds.images_dir)
+    label_dir = st.text_input("OpenLABEL labels folder (for box/point-cloud overlays)", value=ds.gt_dir)
+    pcd_dir = st.text_input("Point-cloud folder (for the point-cloud overlay)", value=ds.pcd_dir)
+
 cameras = rv.list_cameras(images_root)
 if len(cameras) < 1:
     st.warning(f"No camera subfolders found in `{images_root}`.")
     st.stop()
 
+labels = rv.list_by_frame(label_dir, [".json"])
+pcds = rv.list_by_frame(pcd_dir, [".pcd"])
+have_labels = len(labels) > 0
+
 # ---------------- Camera + variant selection ----------------
-c1, c2, c3 = st.columns(3)
-# Default layout requested: south2 on the LEFT, south1 on the RIGHT.
+c1, c2, c3 = st.columns([1, 1, 1.4])
 left_default = cameras.index("south2") if "south2" in cameras else 0
 right_default = cameras.index("south1") if "south1" in cameras else (1 if len(cameras) > 1 else 0)
 left_cam = c1.selectbox("Left camera", cameras, index=left_default)
 right_cam = c2.selectbox("Right camera", cameras, index=right_default)
 
-variants = [v for v in rv.available_variants(images_root, left_cam)
-            if v in rv.available_variants(images_root, right_cam)] or list(rv.VARIANTS.keys())
-vdefault = variants.index("Bounding boxes") if "Bounding boxes" in variants else 0
-variant_label = c3.radio("Visualization", variants, index=vdefault, horizontal=True,
-                         help="Raw camera · Bounding boxes · Boxes + point cloud overlay.")
-vkey = rv.VARIANTS[variant_label]
+MODES = {"Raw camera": None, "Bounding boxes (3D)": "box3d", "Boxes + point cloud": "point_cloud"}
+variant_labels = list(MODES) if have_labels else ["Raw camera"]
+variant_label = c3.radio("Visualization", variant_labels,
+                         index=(1 if have_labels else 0), horizontal=True,
+                         help="Box/point-cloud overlays are generated from the OpenLABEL labels + "
+                              "calibration and cached under the dataset's outputs/rendered/.")
+mode = MODES[variant_label]
+if not have_labels:
+    st.info(f"No OpenLABEL label files in `{label_dir}` — only raw images can be shown. "
+            "Add labels to enable generated box / point-cloud overlays.")
 
-left_frames = rv.frames_for(images_root, left_cam, vkey)
-right_frames = rv.frames_for(images_root, right_cam, vkey)
-n = min(len(left_frames), len(right_frames))
+color_mode, point_size = "by_category", 1
+if mode:
+    oc1, oc2 = st.columns([1, 2])
+    color_mode = oc1.radio("Box colour", ["by_category", "by_track_id"], horizontal=True)
+    if mode == "point_cloud":
+        point_size = oc2.select_slider("Point size", [1, 2, 3], value=1)
+
+# ---------------- Frame resolution + pairing ----------------
+raw_left = rv.frames_for(images_root, left_cam, "raw")
+raw_right = rv.frames_for(images_root, right_cam, "raw")
+counts = [len(raw_left), len(raw_right)]
+if mode:
+    counts.append(len(labels))
+if mode == "point_cloud":
+    counts.append(len(pcds))
+n = min(counts) if counts else 0
 if n == 0:
-    st.warning("No images found for that camera/variant combination.")
+    st.warning("Not enough synchronized frames (need raw images" +
+               (" + labels" if mode else "") + (" + point clouds" if mode == "point_cloud" else "") + ").")
     st.stop()
-st.caption(f"{n} synchronized frame pairs · **{left_cam}** (left) ↔ **{right_cam}** (right) · “{variant_label}”")
+st.caption(f"{n} synchronized frames · **{left_cam}** (left) ↔ **{right_cam}** (right) · “{variant_label}”")
 
-# ---------------- Frame playback ----------------
+left_id = lp.camera_id_from_image(raw_left[0])
+right_id = lp.camera_id_from_image(raw_right[0])
+
+
+def _cache_dir(cam):
+    return os.path.join(ds.outputs_dir, "rendered", cam, f"{mode}_{color_mode}")
+
+
+def _render(i, cam, cam_id, raw):
+    """Path to the frame to show for camera `cam` at index i (raw or generated)."""
+    if not mode:
+        return raw[i]
+    return lp.render_cached(raw[i], labels[i], cam_id, mode, _cache_dir(cam),
+                            color_mode=color_mode,
+                            pcd_path=(pcds[i] if mode == "point_cloud" else None),
+                            point_size=point_size)
+
+
+# ---------------- Playback ----------------
 st.session_state.setdefault("road_frame", 0)
 st.session_state.road_frame = max(0, min(st.session_state.road_frame, n - 1))
-nav = st.columns([1, 1, 1, 1, 1.4, 3])
+nav = st.columns([1, 1, 1, 1, 1.3, 3])
 if nav[0].button("⏮ First", use_container_width=True):
     st.session_state.road_frame = 0; st.rerun()
 if nav[1].button("◀ Prev", use_container_width=True):
@@ -60,11 +103,12 @@ play_delay = nav[5].slider("Play delay (s)", 0.0, 1.0, 0.15, 0.05)
 i = st.slider("Frame", 0, max(n - 1, 1), st.session_state.road_frame)
 st.session_state.road_frame = i
 
+with st.spinner("Rendering…" if mode else ""):
+    left_img = _render(i, left_cam, left_id, raw_left)
+    right_img = _render(i, right_cam, right_id, raw_right)
 lc, rc = st.columns(2)
-lc.image(left_frames[i], use_container_width=True,
-         caption=f"{left_cam} (left) · frame {i+1}/{n} · {os.path.basename(left_frames[i])}")
-rc.image(right_frames[i], use_container_width=True,
-         caption=f"{right_cam} (right) · frame {i+1}/{n} · {os.path.basename(right_frames[i])}")
+lc.image(left_img, use_container_width=True, caption=f"{left_cam} (left) · frame {i+1}/{n}")
+rc.image(right_img, use_container_width=True, caption=f"{right_cam} (right) · frame {i+1}/{n}")
 
 if playing and i < n - 1:
     import time
@@ -76,23 +120,32 @@ if playing and i < n - 1:
 st.divider()
 st.subheader("🎬 Generate road video")
 if not rv.mp4_available():
-    st.caption("ℹ️ MP4 export needs `imageio-ffmpeg` in the environment running this app "
-               "(`pip install imageio-ffmpeg`). Until then, an animated **GIF** is produced instead.")
+    st.caption("ℹ️ MP4 needs `imageio-ffmpeg` in the running environment; otherwise an animated **GIF** is produced.")
 g1, g2, g3 = st.columns(3)
 v_fps = g1.slider("Video FPS", 1, 30, 10, 1)
 v_height = g2.select_slider("Frame height (px)", [360, 480, 540, 720], value=480)
 v_max = g3.number_input("Max frames (0 = all)", 0, n, 0)
 
 video_dir = os.path.join(ds.outputs_dir, "road_videos")
-basename = f"road_{left_cam}_{right_cam}_{vkey}"
+tag = mode or "raw"
+basename = f"road_{left_cam}_{right_cam}_{tag}_{color_mode if mode else 'plain'}"
 st.session_state.setdefault("road_video", None)
 
 if st.button("🎬 Generate side-by-side video", type="primary", use_container_width=True):
-    bar = st.progress(0.0, text="Rendering…")
+    bar = st.progress(0.0, text="Preparing frames…")
+    m = n if v_max in (0, None) else min(int(v_max), n)
     try:
+        if mode:   # render (cache) the needed frames first
+            lefts, rights = [], []
+            for k in range(m):
+                lefts.append(_render(k, left_cam, left_id, raw_left))
+                rights.append(_render(k, right_cam, right_id, raw_right))
+                bar.progress(0.5 * (k + 1) / m, text=f"Rendering frame {k+1}/{m}")
+        else:
+            lefts, rights = raw_left[:m], raw_right[:m]
         path, kind = rv.generate_side_by_side_video(
-            left_frames, right_frames, video_dir, basename, fps=int(v_fps), height=int(v_height),
-            max_frames=int(v_max), progress=lambda c, t: bar.progress(c / t, text=f"Frame {c}/{t}"))
+            lefts, rights, video_dir, basename, fps=int(v_fps), height=int(v_height),
+            max_frames=m, progress=lambda c, t: bar.progress(0.5 + 0.5 * c / t, text=f"Encoding {c}/{t}"))
         bar.empty()
         st.session_state.road_video = (path, kind)
         st.success(f"Saved {kind.upper()} → `{path}`"
@@ -104,8 +157,5 @@ if st.button("🎬 Generate side-by-side video", type="primary", use_container_w
 rvid = st.session_state.get("road_video")
 if rvid and os.path.exists(rvid[0]):
     path, kind = rvid
-    if kind == "mp4":
-        st.video(path)
-    else:
-        st.image(path, caption="Road animation (GIF)")
+    st.video(path) if kind == "mp4" else st.image(path, caption="Road animation (GIF)")
     st.caption(f"Last generated: `{path}`")

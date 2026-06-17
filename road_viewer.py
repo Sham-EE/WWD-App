@@ -62,6 +62,15 @@ def frames_for(images_root, camera, variant_key):
     return _images_in(d) if d else []
 
 
+def list_by_frame(folder, exts):
+    """Files of the given extensions in a folder, sorted by frame index."""
+    files = []
+    if folder and os.path.isdir(folder):
+        for e in exts:
+            files += glob.glob(os.path.join(folder, "*" + e))
+    return sorted(files, key=_frame_key)
+
+
 def available_variants(images_root, camera):
     """Which of the known variants actually exist for a camera (label list)."""
     out = []
