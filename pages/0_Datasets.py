@@ -81,6 +81,7 @@ if ds.d.get("description"):
 with st.expander("📁 Workspace paths"):
     st.json({
         "input PCD dir": ds.pcd_dir,
+        "camera images dir": ds.images_dir,
         "ground-truth dir": ds.gt_dir,
         "lane geometry": ds.lanes_path,
         "site geometry": ds.site_geometry_path,
@@ -130,6 +131,38 @@ with st.expander("🗺️ Site geometry (background-filtering region)"):
                    "dataset's config), then run Background Filtering → Detection.")
     else:
         st.caption("Template geometry is curated and read-only here.")
+
+# --- lane geometry view (the WWD lanes from the Lane Editor) ---
+with st.expander("🛣️ Lane geometry (WWD lanes)"):
+    st.caption("**Lanes** (`lanes.geojson`) define the expected legal travel direction per road "
+               "region, used by **wrong-way detection**. Build/edit these on the **Lane Editor** page.")
+    lanes_geo = None
+    if os.path.exists(ds.lanes_path):
+        try:
+            lanes_geo = json.load(open(ds.lanes_path))
+        except Exception:
+            pass
+    feats = (lanes_geo or {}).get("features", [])
+    if feats:
+        rows = []
+        for f in feats:
+            p = f.get("properties", {})
+            try:
+                ring = f["geometry"]["coordinates"][0]
+                xs = [c[0] for c in ring]; ys = [c[1] for c in ring]
+                bounds = f"X[{min(xs):.0f},{max(xs):.0f}] Y[{min(ys):.0f},{max(ys):.0f}]"
+            except Exception:
+                bounds = "—"
+            rows.append({"lane": p.get("lane_id", "?"),
+                         "heading°": round(float(p.get("heading_deg", 0)), 1),
+                         "calibrated": "✅" if p.get("calibrated") else "—",
+                         "bounds": bounds})
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+        n_cal = sum(1 for f in feats if f.get("properties", {}).get("calibrated"))
+        st.caption(f"{len(feats)} lane(s) · {n_cal} calibrated.")
+    else:
+        st.info("No lanes defined yet — create them on the **Lane Editor** page "
+                "(WWD is disabled until lanes exist).")
 
 # --- rename / remove (user datasets) ---
 if not ds.is_template:
