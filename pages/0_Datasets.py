@@ -97,13 +97,37 @@ with st.expander("📁 Workspace paths"):
                     f"`{os.path.join(ds.workspace, 'data')}` (see that folder's README). "
                     "You don't edit any paths — the template already points here.")
 
+with st.expander("🌳 Expected workspace structure"):
+    st.code(
+        f"""datasets/{ds.id}/
+├── config/                       # tracked in git (small)
+│   ├── lanes.geojson             # WWD lane directions (Lane Editor)
+│   └── site_geometry.json        # background-filtering region
+├── data/                         # inputs — gitignored (large, local)
+│   ├── point_clouds/.../*.pcd            # LiDAR frames
+│   ├── images/<camera>/{{raw, bb, bb_pcd}}/*.jpg   # camera variants
+│   └── labels_point_clouds/.../*.json   # OpenLABEL GT (optional)
+└── outputs/                      # generated — gitignored
+    ├── background_model/background_model.pkl
+    ├── background_filtering/*.pcd
+    ├── object_detection/         # tracks.csv, evaluation_report.json
+    └── road_videos/*.mp4""",
+        language="text")
+    st.caption("`config/` is tracked in git; `data/` and `outputs/` stay local per dataset. "
+               "User datasets may instead point `data` at any folder on disk.")
+
 # --- site geometry view (and edit for user datasets) ---
 with st.expander("🗺️ Site geometry (background-filtering region)"):
-    st.caption("**Site geometry** (`site_geometry.json`) is the *processed region* used by "
-               "**Background Filtering** — the research polygon, road polygons, and exclusion "
-               "rectangles. It is **separate from the WWD lanes** you draw in the Lane Editor "
-               "(`lanes.geojson`): editing lanes does NOT change this. For the A9 template these "
-               "are curated values; for a new dataset they're auto-derived from the data extent.")
+    st.markdown(
+        '<span style="cursor:help;border-bottom:1px dotted #8b97a7" '
+        'title="The processed region used by Background Filtering, from site_geometry.json: '
+        'the research polygon (overall area analysed), road polygon(s) (drivable area), and '
+        'foreground-exclusion rectangles (regions always ignored). This is NOT the wrong-way lanes '
+        '— those live under Lane geometry and are edited in the Lane Editor; changing lanes does not '
+        'change this. For the A9 template these are curated values; for a new dataset they are '
+        'auto-derived from the point-cloud extent and can be re-derived below.">'
+        'ⓘ&nbsp; What is site geometry? (hover)</span>',
+        unsafe_allow_html=True)
     geo = None
     if os.path.exists(ds.site_geometry_path):
         try:
