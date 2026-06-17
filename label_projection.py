@@ -15,7 +15,7 @@ import numpy as np
 
 # Bump when the rendering/palette changes so cached overlays auto-invalidate
 # (the Road Viewer includes this in the cache folder name).
-RENDER_VERSION = "v5"
+RENDER_VERSION = "v6"
 
 # Per-category colours (RGB) — EXACTLY the TUM Traffic dev-kit values
 # (id_to_class_name_mapping[...]["color_rgb"] in src/utils/utils.py).
@@ -198,22 +198,25 @@ def render_frame(image_path, label_json_path, camera_id, mode="box3d",
                 img = Image.fromarray(arr)
 
     draw = ImageDraw.Draw(img)
+    objs = load_objects(label_json_path)
+    color_by_id = {o["id"]: _color_for(o, color_mode) for o in objs}
 
-    # --- track-history trails (cyan, tapering), under the boxes ---
+    # --- track-history trails (match each object's box colour, thick + tapering) ---
     if histories:
-        for seq in histories.values():
+        for oid, seq in histories.items():
             if len(seq) < 2:
                 continue
+            tcol = color_by_id.get(oid, (0, 255, 255))
             u, v, z, valid = _project(np.asarray(seq, dtype=float), K, T)
             m = len(seq)
             for k in range(1, m):
                 if valid[k - 1] and valid[k]:
-                    w = max(1, int(1 + 5 * k / m))          # older = thin, recent = thick
-                    draw.line([(u[k - 1], v[k - 1]), (u[k], v[k])], fill=(0, 255, 255), width=w)
+                    w = max(3, int(4 + 8 * k / m))          # older = thinner, recent = thick
+                    draw.line([(u[k - 1], v[k - 1]), (u[k], v[k])], fill=tcol, width=w)
 
     # --- 3D boxes ---
     font = _font(label_size) if draw_labels else None
-    for obj in load_objects(label_json_path):
+    for obj in objs:
         corners = cuboid_corners(obj["val"])
         u, v, z, valid = _project(corners, K, T)
         if valid.sum() < 4:
