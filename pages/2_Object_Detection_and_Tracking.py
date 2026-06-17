@@ -3,13 +3,7 @@ import os
 import glob
 
 from detection_logic import run_detection_and_tracking, sorted_by_frame_index
-from visualization import create_3d_figure, generate_tracking_animation, load_points_from_pcd
-
-
-@st.cache_data(show_spinner=False, max_entries=128)
-def _load_orig_pts(path):
-    """Cached original-PCD load so stepping frames in the 3D viewer is instant."""
-    return load_points_from_pcd(path)
+from visualization import create_3d_figure, generate_tracking_animation
 from wwd_detection import load_lane_config, lanes_calibrated, detect_wrong_way, summarize_wrong_way
 
 st.set_page_config(layout="wide", page_title="Object Detection and Tracking")
@@ -215,45 +209,41 @@ if st.session_state.detection_results:
         "⬇️ Top-down (bird's-eye) view", value=False,
         help="Snap the camera straight down to verify lane alignment against the road.")
 
-    # --- Frame playback (isolated in a fragment so stepping reruns ONLY the viewer,
-    # not the whole page — no re-running WWD/controls each frame, no scroll-to-top) ---
+    # --- Frame playback controls (steps the live viewer; no animation render) ---
     n_frames = len(results['pcd_files'])
-    st.session_state.setdefault('odt_frame', 0)
+    if 'odt_frame' not in st.session_state:
+        st.session_state.odt_frame = 0
+    st.session_state.odt_frame = max(0, min(st.session_state.odt_frame, n_frames - 1))
 
-    @st.fragment
-    def _odt_viewer():
-        st.session_state.odt_frame = max(0, min(st.session_state.odt_frame, n_frames - 1))
-        pc = st.columns([1, 1, 1, 1, 1.4, 3])
-        if pc[0].button("⏮ First", use_container_width=True):
-            st.session_state.odt_frame = 0
-        if pc[1].button("◀ Prev", use_container_width=True):
-            st.session_state.odt_frame = max(0, st.session_state.odt_frame - 1)
-        if pc[2].button("Next ▶", use_container_width=True):
-            st.session_state.odt_frame = min(n_frames - 1, st.session_state.odt_frame + 1)
-        if pc[3].button("Last ⏭", use_container_width=True):
-            st.session_state.odt_frame = n_frames - 1
-        playing = pc[4].toggle("▶ Play", value=False, help="Auto-advance frames in the live viewer.")
-        play_delay = pc[5].slider("Play delay (s/frame)", 0.0, 1.0, 0.2, 0.05)
-        frame_idx = st.slider("Select Frame", 0, max(n_frames - 1, 1), st.session_state.odt_frame)
-        st.session_state.odt_frame = frame_idx
+    pc = st.columns([1, 1, 1, 1, 1.4, 3])
+    if pc[0].button("⏮ First", use_container_width=True):
+        st.session_state.odt_frame = 0; st.rerun()
+    if pc[1].button("◀ Prev", use_container_width=True):
+        st.session_state.odt_frame = max(0, st.session_state.odt_frame - 1); st.rerun()
+    if pc[2].button("Next ▶", use_container_width=True):
+        st.session_state.odt_frame = min(n_frames - 1, st.session_state.odt_frame + 1); st.rerun()
+    if pc[3].button("Last ⏭", use_container_width=True):
+        st.session_state.odt_frame = n_frames - 1; st.rerun()
+    playing = pc[4].toggle("▶ Play", value=False, help="Auto-advance frames in the live viewer.")
+    play_delay = pc[5].slider("Play delay (s/frame)", 0.0, 1.0, 0.2, 0.05)
 
-        st.subheader("3D Point Cloud View")
-        original_pcd_path = results['original_pcd_files'][frame_idx]
-        if not os.path.exists(original_pcd_path):
-            st.error(f"Original PCD file not found for this frame: {original_pcd_path}")
-        else:
-            fig = create_3d_figure(results, frame_idx, original_pcd_path,
-                                   points=_load_orig_pts(original_pcd_path))
-            with st.container(height=820):
-                st.plotly_chart(fig, use_container_width=True, key="odt_fig")
+    frame_idx = st.slider("Select Frame", 0, max(n_frames - 1, 1), st.session_state.odt_frame)
+    st.session_state.odt_frame = frame_idx
 
-        if playing and frame_idx < n_frames - 1:
-            import time
-            time.sleep(float(play_delay))
-            st.session_state.odt_frame = frame_idx + 1
-            st.rerun(scope="fragment")
+    st.subheader("3D Point Cloud View")
+    original_pcd_path = results['original_pcd_files'][frame_idx]
+    if not os.path.exists(original_pcd_path):
+        st.error(f"Original PCD file not found for this frame: {original_pcd_path}")
+    else:
+        fig = create_3d_figure(results, frame_idx, original_pcd_path)
+        st.plotly_chart(fig, use_container_width=True, height=800)
 
-    _odt_viewer()
+    # Auto-play: advance one frame and rerun until the end or until paused.
+    if playing and frame_idx < n_frames - 1:
+        import time
+        time.sleep(float(play_delay))
+        st.session_state.odt_frame = frame_idx + 1
+        st.rerun()
 
     # --- Animation Generation Section ---
     st.divider()
