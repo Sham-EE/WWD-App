@@ -50,6 +50,7 @@ st.write("")
 GROUPS = [
     ("📂 Data & setup", [
         ("🗂️", "Datasets", "Choose the active dataset or add your own.", "pages/0_Datasets.py"),
+        ("🗺️", "Geometry Editor", "Edit the road / ROI / exclusion regions — updates the whole pipeline.", "pages/8_Geometry_Editor.py"),
         ("🧰", "Dataset Prep", "Recreate derived data (crop, scorable GT) from the raw download.", "pages/7_Dataset_Prep.py"),
         ("🎬", "Visualizer", "Cameras side by side + 3D LiDAR labels (BEV/side); overlays, trails, video.", "pages/6_Visualizer.py"),
     ]),
