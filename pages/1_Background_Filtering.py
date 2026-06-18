@@ -48,25 +48,17 @@ def create_filtered_figure(foreground_pts, original_pts):
     if foreground_pts.size > 0:
         fig.add_trace(go.Scatter3d(x=foreground_pts[:, 0], y=foreground_pts[:, 1], z=foreground_pts[:, 2],
             mode="markers", name="Foreground", marker=dict(size=2.5, color="red", opacity=0.9)))
-    # Lock the framing to the road region with a FIXED aspect ratio (aspectmode
-    # "manual", not "data") so Cropped and Full render identically — otherwise the
-    # full cloud's larger z-spread changes the apparent zoom even at the same x/y.
-    # uirevision keeps whatever view you set across the Next button / Cropped<->Full
-    # toggle; double-click in the plot to reset to this default.
+    # Lock the x/y extent to the road region so toggling Cropped<->Full keeps the
+    # SAME zoom (Full no longer auto-fits out to the wider research extent).
     try:
         from geometry_config import get_road_polygon
         minx, miny, maxx, maxy = get_road_polygon().bounds
-        m = 6.0
-        dx, dy = (maxx - minx) + 2 * m, (maxy - miny) + 2 * m
-        md = max(dx, dy)
-        scene = dict(aspectmode="manual",
-                     aspectratio=dict(x=dx / md, y=dy / md, z=0.35),
-                     xaxis=dict(range=[minx - m, maxx + m]),
-                     yaxis=dict(range=[miny - m, maxy + m]),
-                     camera=dict(eye=dict(x=0.0, y=-1.6, z=1.4)))
+        m = 12.0  # breathing room so it isn't too tight (same for cropped & full)
+        xr = dict(range=[minx - m, maxx + m]); yr = dict(range=[miny - m, maxy + m])
     except Exception:
-        scene = dict(aspectmode="data")
-    fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), scene=scene, uirevision="bf_view")
+        xr, yr = {}, {}
+    fig.update_layout(margin=dict(l=0, r=0, b=0, t=0),
+                      scene=dict(aspectmode="data", xaxis=xr, yaxis=yr), uirevision="bf_view")
     return fig
 
 # ---------------- Sidebar parameters ----------------
@@ -216,9 +208,7 @@ if st.session_state.bg_model:
             with st.container(height=560):
                 st.plotly_chart(create_filtered_figure(fg, pts), use_container_width=True, key="bf_fig")
             st.caption(f"{os.path.basename(pcd_files[i])} · frame {i+1}/{n_bf} · "
-                       f"{len(fg)} foreground / {len(pts)} points  ·  "
-                       "🔒 drag/scroll to set your view — it holds across frames & the "
-                       "cropped/full toggle (double-click to reset).")
+                       f"{len(fg)} foreground / {len(pts)} points")
 
             if playing and i < n_bf - 1:
                 import time

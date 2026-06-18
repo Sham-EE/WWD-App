@@ -84,10 +84,7 @@ def crop_preview_figure(points, margin=0.0, height=620, title="", draw_boundary=
         height=height, margin=dict(l=0, r=0, t=30, b=0), title=title, showlegend=False,
         dragmode="pan",
         xaxis=dict(title="x (m)", range=[cx - half, cx + half]),
-        yaxis=dict(title="y (m)", range=[cy - half, cy + half], scaleanchor="x", scaleratio=1),
-        # Lock the user's pan/zoom across frame steps AND the cropped/full toggle.
-        # Set your view once; double-click in the plot to reset to this default.
-        uirevision="dp_crop")
+        yaxis=dict(title="y (m)", range=[cy - half, cy + half], scaleanchor="x", scaleratio=1))
     return fig
 
 

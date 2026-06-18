@@ -135,9 +135,7 @@ with tab_crop:
                     _pv_panel(pv_left, Lf, i, "dp_fig_l")
                 with cr:
                     _pv_panel(pv_right, Rf, i, "dp_fig_r")
-            st.caption(f"Frame {i+1}/{npv} · {crop_mode} · {pv_left} ↔ {pv_right}  ·  "
-                       "🔒 drag/scroll to set your view — it holds across frames & the "
-                       "cropped/full toggle (double-click to reset).")
+            st.caption(f"Frame {i+1}/{npv} · {crop_mode} · {pv_left} ↔ {pv_right}")
 
             if playing and i < npv - 1:
                 time.sleep(float(delay))

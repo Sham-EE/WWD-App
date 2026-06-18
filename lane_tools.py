@@ -255,7 +255,7 @@ def build_preview(points: np.ndarray, lanes, color_mode: str = 'cardinal',
 
     if top_down:
         cam = {'up': {'x': 0, 'y': 1, 'z': 0}, 'center': {'x': 0, 'y': 0, 'z': 0},
-               'eye': {'x': 0, 'y': 0, 'z': 4.0}}  # larger z = zoomed further out
+               'eye': {'x': 0, 'y': 0, 'z': 2.6}}
     else:
         cam = {'up': {'x': 0, 'y': 0, 'z': 1}, 'center': {'x': 0, 'y': 0, 'z': 0},
                'eye': {'x': 1.55, 'y': 1.55, 'z': 1.55}}
