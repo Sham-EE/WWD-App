@@ -147,11 +147,15 @@ with tab_gt:
         st.success(f"Wrote **{nfiles}** label files → `{gt_out}`  (kept {kept:,} / {total:,} objects, "
                    f"{100*kept/max(total,1):.0f}%).")
 
-    # ---- preview: kept (green) vs dropped (grey) + ROI outline ----
+    # ---- preview: point cloud + kept (green) vs dropped (red) boxes ----
     st.divider()
     st.subheader("👁 Preview")
+    st.caption("Point cloud (blue) with **kept** ground-truth boxes in **green** and **dropped** boxes "
+               "in **red**. Far drops sit outside the ROI window; in-region red boxes are objects with "
+               "too few LiDAR points (e.g. blind spots).")
+    gt_clouds = rv.list_by_frame(ds.raw_lidar_south_dir, [".pcd"])
     if gt_labels:
-        n_gt = len(gt_labels)
+        n_gt = min(len(gt_labels), len(gt_clouds)) if gt_clouds else len(gt_labels)
         st.session_state.setdefault("gt_frame", 0)
 
         @st.fragment
@@ -171,12 +175,14 @@ with tab_gt:
             i = st.slider("Frame", 0, max(n_gt - 1, 1), st.session_state.gt_frame, key="gt_slider")
             st.session_state.gt_frame = i
 
-            kept_xy, dropped_xy = dp.scorable_classify(gt_labels[i], region,
-                                                       min_points=int(min_points), exclude_occluded=excl_occ)
-            with st.container(height=620):
+            kept_boxes, dropped_boxes = dp.scorable_classify(gt_labels[i], region,
+                                                             min_points=int(min_points), exclude_occluded=excl_occ)
+            pts = _load_raw(gt_clouds[i]) if (gt_clouds and i < len(gt_clouds)) else None
+            tot = len(kept_boxes) + len(dropped_boxes)
+            with st.container(height=640):
                 st.plotly_chart(dp.scorable_preview_figure(
-                    kept_xy, dropped_xy, region,
-                    title=f"frame {i+1}/{n_gt} · kept {len(kept_xy)} · dropped {len(dropped_xy)}"),
+                    pts, kept_boxes, dropped_boxes, region,
+                    title=f"frame {i+1}/{n_gt} · kept {len(kept_boxes)}/{tot}"),
                     use_container_width=True, key="gt_fig")
 
             if playing and i < n_gt - 1:

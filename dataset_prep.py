@@ -75,6 +75,7 @@ def crop_preview_figure(points, margin=0.0, height=620, title="", draw_boundary=
             fig.add_trace(go.Scatter(x=list(x), y=list(y), mode="lines",
                                      line=dict(color="limegreen", width=3, dash="dash"),
                                      hoverinfo="skip", showlegend=False))
+    _add_sensor_marker(fig)
     # Lock the view to the road region (square) so cropped vs full share the SAME
     # zoom — full no longer zooms out to the ~200 m raw extent.
     minx, miny, maxx, maxy = poly.bounds
@@ -126,8 +127,19 @@ def _keep_object(cuboid, region_poly, min_points, exclude_occluded):
     return True
 
 
+def _box_footprint(val):
+    """Closed top-down (x, y) rectangle for a cuboid [x,y,z, qx,qy,qz,qw, l,w,h]."""
+    x, y = val[0], val[1]
+    qx, qy, qz, qw = val[3], val[4], val[5], val[6]
+    yaw = np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
+    l, w = val[7] / 2.0, val[8] / 2.0
+    c, s = np.cos(yaw), np.sin(yaw)
+    local = np.array([[l, w], [l, -w], [-l, -w], [-l, w], [l, w]])
+    return local @ np.array([[c, -s], [s, c]]).T + np.array([x, y])
+
+
 def scorable_classify(label_path, region_poly, min_points=1, exclude_occluded=False):
-    """Return (kept_xy, dropped_xy) object centres for a single label file (preview)."""
+    """Return (kept_boxes, dropped_boxes): lists of closed (x,y) box footprints."""
     ol = json.load(open(label_path))["openlabel"]
     frames = ol.get("frames", {})
     kept, dropped = [], []
@@ -136,10 +148,11 @@ def scorable_classify(label_path, region_poly, min_points=1, exclude_occluded=Fa
         for o in fr.get("objects", {}).values():
             cub = o["object_data"].get("cuboid", {})
             v = cub.get("val")
-            if not v:
+            if not v or len(v) < 10:
                 continue
-            (kept if _keep_object(cub, region_poly, min_points, exclude_occluded) else dropped).append((v[0], v[1]))
-    return (np.array(kept) if kept else np.zeros((0, 2))), (np.array(dropped) if dropped else np.zeros((0, 2)))
+            fp = _box_footprint(v)
+            (kept if _keep_object(cub, region_poly, min_points, exclude_occluded) else dropped).append(fp)
+    return kept, dropped
 
 
 def generate_scorable_gt(src_label_dir, out_dir, region_poly, min_points=1,
@@ -170,24 +183,45 @@ def generate_scorable_gt(src_label_dir, out_dir, region_poly, min_points=1,
     return len(files), kept_tot, total
 
 
-def scorable_preview_figure(kept_xy, dropped_xy, region_poly, height=560, title=""):
-    """BEV: kept objects (green), dropped (grey), + ROI region outline."""
+def _add_sensor_marker(fig):
+    """Mark the LiDAR at the point-cloud origin (0,0) — the sensor sits there,
+    ~8.6 m above the ground (ground is at z ~ -8.6 in this frame)."""
+    import plotly.graph_objects as go
+    fig.add_trace(go.Scatter(x=[0], y=[0], mode="markers+text", text=["LiDAR"],
+                             textposition="top center", textfont=dict(color="gold", size=12),
+                             marker=dict(size=14, color="gold", symbol="diamond", line=dict(color="black", width=1)),
+                             name="LiDAR (origin)", hoverinfo="skip"))
+
+
+def _boxes_xy(boxes):
+    """Flatten a list of footprints into one polyline (None-separated) for Plotly."""
+    xs, ys = [], []
+    for fp in boxes:
+        xs += list(fp[:, 0]) + [None]
+        ys += list(fp[:, 1]) + [None]
+    return xs, ys
+
+
+def scorable_preview_figure(points, kept_boxes, dropped_boxes, region_poly,
+                            height=620, title="", max_points=40000):
+    """BEV like the bundled vis: point cloud (blue) + kept GT boxes (green) and
+    dropped GT boxes (red), locked to the ROI region."""
     import plotly.graph_objects as go
     fig = go.Figure()
-    if len(dropped_xy):
-        fig.add_trace(go.Scatter(x=dropped_xy[:, 0], y=dropped_xy[:, 1], mode="markers",
-                                 marker=dict(size=9, color="#888", symbol="x"),
+    if points is not None and len(points):
+        if len(points) > max_points:
+            points = points[np.random.default_rng(0).choice(len(points), max_points, replace=False)]
+        fig.add_trace(go.Scattergl(x=points[:, 0], y=points[:, 1], mode="markers",
+                                   marker=dict(size=2, color="#1f77b4"), hoverinfo="skip", showlegend=False))
+    dx, dy = _boxes_xy(dropped_boxes)
+    if dx:
+        fig.add_trace(go.Scatter(x=dx, y=dy, mode="lines", line=dict(color="red", width=2),
                                  name="dropped", hoverinfo="skip"))
-    if len(kept_xy):
-        fig.add_trace(go.Scatter(x=kept_xy[:, 0], y=kept_xy[:, 1], mode="markers",
-                                 marker=dict(size=11, color="limegreen", line=dict(color="#0a0", width=1)),
+    kx, ky = _boxes_xy(kept_boxes)
+    if kx:
+        fig.add_trace(go.Scatter(x=kx, y=ky, mode="lines", line=dict(color="limegreen", width=2),
                                  name="kept (scorable)", hoverinfo="skip"))
-    geoms = [region_poly] if region_poly.geom_type == "Polygon" else list(region_poly.geoms)
-    for g in geoms:
-        x, y = g.exterior.xy
-        fig.add_trace(go.Scatter(x=list(x), y=list(y), mode="lines",
-                                 line=dict(color="limegreen", width=2, dash="dash"),
-                                 hoverinfo="skip", showlegend=False))
+    _add_sensor_marker(fig)
     minx, miny, maxx, maxy = region_poly.bounds
     cx, cy = (minx + maxx) / 2, (miny + maxy) / 2
     half = max(maxx - minx, maxy - miny) / 2 + 8.0
