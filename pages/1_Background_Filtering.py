@@ -40,7 +40,7 @@ def discover_pcd_files(dir_path: str):
     logging.info(f"Discovered {len(files)} PCD files in {dir_path}")
     return files
 
-def create_filtered_figure(foreground_pts, original_pts):
+def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25):
     fig = go.Figure()
     if original_pts.size > 0:
         fig.add_trace(go.Scatter3d(x=original_pts[:, 0], y=original_pts[:, 1], z=original_pts[:, 2],
@@ -48,17 +48,20 @@ def create_filtered_figure(foreground_pts, original_pts):
     if foreground_pts.size > 0:
         fig.add_trace(go.Scatter3d(x=foreground_pts[:, 0], y=foreground_pts[:, 1], z=foreground_pts[:, 2],
             mode="markers", name="Foreground", marker=dict(size=2.5, color="red", opacity=0.9)))
-    # Lock the x/y extent to the road region so toggling Cropped<->Full keeps the
-    # SAME zoom (Full no longer auto-fits out to the wider research extent).
+    # 3D zoom is the CAMERA distance (eye). No uirevision so the camera below applies
+    # on every render; smaller eye = more zoomed in. The slider persists across frames.
     try:
         from geometry_config import get_road_polygon
         minx, miny, maxx, maxy = get_road_polygon().bounds
-        m = 12.0  # breathing room so it isn't too tight (same for cropped & full)
+        m = float(margin)
         xr = dict(range=[minx - m, maxx + m]); yr = dict(range=[miny - m, maxy + m])
     except Exception:
         xr, yr = {}, {}
+    eye = float(zoom)
     fig.update_layout(margin=dict(l=0, r=0, b=0, t=0),
-                      scene=dict(aspectmode="data", xaxis=xr, yaxis=yr), uirevision="bf_view")
+                      scene=dict(aspectmode="data", xaxis=xr, yaxis=yr,
+                                 zaxis=dict(range=[-12.0, 1.0]),
+                                 camera=dict(eye=dict(x=eye, y=eye, z=eye))))
     return fig
 
 # ---------------- Sidebar parameters ----------------
@@ -202,11 +205,14 @@ if st.session_state.bg_model:
             play_delay = nav[5].slider("Play delay (s)", 0.0, 1.0, 0.15, 0.05)
             i = st.slider("Frame", 0, max(n_bf - 1, 1), st.session_state.bf_frame)
             st.session_state.bf_frame = i
+            # Lower = more zoomed in. Same value for cropped & full so they match.
+            zoom = st.slider("3D zoom (lower = closer)", 0.6, 2.0, 1.25, 0.05, key="bf_zoom")
 
             pts = _load_raw(pcd_files[i])
             fg, _ = filter_points_with_model(pts, st.session_state.bg_model, config)
             with st.container(height=560):
-                st.plotly_chart(create_filtered_figure(fg, pts), use_container_width=True, key="bf_fig")
+                st.plotly_chart(create_filtered_figure(fg, pts, margin=12.0, zoom=zoom),
+                                use_container_width=True, key="bf_fig")
             st.caption(f"{os.path.basename(pcd_files[i])} · frame {i+1}/{n_bf} · "
                        f"{len(fg)} foreground / {len(pts)} points")
 
