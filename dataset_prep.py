@@ -222,5 +222,6 @@ def scorable_preview_figure(points, kept_boxes, dropped_boxes, region_poly,
     fig.update_layout(height=height, margin=dict(l=0, r=0, t=30, b=0), title=title,
                       legend=dict(orientation="h", y=1.02, x=0),
                       xaxis=dict(title="x (m)", range=[cx - half, cx + half]),
-                      yaxis=dict(title="y (m)", range=[cy - half, cy + half], scaleanchor="x", scaleratio=1))
+                      yaxis=dict(title="y (m)", range=[cy - half, cy + half], scaleanchor="x", scaleratio=1),
+                      uirevision="dp_gt")  # keep scroll-zoom/pan across frame steps
     return fig

@@ -81,7 +81,7 @@ with tab_crop:
             shown = dp.crop_points_to_region(pts, dp.road_polygon(margin)) if cropped else pts
             st.markdown(f"**{sensor} LiDAR** · {len(shown):,} pts")
             st.plotly_chart(dp.crop_preview_figure(shown, margin=margin, height=520, draw_boundary=show_road),
-                            use_container_width=True, key=key)
+                            use_container_width=True, key=key, config={"scrollZoom": True})
 
         @st.fragment
         def _crop_preview():
@@ -183,7 +183,7 @@ with tab_gt:
                 st.plotly_chart(dp.scorable_preview_figure(
                     pts, kept_boxes, dropped_boxes, region,
                     title=f"frame {i+1}/{n_gt} · kept {len(kept_boxes)}/{tot}"),
-                    use_container_width=True, key="gt_fig")
+                    use_container_width=True, key="gt_fig", config={"scrollZoom": True})
 
             if playing and i < n_gt - 1:
                 time.sleep(float(delay))
