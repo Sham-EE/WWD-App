@@ -55,22 +55,24 @@ def crop_dataset(src_dir, out_dir, margin=0.0, max_frames=0, progress=None):
     return len(files), total_kept, total_pts
 
 
-def crop_preview_figure(points_cropped, margin=0.0, height=620, title=""):
-    """Top-down BEV of the cropped points + the road boundary as a black dashed
-    line (matches the bundled cropped/vis previews)."""
+def crop_preview_figure(points, margin=0.0, height=620, title="", draw_boundary=True):
+    """Top-down BEV of `points` + (optionally) the road boundary as a black dashed
+    line (matches the bundled cropped/vis previews). `points` may be the cropped or
+    the full/uncropped cloud."""
     import plotly.graph_objects as go
     fig = go.Figure()
-    if points_cropped is not None and len(points_cropped):
+    if points is not None and len(points):
         fig.add_trace(go.Scattergl(
-            x=points_cropped[:, 0], y=points_cropped[:, 1], mode="markers",
-            marker=dict(size=2, color="#1f77b4"), hoverinfo="skip", name="cropped"))
-    poly = road_polygon(margin)
-    geoms = [poly] if poly.geom_type == "Polygon" else list(poly.geoms)
-    for g in geoms:
-        x, y = g.exterior.xy
-        fig.add_trace(go.Scatter(x=list(x), y=list(y), mode="lines",
-                                 line=dict(color="black", width=2, dash="dash"),
-                                 hoverinfo="skip", showlegend=False))
+            x=points[:, 0], y=points[:, 1], mode="markers",
+            marker=dict(size=2, color="#1f77b4"), hoverinfo="skip", name="points"))
+    if draw_boundary:
+        poly = road_polygon(margin)
+        geoms = [poly] if poly.geom_type == "Polygon" else list(poly.geoms)
+        for g in geoms:
+            x, y = g.exterior.xy
+            fig.add_trace(go.Scatter(x=list(x), y=list(y), mode="lines",
+                                     line=dict(color="black", width=2, dash="dash"),
+                                     hoverinfo="skip", showlegend=False))
     fig.update_layout(
         height=height, margin=dict(l=0, r=0, t=30, b=0), title=title, showlegend=False,
         xaxis=dict(title="x (m)"),

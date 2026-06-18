@@ -62,6 +62,7 @@ def render_camera_tab():
 
     color_mode, point_size = "by_category", 2
     track_hist, hist_window, trail_width = False, 30, 8
+    pc_full = False
     if mode:
         oc1, oc2, oc3 = st.columns([1, 1.4, 1])
         color_mode = oc1.radio("Box colour", ["by_category", "by_track_id"], horizontal=True,
@@ -81,14 +82,21 @@ def render_camera_tab():
         if track_hist:
             hist_window = th2.slider("Trail length (frames)", 5, 80, 30, 5)
             trail_width = th3.slider("Trail thickness (px)", 2, 24, 8, 1)
+        if mode == "point_cloud":
+            pc_full = st.radio("Projected point cloud", ["Cropped (road)", "Full (uncropped)"],
+                               horizontal=True, key="cam_pc",
+                               help="Project the road-cropped cloud or the full raw south cloud "
+                                    "(full reaches distant structures).") == "Full (uncropped)"
 
     raw_left = rv.frames_for(images_root, left_cam, "raw")
     raw_right = rv.frames_for(images_root, right_cam, "raw")
+    # which clouds to project for 'Boxes + point cloud'
+    pc_list = rv.list_by_frame(ds.raw_lidar_south_dir, [".pcd"]) if (mode == "point_cloud" and pc_full) else pcds
     counts = [len(raw_left), len(raw_right)]
     if mode:
         counts.append(len(labels))
     if mode == "point_cloud":
-        counts.append(len(pcds))
+        counts.append(len(pc_list))
     n = min(counts) if counts else 0
     if n == 0:
         st.warning("Not enough synchronized frames.")
@@ -113,15 +121,16 @@ def render_camera_tab():
 
     def _cache_dir(cam):
         ps = f"_ps{point_size}" if mode == "point_cloud" else ""
+        pc = (f"_pc{'full' if pc_full else 'crop'}") if mode == "point_cloud" else ""
         th = f"_th{hist_window}w{trail_width}" if track_hist else ""
-        return os.path.join(ds.outputs_dir, "rendered", cam, f"{mode}_{color_mode}{ps}{th}_{lp.RENDER_VERSION}")
+        return os.path.join(ds.outputs_dir, "rendered", cam, f"{mode}_{color_mode}{ps}{pc}{th}_{lp.RENDER_VERSION}")
 
     def _render(i, cam, cam_id, raw):
         if not mode:
             return raw[i]
         return lp.render_cached(raw[i], labels[i], cam_id, mode, _cache_dir(cam),
                                 color_mode=color_mode,
-                                pcd_path=(pcds[i] if mode == "point_cloud" else None),
+                                pcd_path=(pc_list[i] if mode == "point_cloud" else None),
                                 point_size=point_size, histories=_histories(i), trail_width=trail_width)
 
     st.session_state.setdefault("road_frame", 0)
