@@ -22,10 +22,16 @@ logging.info("--- Background Filter Page Loaded ---")
 import dataset_manager as dm
 _ds = dm.get_active()
 st.sidebar.caption(f"📂 Dataset: **{_ds.name}**")
-DEFAULT_MODEL_PATH = _ds.model_path
-DEFAULT_PCD = _ds.pcd_dir
+_src_label = st.sidebar.radio("Input cloud", ["Cropped (road)", "Full (uncropped)"],
+                              key="pipeline_source", horizontal=True,
+                              help="Cropped = road-clipped clouds; Full = raw clouds (research region). "
+                                   "Each writes to its own model/filtered/detection folders so you can "
+                                   "compare eval metrics. The choice is shared across Filtering / Detection / Evaluation.")
+_src = "cropped" if _src_label.startswith("Cropped") else "full"
+DEFAULT_MODEL_PATH = _ds.model_path_for(_src)
+DEFAULT_PCD = _ds.input_pcd_for(_src)
 DEFAULT_GT = _ds.gt_dir
-DEFAULT_OUT = _ds.filtered_dir
+DEFAULT_OUT = _ds.filtered_dir_for(_src)
 
 @st.cache_data(show_spinner="Discovering PCD files...")
 def discover_pcd_files(dir_path: str):

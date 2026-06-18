@@ -152,6 +152,24 @@ class Dataset:
     def settings_path(self):
         return os.path.join(self.workspace, "settings.json")
 
+    # --- pipeline input source (cropped road vs full/uncropped) for A/B eval ---
+    # Each source writes to its own model/filtered/detection folders so the two
+    # don't clash and their eval metrics can be compared.
+    def _sfx(self, source):
+        return "" if source == "cropped" else "_full"
+
+    def input_pcd_for(self, source):
+        return self.pcd_dir if source == "cropped" else self.raw_lidar_south_dir
+
+    def model_path_for(self, source):
+        return os.path.join(self.outputs_dir, "background_model" + self._sfx(source), "background_model.pkl")
+
+    def filtered_dir_for(self, source):
+        return self.filtered_dir + self._sfx(source)
+
+    def detection_dir_for(self, source):
+        return self.detection_dir + self._sfx(source)
+
     def ensure_workspace(self):
         """Create the workspace folders (config/outputs) for a user dataset."""
         for p in (self.config_dir, os.path.join(self.outputs_dir, "background_model"),
