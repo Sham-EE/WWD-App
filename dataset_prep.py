@@ -60,21 +60,27 @@ def crop_preview_figure(points, margin=0.0, height=620, title="", draw_boundary=
     line (matches the bundled cropped/vis previews). `points` may be the cropped or
     the full/uncropped cloud."""
     import plotly.graph_objects as go
+    poly = road_polygon(margin)
     fig = go.Figure()
     if points is not None and len(points):
         fig.add_trace(go.Scattergl(
             x=points[:, 0], y=points[:, 1], mode="markers",
             marker=dict(size=2, color="#1f77b4"), hoverinfo="skip", name="points"))
     if draw_boundary:
-        poly = road_polygon(margin)
         geoms = [poly] if poly.geom_type == "Polygon" else list(poly.geoms)
         for g in geoms:
             x, y = g.exterior.xy
             fig.add_trace(go.Scatter(x=list(x), y=list(y), mode="lines",
                                      line=dict(color="limegreen", width=3, dash="dash"),
                                      hoverinfo="skip", showlegend=False))
+    # Lock the view to the road region (square) so cropped vs full share the SAME
+    # zoom — full no longer zooms out to the ~200 m raw extent.
+    minx, miny, maxx, maxy = poly.bounds
+    cx, cy = (minx + maxx) / 2, (miny + maxy) / 2
+    half = max(maxx - minx, maxy - miny) / 2 + 6.0
     fig.update_layout(
         height=height, margin=dict(l=0, r=0, t=30, b=0), title=title, showlegend=False,
-        xaxis=dict(title="x (m)"),
-        yaxis=dict(title="y (m)", scaleanchor="x", scaleratio=1))
+        xaxis=dict(title="x (m)", range=[cx - half, cx + half]),
+        yaxis=dict(title="y (m)", range=[cy - half, cy + half], scaleanchor="x", scaleratio=1),
+        uirevision="dp_preview")
     return fig
