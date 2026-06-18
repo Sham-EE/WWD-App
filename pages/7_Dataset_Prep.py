@@ -3,7 +3,6 @@ import time
 
 import numpy as np
 import open3d as o3d
-import pandas as pd
 import streamlit as st
 
 import dataset_manager as dm
@@ -25,14 +24,29 @@ def _load_raw(path):
     return np.asarray(o3d.io.read_point_cloud(path).points)
 
 
-def _poly_editor(poly, key):
-    """Vertex (x,y) table editor -> list of [x,y]."""
-    df = pd.DataFrame(poly or [[0.0, 0.0]], columns=["x", "y"])
-    edited = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=key,
-                            column_config={"x": st.column_config.NumberColumn(format="%.2f"),
-                                           "y": st.column_config.NumberColumn(format="%.2f")})
-    out = edited.dropna(how="any")[["x", "y"]].values.tolist()
-    return [[float(x), float(y)] for x, y in out]
+def _bbox_editor(poly, label, step=1.0):
+    """Lane-Editor-style rectangle editor: X/Y min-max with +/- steppers. Returns 4 corners.
+    (No widget keys -> the value re-seeds from `poly` each run, so reset-to-default works.)"""
+    xs = [p[0] for p in poly] or [-10.0, 10.0]
+    ys = [p[1] for p in poly] or [-10.0, 10.0]
+    c1, c2, c3, c4 = st.columns(4)
+    xmin = c1.number_input(f"{label} X min", value=float(min(xs)), step=step, format="%.1f")
+    xmax = c2.number_input(f"{label} X max", value=float(max(xs)), step=step, format="%.1f")
+    ymin = c3.number_input(f"{label} Y min", value=float(min(ys)), step=step, format="%.1f")
+    ymax = c4.number_input(f"{label} Y max", value=float(max(ys)), step=step, format="%.1f")
+    return [[xmin, ymin], [xmax, ymin], [xmax, ymax], [xmin, ymax]]
+
+
+def _vertex_editor(poly, label, step=1.0):
+    """Per-vertex x/y +/- steppers (for arbitrary polygons). Returns list of [x,y]."""
+    poly = [list(p) for p in (poly or [[0.0, 0.0]])]
+    out = []
+    for i, (x, y) in enumerate(poly):
+        c1, c2 = st.columns(2)
+        nx = c1.number_input(f"{label} v{i+1} x", value=float(x), step=step, format="%.1f")
+        ny = c2.number_input(f"{label} v{i+1} y", value=float(y), step=step, format="%.1f")
+        out.append([nx, ny])
+    return out
 
 
 tab_crop, tab_gt, tab_geom = st.tabs(
@@ -245,12 +259,18 @@ with tab_geom:
         st.session_state.geom_ds = ds.id
     geom = st.session_state.geom_edit
 
-    gt1, gt2, _ = st.columns([1, 1, 2])
+    default_geom = ge.load_default_geometry(ds)
+    gt1, gt2, gt3 = st.columns([1, 1, 1])
     if gt1.button("💾 Save (updates everything)", type="primary", use_container_width=True, key="geom_save"):
         ge.save_site_geometry(ds, geom)
         st.success(f"Saved → `{ds.site_geometry_path}`. The whole pipeline now uses this geometry.")
     if gt2.button("↩️ Reload saved", use_container_width=True, key="geom_reload"):
         st.session_state.geom_edit = ge.load_site_geometry(ds)
+        st.rerun()
+    if gt3.button("🔄 Reset ALL to default", use_container_width=True, key="geom_reset_all",
+                  disabled=not ge.has_defaults(ds)):
+        import copy
+        st.session_state.geom_edit = copy.deepcopy(default_geom)
         st.rerun()
 
     geom_clouds = rv.list_by_frame(ds.raw_lidar_south_dir, [".pcd"]) or rv.list_by_frame(ds.pcd_dir, [".pcd"])
@@ -258,42 +278,66 @@ with tab_geom:
     if geom_clouds:
         gfi = st.slider("Backdrop frame", 0, len(geom_clouds) - 1, 0, key="geom_bg_frame")
         geom_bg = _load_raw(geom_clouds[gfi])
+    step = st.select_slider("Stepper increment (m)", [0.5, 1.0, 2.0, 5.0], value=1.0, key="geom_step")
 
     g_left, g_right = st.columns([1, 1.3], gap="medium")
     with g_left:
         with st.expander("🔵 Research polygon (ROI)", expanded=True):
-            st.caption("Overall analysed region; the default scorable-GT region.")
-            geom["research_polygon"] = _poly_editor(geom.get("research_polygon", []), "ge_research")
-            if st.button("Reset research → data extent", key="ge_reset_research"):
-                geom["research_polygon"] = dm.derive_site_geometry(ds.pcd_dir)["research_polygon"]
-                st.rerun()
+            st.caption("Overall analysed region (a rectangle); the default scorable-GT region.")
+            geom["research_polygon"] = _bbox_editor(geom.get("research_polygon", []), "ROI", step)
+            rr1, rr2 = st.columns(2)
+            if rr1.button("🔄 Reset to default", key="ge_reset_research", disabled=not ge.has_defaults(ds)):
+                geom["research_polygon"] = [list(p) for p in default_geom["research_polygon"]]; st.rerun()
+            if rr2.button("📐 From data extent", key="ge_derive_research"):
+                geom["research_polygon"] = dm.derive_site_geometry(ds.pcd_dir)["research_polygon"]; st.rerun()
+
         with st.expander("🟢 Road polygons (cropping)", expanded=True):
-            st.caption("Drivable area. Crop-to-road keeps only points inside these.")
+            st.caption("Drivable area (any shape). Crop-to-road keeps only points inside these.")
             roads = geom.get("road_polygons", [])
+            if st.button("🔄 Reset road polygons to default", key="ge_reset_road",
+                         disabled=not ge.has_defaults(ds)):
+                geom["road_polygons"] = [[list(p) for p in poly] for poly in default_geom["road_polygons"]]
+                st.rerun()
             rc1, rc2 = st.columns(2)
-            if rc1.button("➕ Add road polygon", key="ge_add_road"):
+            if rc1.button("➕ Add polygon", key="ge_add_road"):
                 roads.append(ge.default_rect(geom)); geom["road_polygons"] = roads; st.rerun()
             if roads:
-                ridx = st.selectbox("Road polygon", range(len(roads)),
-                                    format_func=lambda i: f"#{i+1}", key="ge_road_sel")
-                if rc2.button("🗑️ Delete this polygon", key="ge_del_road"):
-                    roads.pop(ridx); geom["road_polygons"] = roads; st.rerun()
-                roads[ridx] = _poly_editor(roads[ridx], f"ge_road_{ridx}")
+                st.session_state.setdefault("ge_road_idx", 0)
+                ridx = min(st.session_state.ge_road_idx, len(roads) - 1)
+                ridx = st.selectbox("Road polygon", range(len(roads)), index=ridx,
+                                    format_func=lambda i: f"#{i+1}")
+                st.session_state.ge_road_idx = ridx
+                rcv1, rcv2 = st.columns(2)
+                if rcv1.button("➕ Add vertex", key="ge_road_addv"):
+                    roads[ridx].append(list(roads[ridx][-1])); geom["road_polygons"] = roads; st.rerun()
+                if rcv2.button("🗑️ Delete polygon", key="ge_del_road"):
+                    roads.pop(ridx); geom["road_polygons"] = roads
+                    st.session_state.ge_road_idx = 0; st.rerun()
+                roads[ridx] = _vertex_editor(roads[ridx], f"Road{ridx+1}", step)
                 geom["road_polygons"] = roads
             else:
                 st.info("No road polygons — add one (cropping keeps everything until you do).")
+
         with st.expander("🔴 Exclusion rectangles", expanded=False):
             st.caption("Regions always treated as background (static clutter).")
             rects = geom.get("foreground_exclusion_rects", [])
-            ec1, ec2 = st.columns(2)
-            if ec1.button("➕ Add rectangle", key="ge_add_excl"):
+            if st.button("🔄 Reset exclusions to default", key="ge_reset_excl",
+                         disabled=not ge.has_defaults(ds)):
+                geom["foreground_exclusion_rects"] = [[list(p) for p in r]
+                                                      for r in default_geom["foreground_exclusion_rects"]]
+                st.rerun()
+            if st.button("➕ Add rectangle", key="ge_add_excl"):
                 rects.append(ge.default_rect(geom)); geom["foreground_exclusion_rects"] = rects; st.rerun()
             if rects:
-                eidx = st.selectbox("Rectangle", range(len(rects)),
-                                    format_func=lambda i: f"#{i+1}", key="ge_excl_sel")
-                if ec2.button("🗑️ Delete this rect", key="ge_del_excl"):
-                    rects.pop(eidx); geom["foreground_exclusion_rects"] = rects; st.rerun()
-                rects[eidx] = _poly_editor(rects[eidx], f"ge_excl_{eidx}")
+                st.session_state.setdefault("ge_excl_idx", 0)
+                eidx = min(st.session_state.ge_excl_idx, len(rects) - 1)
+                eidx = st.selectbox("Rectangle", range(len(rects)), index=eidx,
+                                    format_func=lambda i: f"#{i+1}")
+                st.session_state.ge_excl_idx = eidx
+                if st.button("🗑️ Delete this rect", key="ge_del_excl"):
+                    rects.pop(eidx); geom["foreground_exclusion_rects"] = rects
+                    st.session_state.ge_excl_idx = 0; st.rerun()
+                rects[eidx] = _bbox_editor(rects[eidx], f"Rect{eidx+1}", step)
                 geom["foreground_exclusion_rects"] = rects
             else:
                 st.info("No exclusion rectangles.")

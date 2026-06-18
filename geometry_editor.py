@@ -36,6 +36,30 @@ def load_site_geometry(ds):
     return g
 
 
+def load_default_geometry(ds):
+    """The factory-default geometry snapshot (config/defaults/), or the current
+    saved geometry if no snapshot exists."""
+    path = ds.default_site_geometry_path
+    if os.path.exists(path):
+        try:
+            g = json.load(open(path))
+            g.setdefault("research_polygon", [])
+            g.setdefault("road_polygons", [])
+            g.setdefault("foreground_exclusion_rects", [])
+            g["research_polygon"] = [[float(p[0]), float(p[1])] for p in g["research_polygon"]]
+            g["road_polygons"] = [[[float(p[0]), float(p[1])] for p in poly] for poly in g["road_polygons"]]
+            g["foreground_exclusion_rects"] = [[[float(p[0]), float(p[1])] for p in r]
+                                               for r in g["foreground_exclusion_rects"]]
+            return g
+        except Exception:
+            pass
+    return load_site_geometry(ds)
+
+
+def has_defaults(ds):
+    return os.path.exists(ds.default_site_geometry_path)
+
+
 def save_site_geometry(ds, geom):
     """Write geometry to the dataset's site_geometry.json (updates everything)."""
     os.makedirs(ds.config_dir, exist_ok=True)

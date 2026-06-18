@@ -48,7 +48,16 @@ def create_filtered_figure(foreground_pts, original_pts):
     if foreground_pts.size > 0:
         fig.add_trace(go.Scatter3d(x=foreground_pts[:, 0], y=foreground_pts[:, 1], z=foreground_pts[:, 2],
             mode="markers", name="Foreground", marker=dict(size=2.5, color="red", opacity=0.9)))
-    fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), scene=dict(aspectmode="data"))
+    # Lock the x/y extent to the road region so toggling Cropped<->Full keeps the
+    # SAME zoom (Full no longer auto-fits out to the wider research extent).
+    try:
+        from geometry_config import get_road_polygon
+        minx, miny, maxx, maxy = get_road_polygon().bounds
+        xr = dict(range=[minx - 3, maxx + 3]); yr = dict(range=[miny - 3, maxy + 3])
+    except Exception:
+        xr, yr = {}, {}
+    fig.update_layout(margin=dict(l=0, r=0, b=0, t=0),
+                      scene=dict(aspectmode="data", xaxis=xr, yaxis=yr), uirevision="bf_view")
     return fig
 
 # ---------------- Sidebar parameters ----------------

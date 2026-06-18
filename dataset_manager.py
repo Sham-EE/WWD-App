@@ -136,6 +136,19 @@ class Dataset:
     def site_geometry_path(self):
         return os.path.join(self.config_dir, "site_geometry.json")
 
+    # --- factory-default snapshots (config/defaults/), for "reset to default" ---
+    @property
+    def defaults_dir(self):
+        return os.path.join(self.config_dir, "defaults")
+
+    @property
+    def default_site_geometry_path(self):
+        return os.path.join(self.defaults_dir, "site_geometry.json")
+
+    @property
+    def default_lanes_path(self):
+        return os.path.join(self.defaults_dir, "lanes.geojson")
+
     @property
     def model_path(self):
         return os.path.join(self.outputs_dir, "background_model", "background_model.pkl")
@@ -307,8 +320,13 @@ def create_dataset(name, pcd_dir, gt_dir="", description=""):
     ds.ensure_workspace()
     # scaffold starter geometry + readme so the dataset is immediately runnable
     try:
+        starter = derive_site_geometry(pcd_dir)
         with open(ds.site_geometry_path, "w", encoding="utf-8") as f:
-            json.dump(derive_site_geometry(pcd_dir), f, indent=2)
+            json.dump(starter, f, indent=2)
+        # snapshot it as the factory default so "reset to default" works
+        os.makedirs(ds.defaults_dir, exist_ok=True)
+        with open(ds.default_site_geometry_path, "w", encoding="utf-8") as f:
+            json.dump(starter, f, indent=2)
     except Exception:
         pass
     try:
