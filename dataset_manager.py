@@ -86,6 +86,31 @@ class Dataset:
     def images_dir(self):
         return self.d.get("images_dir", os.path.join(self.workspace, "data", "images"))
 
+    # --- RAW inputs (the untouched TUM Traffic download) ---
+    @property
+    def data_dir(self):
+        return os.path.join(self.workspace, "data")
+
+    @property
+    def raw_lidar_south_dir(self):
+        return self.d.get("raw_lidar_south_dir",
+                          os.path.join(self.data_dir, "point_clouds", "s110_lidar_ouster_south"))
+
+    @property
+    def raw_lidar_north_dir(self):
+        return self.d.get("raw_lidar_north_dir",
+                          os.path.join(self.data_dir, "point_clouds", "s110_lidar_ouster_north"))
+
+    @property
+    def raw_labels_south_dir(self):
+        return self.d.get("raw_labels_south_dir",
+                          os.path.join(self.data_dir, "labels_point_clouds", "s110_lidar_ouster_south"))
+
+    @property
+    def raw_labels_north_dir(self):
+        return self.d.get("raw_labels_north_dir",
+                          os.path.join(self.data_dir, "labels_point_clouds", "s110_lidar_ouster_north"))
+
     # --- workspace (generated / edited) ---
     @property
     def config_dir(self):
