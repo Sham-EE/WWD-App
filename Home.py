@@ -50,7 +50,8 @@ st.write("")
 GROUPS = [
     ("📂 Data & setup", [
         ("🗂️", "Datasets", "Choose the active dataset or add your own.", "pages/0_Datasets.py"),
-        ("🎬", "Visualizer", "Cameras side by side + 3D LiDAR labels (BEV/side); generated overlays, trails, video.", "pages/6_Visualizer.py"),
+        ("🧰", "Dataset Prep", "Crop, scorable GT, and the geometry editor — recreate derived data.", "pages/7_Dataset_Prep.py"),
+        ("🎬", "Visualizer", "Cameras side by side + 3D LiDAR labels (BEV/side); overlays, trails, video.", "pages/6_Visualizer.py"),
     ]),
     ("⚙️ Detection pipeline", [
         ("🔬", "Background Filtering", "Build a background model; keep moving foreground points.", "pages/1_Background_Filtering.py"),

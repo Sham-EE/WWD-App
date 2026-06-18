@@ -20,18 +20,23 @@ st.subheader("📁 Input and Output")
 import dataset_manager as dm
 _ds = dm.get_active()
 st.caption(f"📂 Dataset: **{_ds.name}**")
+_src_label = st.radio("Input cloud", ["Cropped (road)", "Full (uncropped)"],
+                      key="pipeline_source", horizontal=True,
+                      help="Must match what you ran in Background Filtering. Each source has its own "
+                           "filtered/detection folders so you can compare eval metrics.")
+_src = "cropped" if _src_label.startswith("Cropped") else "full"
 
 filtered_pcd_dir = st.text_input(
     "Enter the path to the FILTERED PCD files (for detection):",
-    value=_ds.filtered_dir
+    value=_ds.filtered_dir_for(_src)
 )
 
 original_pcd_dir = st.text_input(
     "Enter the path to the ORIGINAL PCD files (for visualization):",
-    value=_ds.pcd_dir
+    value=_ds.input_pcd_for(_src)
 )
 
-output_dir = _ds.detection_dir
+output_dir = _ds.detection_dir_for(_src)
 
 # --- Parameters ---
 st.subheader("⚙️ Algorithm Parameters")

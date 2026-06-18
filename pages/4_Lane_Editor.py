@@ -30,7 +30,7 @@ st.session_state.setdefault('le_v', 0)  # widget key version (bump to reseed)
 st.title("🛣️ Lane Editor")
 
 # ---------------- Top bar: data + template actions ----------------
-top = st.columns([3, 1.3, 1.3, 1.4, 1.4])
+top = st.columns([2.3, 1.1, 1.1, 1.3, 1.3, 1.3])
 uploaded = top[0].file_uploader("tracks.csv", type="csv", label_visibility="collapsed")
 src = uploaded if uploaded is not None else (DEFAULT_TRACKS if os.path.exists(DEFAULT_TRACKS) else None)
 min_speed = top[1].slider("Min speed", 0.0, 10.0, 1.0, 0.5, help="m/s; exclude slow/parked points.")
@@ -55,6 +55,15 @@ if top[4].button("📂 Load saved", use_container_width=True, disabled=not os.pa
                  help="Load the lanes from the active config/lanes.geojson into the editor so "
                       "you can view or adjust them."):
     with open(LANES_PATH) as f:
+        st.session_state.le_lanes = geojson_to_lanes(json.load(f))
+    st.session_state.le_v += 1
+    st.rerun()
+if top[5].button("🔄 Default lanes", use_container_width=True,
+                 disabled=not os.path.exists(_ds.default_lanes_path),
+                 help="Reset to the dataset's default calibrated lanes "
+                      "(config/defaults/lanes.geojson) — an honest representation of the road, "
+                      "in case you messed up your edits."):
+    with open(_ds.default_lanes_path) as f:
         st.session_state.le_lanes = geojson_to_lanes(json.load(f))
     st.session_state.le_v += 1
     st.rerun()

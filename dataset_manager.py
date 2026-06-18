@@ -43,8 +43,8 @@ TEMPLATES = [
         "id": "A9_r02_s02",
         "name": "TUMTraf A9 r02_s02 (s110 ouster south) — template",
         "template": True,
-        "pcd_dir": "datasets/A9_r02_s02/data/point_clouds/cropped/cropped_pcd",
-        "gt_dir": "datasets/A9_r02_s02/data/labels_point_clouds/a9_gt_visible_only_south",
+        "pcd_dir": "datasets/A9_r02_s02/data/derived/cropped_south/cropped_pcd",
+        "gt_dir": "datasets/A9_r02_s02/data/derived/labels_visible_south",
         "workspace": "datasets/A9_r02_s02",
     },
 ]
@@ -84,7 +84,40 @@ class Dataset:
 
     @property
     def images_dir(self):
-        return self.d.get("images_dir", os.path.join(self.workspace, "data", "images"))
+        return self.d.get("images_dir", os.path.join(self.data_dir, "raw", "images"))
+
+    # --- RAW inputs (the untouched TUM Traffic download, under data/raw/) ---
+    @property
+    def data_dir(self):
+        return os.path.join(self.workspace, "data")
+
+    @property
+    def raw_dir(self):
+        return os.path.join(self.data_dir, "raw")
+
+    @property
+    def derived_dir(self):
+        return os.path.join(self.data_dir, "derived")
+
+    @property
+    def raw_lidar_south_dir(self):
+        return self.d.get("raw_lidar_south_dir",
+                          os.path.join(self.raw_dir, "point_clouds", "s110_lidar_ouster_south"))
+
+    @property
+    def raw_lidar_north_dir(self):
+        return self.d.get("raw_lidar_north_dir",
+                          os.path.join(self.raw_dir, "point_clouds", "s110_lidar_ouster_north"))
+
+    @property
+    def raw_labels_south_dir(self):
+        return self.d.get("raw_labels_south_dir",
+                          os.path.join(self.raw_dir, "labels", "s110_lidar_ouster_south"))
+
+    @property
+    def raw_labels_north_dir(self):
+        return self.d.get("raw_labels_north_dir",
+                          os.path.join(self.raw_dir, "labels", "s110_lidar_ouster_north"))
 
     # --- workspace (generated / edited) ---
     @property
@@ -103,6 +136,19 @@ class Dataset:
     def site_geometry_path(self):
         return os.path.join(self.config_dir, "site_geometry.json")
 
+    # --- factory-default snapshots (config/defaults/), for "reset to default" ---
+    @property
+    def defaults_dir(self):
+        return os.path.join(self.config_dir, "defaults")
+
+    @property
+    def default_site_geometry_path(self):
+        return os.path.join(self.defaults_dir, "site_geometry.json")
+
+    @property
+    def default_lanes_path(self):
+        return os.path.join(self.defaults_dir, "lanes.geojson")
+
     @property
     def model_path(self):
         return os.path.join(self.outputs_dir, "background_model", "background_model.pkl")
@@ -118,6 +164,24 @@ class Dataset:
     @property
     def settings_path(self):
         return os.path.join(self.workspace, "settings.json")
+
+    # --- pipeline input source (cropped road vs full/uncropped) for A/B eval ---
+    # Each source writes to its own model/filtered/detection folders so the two
+    # don't clash and their eval metrics can be compared.
+    def _sfx(self, source):
+        return "" if source == "cropped" else "_full"
+
+    def input_pcd_for(self, source):
+        return self.pcd_dir if source == "cropped" else self.raw_lidar_south_dir
+
+    def model_path_for(self, source):
+        return os.path.join(self.outputs_dir, "background_model" + self._sfx(source), "background_model.pkl")
+
+    def filtered_dir_for(self, source):
+        return self.filtered_dir + self._sfx(source)
+
+    def detection_dir_for(self, source):
+        return self.detection_dir + self._sfx(source)
 
     def ensure_workspace(self):
         """Create the workspace folders (config/outputs) for a user dataset."""
@@ -256,8 +320,13 @@ def create_dataset(name, pcd_dir, gt_dir="", description=""):
     ds.ensure_workspace()
     # scaffold starter geometry + readme so the dataset is immediately runnable
     try:
+        starter = derive_site_geometry(pcd_dir)
         with open(ds.site_geometry_path, "w", encoding="utf-8") as f:
-            json.dump(derive_site_geometry(pcd_dir), f, indent=2)
+            json.dump(starter, f, indent=2)
+        # snapshot it as the factory default so "reset to default" works
+        os.makedirs(ds.defaults_dir, exist_ok=True)
+        with open(ds.default_site_geometry_path, "w", encoding="utf-8") as f:
+            json.dump(starter, f, indent=2)
     except Exception:
         pass
     try:

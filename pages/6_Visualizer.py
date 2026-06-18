@@ -7,6 +7,7 @@ import dataset_manager as dm
 import road_viewer as rv
 import label_projection as lp
 import lidar_viewer as lv
+import dataset_prep as dp
 
 st.set_page_config(layout="wide", page_title="Visualizer")
 st.title("🎬 Visualizer")
@@ -61,6 +62,7 @@ def render_camera_tab():
 
     color_mode, point_size = "by_category", 2
     track_hist, hist_window, trail_width = False, 30, 8
+    pc_full = False
     if mode:
         oc1, oc2, oc3 = st.columns([1, 1.4, 1])
         color_mode = oc1.radio("Box colour", ["by_category", "by_track_id"], horizontal=True,
@@ -80,14 +82,21 @@ def render_camera_tab():
         if track_hist:
             hist_window = th2.slider("Trail length (frames)", 5, 80, 30, 5)
             trail_width = th3.slider("Trail thickness (px)", 2, 24, 8, 1)
+        if mode == "point_cloud":
+            pc_full = st.radio("Projected point cloud", ["Cropped (road)", "Full (uncropped)"],
+                               horizontal=True, key="cam_pc",
+                               help="Project the road-cropped cloud or the full raw south cloud "
+                                    "(full reaches distant structures).") == "Full (uncropped)"
 
     raw_left = rv.frames_for(images_root, left_cam, "raw")
     raw_right = rv.frames_for(images_root, right_cam, "raw")
+    # which clouds to project for 'Boxes + point cloud'
+    pc_list = rv.list_by_frame(ds.raw_lidar_south_dir, [".pcd"]) if (mode == "point_cloud" and pc_full) else pcds
     counts = [len(raw_left), len(raw_right)]
     if mode:
         counts.append(len(labels))
     if mode == "point_cloud":
-        counts.append(len(pcds))
+        counts.append(len(pc_list))
     n = min(counts) if counts else 0
     if n == 0:
         st.warning("Not enough synchronized frames.")
@@ -112,15 +121,16 @@ def render_camera_tab():
 
     def _cache_dir(cam):
         ps = f"_ps{point_size}" if mode == "point_cloud" else ""
+        pc = (f"_pc{'full' if pc_full else 'crop'}") if mode == "point_cloud" else ""
         th = f"_th{hist_window}w{trail_width}" if track_hist else ""
-        return os.path.join(ds.outputs_dir, "rendered", cam, f"{mode}_{color_mode}{ps}{th}_{lp.RENDER_VERSION}")
+        return os.path.join(ds.outputs_dir, "rendered", cam, f"{mode}_{color_mode}{ps}{pc}{th}_{lp.RENDER_VERSION}")
 
     def _render(i, cam, cam_id, raw):
         if not mode:
             return raw[i]
         return lp.render_cached(raw[i], labels[i], cam_id, mode, _cache_dir(cam),
                                 color_mode=color_mode,
-                                pcd_path=(pcds[i] if mode == "point_cloud" else None),
+                                pcd_path=(pc_list[i] if mode == "point_cloud" else None),
                                 point_size=point_size, histories=_histories(i), trail_width=trail_width)
 
     st.session_state.setdefault("road_frame", 0)
@@ -204,9 +214,12 @@ def render_lidar_tab():
     if n == 0:
         st.warning("Need both OpenLABEL labels and point clouds (set them in **Input folders** above).")
         return
-    o1, o2 = st.columns([1, 1])
+    o1, o2, o3 = st.columns(3)
     color_mode = o1.radio("Box colour", ["by_category", "by_track_id"], horizontal=True, key="lv_color")
     max_pts = o2.select_slider("Points shown", [10000, 20000, 30000, 50000], value=20000, key="lv_pts")
+    show_road = o3.checkbox("🛣️ Road outline", value=True, key="lv_road",
+                            help="Green road boundary from site_geometry.json.")
+    road = dp.road_polygon(0.0) if show_road else None
     st.session_state.setdefault("lidar_frame", 0)
 
     @st.fragment
@@ -226,21 +239,19 @@ def render_lidar_tab():
         i = st.slider("Scene frame", 0, max(n - 1, 1), st.session_state.lidar_frame)
         st.session_state.lidar_frame = i
 
-        pts = _load_pts(pcds[i], int(max_pts))     # cached -> instant on revisit
+        pts = _load_pts(pcds[i], int(max_pts))
         objs = lp.load_objects(labels[i])
-        # Fixed-height container keeps the page height stable between frames, so it
-        # doesn't collapse/scroll-to-top while stepping (the charts swap in place).
         with st.container(height=600):
             cbev, cside = st.columns(2)
             with cbev:
                 st.markdown("**Bird's Eye View**")
-                st.plotly_chart(lv.build_figure(pts, objs, color_mode, "bev", height=520),
+                st.plotly_chart(lv.build_figure(pts, objs, color_mode, "bev", height=520, road_poly=road),
                                 use_container_width=True, key="lv_bev")
             with cside:
                 st.markdown("**Side View**")
-                st.plotly_chart(lv.build_figure(pts, objs, color_mode, "side", height=520),
+                st.plotly_chart(lv.build_figure(pts, objs, color_mode, "side", height=520, road_poly=road),
                                 use_container_width=True, key="lv_side")
-        st.caption(f"Frame {i+1}/{n} · {len(objs)} labelled objects · {len(pts)} points shown")
+        st.caption(f"Frame {i+1}/{n} · {len(objs)} labelled objects · {len(pts):,} points shown")
 
         if playing and i < n - 1:
             time.sleep(float(delay))

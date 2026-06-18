@@ -45,6 +45,12 @@ results = st.session_state.detection_results
 import dataset_manager as dm
 _ds = dm.get_active()
 st.caption(f"📂 Dataset: **{_ds.name}**")
+_src_label = st.radio("Input cloud (which run to score)", ["Cropped (road)", "Full (uncropped)"],
+                      key="pipeline_source", horizontal=True,
+                      help="Scores the detection results in memory; pick the source you just ran so the "
+                           "report saves to the matching folder. Run the pipeline once per source, then "
+                           "compare these metrics.")
+_src = "cropped" if _src_label.startswith("Cropped") else "full"
 
 gt_dir = st.text_input(
     "Ground-truth directory (OpenLABEL .json files)",
@@ -59,7 +65,7 @@ roi_only = ec3.checkbox("Restrict to processed region (ROI)", value=True,
                         help="Only score GT inside the area the detector actually processes "
                              "(research polygon ∩ |y|≤ROI). Objects outside the sensor's operational "
                              "region aren't counted as misses — this is the fair number.")
-output_dir = _ds.detection_dir
+output_dir = _ds.detection_dir_for(_src)
 
 if st.button("📐 Run Evaluation", use_container_width=True, type="primary"):
     if not os.path.isdir(gt_dir):

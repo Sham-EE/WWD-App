@@ -22,10 +22,16 @@ logging.info("--- Background Filter Page Loaded ---")
 import dataset_manager as dm
 _ds = dm.get_active()
 st.sidebar.caption(f"📂 Dataset: **{_ds.name}**")
-DEFAULT_MODEL_PATH = _ds.model_path
-DEFAULT_PCD = _ds.pcd_dir
+_src_label = st.sidebar.radio("Input cloud", ["Cropped (road)", "Full (uncropped)"],
+                              key="pipeline_source", horizontal=True,
+                              help="Cropped = road-clipped clouds; Full = raw clouds (research region). "
+                                   "Each writes to its own model/filtered/detection folders so you can "
+                                   "compare eval metrics. The choice is shared across Filtering / Detection / Evaluation.")
+_src = "cropped" if _src_label.startswith("Cropped") else "full"
+DEFAULT_MODEL_PATH = _ds.model_path_for(_src)
+DEFAULT_PCD = _ds.input_pcd_for(_src)
 DEFAULT_GT = _ds.gt_dir
-DEFAULT_OUT = _ds.filtered_dir
+DEFAULT_OUT = _ds.filtered_dir_for(_src)
 
 @st.cache_data(show_spinner="Discovering PCD files...")
 def discover_pcd_files(dir_path: str):
@@ -42,7 +48,17 @@ def create_filtered_figure(foreground_pts, original_pts):
     if foreground_pts.size > 0:
         fig.add_trace(go.Scatter3d(x=foreground_pts[:, 0], y=foreground_pts[:, 1], z=foreground_pts[:, 2],
             mode="markers", name="Foreground", marker=dict(size=2.5, color="red", opacity=0.9)))
-    fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), scene=dict(aspectmode="data"))
+    # Lock the x/y extent to the road region so toggling Cropped<->Full keeps the
+    # SAME zoom (Full no longer auto-fits out to the wider research extent).
+    try:
+        from geometry_config import get_road_polygon
+        minx, miny, maxx, maxy = get_road_polygon().bounds
+        m = 12.0  # breathing room so it isn't too tight (same for cropped & full)
+        xr = dict(range=[minx - m, maxx + m]); yr = dict(range=[miny - m, maxy + m])
+    except Exception:
+        xr, yr = {}, {}
+    fig.update_layout(margin=dict(l=0, r=0, b=0, t=0),
+                      scene=dict(aspectmode="data", xaxis=xr, yaxis=yr), uirevision="bf_view")
     return fig
 
 # ---------------- Sidebar parameters ----------------
