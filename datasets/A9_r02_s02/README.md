@@ -15,7 +15,8 @@ data/                                ← gitignored (local)
     labels/s110_lidar_ouster_north/         *.json
     images/south1/ , images/south2/         camera frames
   derived/                           ← regenerated in-app via the Dataset Prep page
-    cropped/cropped_pcd/             south clouds clipped to the road (detection input)
+    cropped_south/cropped_pcd/       south clouds clipped to the road (detection input)
+    cropped_north/cropped_pcd/       north clouds clipped to the road (optional)
     labels_visible_south/            scorable GT (in-region + LiDAR-visible objects)
     labels_visible_south_image/
 outputs/                             ← gitignored (background model, filtered clouds, detection, videos)

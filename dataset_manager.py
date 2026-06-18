@@ -43,7 +43,7 @@ TEMPLATES = [
         "id": "A9_r02_s02",
         "name": "TUMTraf A9 r02_s02 (s110 ouster south) — template",
         "template": True,
-        "pcd_dir": "datasets/A9_r02_s02/data/derived/cropped/cropped_pcd",
+        "pcd_dir": "datasets/A9_r02_s02/data/derived/cropped_south/cropped_pcd",
         "gt_dir": "datasets/A9_r02_s02/data/derived/labels_visible_south",
         "workspace": "datasets/A9_r02_s02",
     },
