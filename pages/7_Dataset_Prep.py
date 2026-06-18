@@ -123,14 +123,26 @@ with tab_gt:
                "visibility check that can't be reproduced from the labels; this is the principled "
                "equivalent.)")
 
-    gt_src = ds.raw_labels_south_dir
-    gt_out = ds.gt_dir
-    gc1, gc2, gc3 = st.columns([1.2, 1, 1])
-    gt_margin = gc1.slider("Region margin (m)", 0.0, 15.0, 0.0, 1.0,
+    # Source -> (raw labels dir, scorable-GT output dir, raw cloud dir for preview)
+    gt_sources = {
+        "South": (ds.raw_labels_south_dir, ds.gt_dir, ds.raw_lidar_south_dir),
+        "North": (ds.raw_labels_north_dir, os.path.join(ds.derived_dir, "labels_visible_north"),
+                  ds.raw_lidar_north_dir),
+    }
+    if os.path.isdir(os.path.join(ds.derived_dir, "registered_labels")):
+        gt_sources["Registered (south + north)"] = (
+            os.path.join(ds.derived_dir, "registered_labels"),
+            os.path.join(ds.derived_dir, "labels_visible_registered"),
+            os.path.join(ds.derived_dir, "registered"))
+
+    gs1, gs2, gs3, gs4 = st.columns([1.1, 1, 1, 1])
+    gt_source = gs1.selectbox("Source LiDAR", list(gt_sources), index=0, key="gt_source")
+    gt_src, gt_out, gt_cloud_dir = gt_sources[gt_source]
+    gt_margin = gs2.slider("Region margin (m)", 0.0, 15.0, 0.0, 1.0,
                            help="Expand the research/ROI polygon outward before filtering.")
-    min_points = gc2.slider("Min LiDAR points", 0, 50, 1, 1,
+    min_points = gs3.slider("Min LiDAR points", 0, 50, 1, 1,
                             help="Drop objects with fewer than this many points (0 = keep all in-region).")
-    excl_occ = gc3.checkbox("Drop mostly/fully occluded", value=False)
+    excl_occ = gs4.checkbox("Drop mostly/fully occluded", value=False)
     region = dp.research_region(gt_margin)
 
     st.text_input("Source labels", value=gt_src, key="gt_src", disabled=True)
@@ -153,7 +165,7 @@ with tab_gt:
     st.caption("Point cloud (blue) with **kept** ground-truth boxes in **green** and **dropped** boxes "
                "in **red**. Far drops sit outside the ROI window; in-region red boxes are objects with "
                "too few LiDAR points (e.g. blind spots).")
-    gt_clouds = rv.list_by_frame(ds.raw_lidar_south_dir, [".pcd"])
+    gt_clouds = rv.list_by_frame(gt_cloud_dir, [".pcd"])
     if gt_labels:
         n_gt = min(len(gt_labels), len(gt_clouds)) if gt_clouds else len(gt_labels)
         st.session_state.setdefault("gt_frame", 0)
