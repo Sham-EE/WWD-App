@@ -24,9 +24,13 @@ def crop_points_to_region(points, polygon):
     return points[mask]
 
 
-def _polygon(margin=0.0):
+def road_polygon(margin=0.0):
+    """The road polygon used for cropping (optionally expanded by `margin` metres)."""
     poly = get_road_polygon()
     return poly.buffer(float(margin)) if margin else poly
+
+
+_polygon = road_polygon  # backwards-compatible alias
 
 
 def crop_dataset(src_dir, out_dir, margin=0.0, max_frames=0, progress=None):
@@ -51,25 +55,24 @@ def crop_dataset(src_dir, out_dir, margin=0.0, max_frames=0, progress=None):
     return len(files), total_kept, total_pts
 
 
-def validate_crop(src_dir, existing_dir, margin=0.0, n=5):
-    """Crop n sample raw frames and compare point counts against the EXISTING
-    cropped folder (matched by frame order). Returns a list of per-frame dicts."""
-    src = sorted_by_frame_index(glob.glob(os.path.join(src_dir, "*.pcd")))
-    exist = sorted_by_frame_index(glob.glob(os.path.join(existing_dir, "*.pcd")))
-    poly = _polygon(margin)
-    rows = []
-    m = min(n, len(src), len(exist))
-    idxs = np.unique(np.linspace(0, min(len(src), len(exist)) - 1, max(m, 1)).astype(int))
-    for i in idxs:
-        raw = np.asarray(o3d.io.read_point_cloud(src[int(i)]).points)
-        kept = crop_points_to_region(raw, poly)
-        existing = np.asarray(o3d.io.read_point_cloud(exist[int(i)]).points)
-        denom = max(len(existing), 1)
-        rows.append({
-            "frame": int(i),
-            "raw": len(raw),
-            "ours": len(kept),
-            "existing": len(existing),
-            "match %": round(100.0 * (1 - abs(len(kept) - len(existing)) / denom), 1),
-        })
-    return rows
+def crop_preview_figure(points_cropped, margin=0.0, height=620, title=""):
+    """Top-down BEV of the cropped points + the road boundary as a black dashed
+    line (matches the bundled cropped/vis previews)."""
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    if points_cropped is not None and len(points_cropped):
+        fig.add_trace(go.Scattergl(
+            x=points_cropped[:, 0], y=points_cropped[:, 1], mode="markers",
+            marker=dict(size=2, color="#1f77b4"), hoverinfo="skip", name="cropped"))
+    poly = road_polygon(margin)
+    geoms = [poly] if poly.geom_type == "Polygon" else list(poly.geoms)
+    for g in geoms:
+        x, y = g.exterior.xy
+        fig.add_trace(go.Scatter(x=list(x), y=list(y), mode="lines",
+                                 line=dict(color="black", width=2, dash="dash"),
+                                 hoverinfo="skip", showlegend=False))
+    fig.update_layout(
+        height=height, margin=dict(l=0, r=0, t=30, b=0), title=title, showlegend=False,
+        xaxis=dict(title="x (m)"),
+        yaxis=dict(title="y (m)", scaleanchor="x", scaleratio=1))
+    return fig
