@@ -43,8 +43,8 @@ TEMPLATES = [
         "id": "A9_r02_s02",
         "name": "TUMTraf A9 r02_s02 (s110 ouster south) — template",
         "template": True,
-        "pcd_dir": "datasets/A9_r02_s02/data/point_clouds/cropped/cropped_pcd",
-        "gt_dir": "datasets/A9_r02_s02/data/labels_point_clouds/a9_gt_visible_only_south",
+        "pcd_dir": "datasets/A9_r02_s02/data/derived/cropped/cropped_pcd",
+        "gt_dir": "datasets/A9_r02_s02/data/derived/labels_visible_south",
         "workspace": "datasets/A9_r02_s02",
     },
 ]
@@ -84,32 +84,40 @@ class Dataset:
 
     @property
     def images_dir(self):
-        return self.d.get("images_dir", os.path.join(self.workspace, "data", "images"))
+        return self.d.get("images_dir", os.path.join(self.data_dir, "raw", "images"))
 
-    # --- RAW inputs (the untouched TUM Traffic download) ---
+    # --- RAW inputs (the untouched TUM Traffic download, under data/raw/) ---
     @property
     def data_dir(self):
         return os.path.join(self.workspace, "data")
 
     @property
+    def raw_dir(self):
+        return os.path.join(self.data_dir, "raw")
+
+    @property
+    def derived_dir(self):
+        return os.path.join(self.data_dir, "derived")
+
+    @property
     def raw_lidar_south_dir(self):
         return self.d.get("raw_lidar_south_dir",
-                          os.path.join(self.data_dir, "point_clouds", "s110_lidar_ouster_south"))
+                          os.path.join(self.raw_dir, "point_clouds", "s110_lidar_ouster_south"))
 
     @property
     def raw_lidar_north_dir(self):
         return self.d.get("raw_lidar_north_dir",
-                          os.path.join(self.data_dir, "point_clouds", "s110_lidar_ouster_north"))
+                          os.path.join(self.raw_dir, "point_clouds", "s110_lidar_ouster_north"))
 
     @property
     def raw_labels_south_dir(self):
         return self.d.get("raw_labels_south_dir",
-                          os.path.join(self.data_dir, "labels_point_clouds", "s110_lidar_ouster_south"))
+                          os.path.join(self.raw_dir, "labels", "s110_lidar_ouster_south"))
 
     @property
     def raw_labels_north_dir(self):
         return self.d.get("raw_labels_north_dir",
-                          os.path.join(self.data_dir, "labels_point_clouds", "s110_lidar_ouster_north"))
+                          os.path.join(self.raw_dir, "labels", "s110_lidar_ouster_north"))
 
     # --- workspace (generated / edited) ---
     @property

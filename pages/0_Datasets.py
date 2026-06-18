@@ -108,21 +108,24 @@ with st.expander("📁 Workspace paths"):
 with st.expander("🌳 Expected workspace structure"):
     st.code(
         f"""datasets/{ds.id}/
-├── config/                       # tracked in git (small)
-│   ├── lanes.geojson             # WWD lane directions (Lane Editor)
-│   └── site_geometry.json        # background-filtering region
-├── data/                         # inputs — gitignored (large, local)
-│   ├── point_clouds/.../*.pcd            # LiDAR frames
-│   ├── images/<camera>/{{raw, bb, bb_pcd}}/*.jpg   # camera variants
-│   └── labels_point_clouds/.../*.json   # OpenLABEL GT (optional)
-└── outputs/                      # generated — gitignored
-    ├── background_model/background_model.pkl
-    ├── background_filtering/*.pcd
-    ├── object_detection/         # tracks.csv, evaluation_report.json
-    └── road_videos/*.mp4""",
+├── config/                          # tracked in git (small)
+│   ├── lanes.geojson                # WWD lane directions (Lane Editor)
+│   └── site_geometry.json           # road / research / exclusion geometry
+├── data/                            # gitignored (large, local)
+│   ├── raw/                         # the untouched TUM Traffic download
+│   │   ├── point_clouds/{{s110_lidar_ouster_south, _north}}/*.pcd
+│   │   ├── labels/{{s110_lidar_ouster_south, _north}}/*.json
+│   │   └── images/<camera>/*.jpg
+│   └── derived/                     # regenerated in-app (Dataset Prep)
+│       ├── cropped/cropped_pcd/*.pcd        # detection input (clip to road)
+│       ├── labels_visible_south/*.json      # scorable GT
+│       └── labels_visible_south_image/
+└── outputs/                         # generated — gitignored
+    ├── background_model/, background_filtering/, object_detection/
+    └── rendered/, road_videos/""",
         language="text")
-    st.caption("`config/` is tracked in git; `data/` and `outputs/` stay local per dataset. "
-               "User datasets may instead point `data` at any folder on disk.")
+    st.caption("`config/` is tracked in git; `data/` (raw + derived) and `outputs/` stay local per "
+               "dataset. Everything under `derived/` can be regenerated from `raw/` on the Dataset Prep page.")
 
 # --- site geometry view (and edit for user datasets) ---
 with st.expander("🗺️ Site geometry (background-filtering region)"):
