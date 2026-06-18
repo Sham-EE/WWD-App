@@ -75,7 +75,6 @@ def crop_preview_figure(points, margin=0.0, height=620, title="", draw_boundary=
             fig.add_trace(go.Scatter(x=list(x), y=list(y), mode="lines",
                                      line=dict(color="limegreen", width=3, dash="dash"),
                                      hoverinfo="skip", showlegend=False))
-    _add_sensor_marker(fig)
     # Lock the view to the road region (square) so cropped vs full share the SAME
     # zoom — full no longer zooms out to the ~200 m raw extent.
     minx, miny, maxx, maxy = poly.bounds
@@ -183,16 +182,6 @@ def generate_scorable_gt(src_label_dir, out_dir, region_poly, min_points=1,
     return len(files), kept_tot, total
 
 
-def _add_sensor_marker(fig):
-    """Mark the LiDAR at the point-cloud origin (0,0) — the sensor sits there,
-    ~8.6 m above the ground (ground is at z ~ -8.6 in this frame)."""
-    import plotly.graph_objects as go
-    fig.add_trace(go.Scatter(x=[0], y=[0], mode="markers+text", text=["LiDAR"],
-                             textposition="top center", textfont=dict(color="gold", size=12),
-                             marker=dict(size=14, color="gold", symbol="diamond", line=dict(color="black", width=1)),
-                             name="LiDAR (origin)", hoverinfo="skip"))
-
-
 def _boxes_xy(boxes):
     """Flatten a list of footprints into one polyline (None-separated) for Plotly."""
     xs, ys = [], []
@@ -221,13 +210,17 @@ def scorable_preview_figure(points, kept_boxes, dropped_boxes, region_poly,
     if kx:
         fig.add_trace(go.Scatter(x=kx, y=ky, mode="lines", line=dict(color="limegreen", width=2),
                                  name="kept (scorable)", hoverinfo="skip"))
-    _add_sensor_marker(fig)
-    minx, miny, maxx, maxy = region_poly.bounds
-    cx, cy = (minx + maxx) / 2, (miny + maxy) / 2
-    half = max(maxx - minx, maxy - miny) / 2 + 8.0
+    # Fit the view to the ROI AND every object (kept + dropped) so all boxes are on
+    # screen — the visible green+red count then equals the title's kept/total.
+    xs = [region_poly.bounds[0], region_poly.bounds[2]]
+    ys = [region_poly.bounds[1], region_poly.bounds[3]]
+    for fp in list(kept_boxes) + list(dropped_boxes):
+        xs += [float(fp[:, 0].min()), float(fp[:, 0].max())]
+        ys += [float(fp[:, 1].min()), float(fp[:, 1].max())]
+    cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    half = max(max(xs) - min(xs), max(ys) - min(ys)) / 2 + 6.0
     fig.update_layout(height=height, margin=dict(l=0, r=0, t=30, b=0), title=title,
                       legend=dict(orientation="h", y=1.02, x=0),
                       xaxis=dict(title="x (m)", range=[cx - half, cx + half]),
-                      yaxis=dict(title="y (m)", range=[cy - half, cy + half], scaleanchor="x", scaleratio=1),
-                      uirevision="dp_gt")
+                      yaxis=dict(title="y (m)", range=[cy - half, cy + half], scaleanchor="x", scaleratio=1))
     return fig

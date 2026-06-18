@@ -172,7 +172,7 @@ with tab_gt:
                 st.session_state.gt_frame = n_gt - 1
             playing = nav[4].toggle("▶ Play", value=False, key="gt_play")
             delay = nav[5].slider("Play delay (s)", 0.0, 1.0, 0.15, 0.05, key="gt_delay")
-            i = st.slider("Frame", 0, max(n_gt - 1, 1), st.session_state.gt_frame, key="gt_slider")
+            i = st.slider("GT frame", 0, max(n_gt - 1, 1), st.session_state.gt_frame)
             st.session_state.gt_frame = i
 
             kept_boxes, dropped_boxes = dp.scorable_classify(gt_labels[i], region,
