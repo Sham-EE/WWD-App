@@ -209,37 +209,17 @@ def render_camera_tab():
 
 # ======================= LiDAR labels (3D) tab =======================
 def render_lidar_tab():
-    st.markdown("LiDAR scan + ground-truth 3D boxes — **Bird's Eye** and **Side** view. Choose which "
-                "LiDAR's ground truth to view (e.g. what was labelled by the north sensor).")
-    # Which LiDAR's clouds + labels to view. South & north share a (coarse) common
-    # frame; "Registered" appears once the registered clouds exist.
-    sensors = {
-        "South": (ds.raw_lidar_south_dir, ds.raw_labels_south_dir),
-        "North": (ds.raw_lidar_north_dir, ds.raw_labels_north_dir),
-    }
-    reg_dir = os.path.join(ds.derived_dir, "registered")
-    if os.path.isdir(reg_dir):
-        sensors["Registered"] = (reg_dir, os.path.join(ds.derived_dir, "registered_labels"))
-
-    o0, o1, o2, o3 = st.columns([1, 1, 1, 1])
-    sensor = o0.selectbox("LiDAR reference", list(sensors), index=0, key="lv_sensor",
-                          help="View the ground truth labelled for this sensor.")
+    st.markdown("LiDAR scan + ground-truth 3D boxes — **Bird's Eye** and **Side** view (rotate/zoom each).")
+    n = min(len(labels), len(pcds))
+    if n == 0:
+        st.warning("Need both OpenLABEL labels and point clouds (set them in **Input folders** above).")
+        return
+    o1, o2, o3 = st.columns(3)
     color_mode = o1.radio("Box colour", ["by_category", "by_track_id"], horizontal=True, key="lv_color")
     max_pts = o2.select_slider("Points shown", [10000, 20000, 30000, 50000], value=20000, key="lv_pts")
     show_road = o3.checkbox("🛣️ Road outline", value=True, key="lv_road",
                             help="Green road boundary from site_geometry.json.")
-
-    cloud_dir, label_dir2 = sensors[sensor]
-    clouds = rv.list_by_frame(cloud_dir, [".pcd"])
-    lbls = rv.list_by_frame(label_dir2, [".json"])
-    n = min(len(clouds), len(lbls))
-    if n == 0:
-        st.warning(f"No point clouds / labels found for **{sensor}**.")
-        return
-    road = dp.road_polygon(0.0)
-    rb = road.bounds  # (minx, miny, maxx, maxy)
-    bounds = (rb[0] - 5, rb[2] + 5, rb[1] - 5, rb[3] + 5)  # lock the view to the road region
-    rp = road if show_road else None
+    road = dp.road_polygon(0.0) if show_road else None
     st.session_state.setdefault("lidar_frame", 0)
 
     @st.fragment
@@ -259,19 +239,19 @@ def render_lidar_tab():
         i = st.slider("Scene frame", 0, max(n - 1, 1), st.session_state.lidar_frame)
         st.session_state.lidar_frame = i
 
-        pts = _load_pts(clouds[i], int(max_pts))
-        objs = lp.load_objects(lbls[i])
+        pts = _load_pts(pcds[i], int(max_pts))
+        objs = lp.load_objects(labels[i])
         with st.container(height=600):
             cbev, cside = st.columns(2)
             with cbev:
                 st.markdown("**Bird's Eye View**")
-                st.plotly_chart(lv.build_figure(pts, objs, color_mode, "bev", height=520, road_poly=rp, bounds=bounds),
+                st.plotly_chart(lv.build_figure(pts, objs, color_mode, "bev", height=520, road_poly=road),
                                 use_container_width=True, key="lv_bev")
             with cside:
                 st.markdown("**Side View**")
-                st.plotly_chart(lv.build_figure(pts, objs, color_mode, "side", height=520, road_poly=rp, bounds=bounds),
+                st.plotly_chart(lv.build_figure(pts, objs, color_mode, "side", height=520, road_poly=road),
                                 use_container_width=True, key="lv_side")
-        st.caption(f"{sensor} · frame {i+1}/{n} · {len(objs)} labelled objects · {len(pts):,} points shown")
+        st.caption(f"Frame {i+1}/{n} · {len(objs)} labelled objects · {len(pts):,} points shown")
 
         if playing and i < n - 1:
             time.sleep(float(delay))
