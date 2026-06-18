@@ -135,15 +135,32 @@ with tab_gt:
             os.path.join(ds.derived_dir, "labels_visible_registered"),
             os.path.join(ds.derived_dir, "registered"))
 
-    gs1, gs2, gs3, gs4 = st.columns([1.1, 1, 1, 1])
+    gs1, gs2 = st.columns([1.3, 1])
     gt_source = gs1.selectbox("Source LiDAR", list(gt_sources), index=0, key="gt_source")
     gt_src, gt_out, gt_cloud_dir = gt_sources[gt_source]
     gt_margin = gs2.slider("Region margin (m)", 0.0, 15.0, 0.0, 1.0,
-                           help="Expand the research/ROI polygon outward before filtering.")
-    min_points = gs3.slider("Min LiDAR points", 0, 50, 1, 1,
-                            help="Drop objects with fewer than this many points (0 = keep all in-region).")
-    excl_occ = gs4.checkbox("Drop mostly/fully occluded", value=False)
+                           help="Expand the research/ROI region. Edit its SHAPE in the Geometry Editor; "
+                                "this just buffers it outward.")
     region = dp.research_region(gt_margin)
+
+    with st.expander("⚙️ Keep / drop criteria", expanded=True):
+        st.caption("Define exactly what counts as a scorable object. The region (above) is the ROI; "
+                   "these conditions filter within it. Tune live against the preview below.")
+        cc1, cc2, cc3 = st.columns(3)
+        min_points = cc1.slider("Min LiDAR points", 0, 50, 1, 1,
+                                help="Drop objects with fewer points than this (sparse / blind-spot).")
+        max_points = cc2.number_input("Max LiDAR points (0 = none)", 0, 100000, 0)
+        max_range = cc3.slider("Max range from sensor (m, 0 = none)", 0, 150, 0, 5)
+        oc1, oc2 = st.columns([1, 1.4])
+        drop_occ = oc1.multiselect("Drop occlusion levels", dp.OCCLUSION_LEVELS, default=[])
+        classes = oc2.multiselect("Classes to keep (empty = all)", dp.SCORABLE_CLASSES, default=[])
+        crit = {
+            "min_points": int(min_points),
+            "max_points": (int(max_points) or None),
+            "max_range": (float(max_range) or None),
+            "drop_occlusion": tuple(drop_occ),
+            "classes": (set(classes) if classes else None),
+        }
 
     st.text_input("Source labels", value=gt_src, key="gt_src", disabled=True)
     st.text_input("Output (scorable GT) folder", value=gt_out, key="gt_out", disabled=True)
@@ -153,7 +170,7 @@ with tab_gt:
     elif st.button("🏷️ Generate scorable GT", type="primary", use_container_width=True):
         bar = st.progress(0.0, text="Filtering labels…")
         nfiles, kept, total = dp.generate_scorable_gt(
-            gt_src, gt_out, region, min_points=int(min_points), exclude_occluded=excl_occ,
+            gt_src, gt_out, region, crit=crit,
             progress=lambda c, t: bar.progress(c / t, text=f"Filtering {c}/{t}"))
         bar.empty()
         st.success(f"Wrote **{nfiles}** label files → `{gt_out}`  (kept {kept:,} / {total:,} objects, "
@@ -187,8 +204,7 @@ with tab_gt:
             i = st.slider("GT frame", 0, max(n_gt - 1, 1), st.session_state.gt_frame)
             st.session_state.gt_frame = i
 
-            kept_boxes, dropped_boxes = dp.scorable_classify(gt_labels[i], region,
-                                                             min_points=int(min_points), exclude_occluded=excl_occ)
+            kept_boxes, dropped_boxes = dp.scorable_classify(gt_labels[i], region, crit)
             pts = _load_raw(gt_clouds[i]) if (gt_clouds and i < len(gt_clouds)) else None
             tot = len(kept_boxes) + len(dropped_boxes)
             with st.container(height=640):

@@ -114,15 +114,34 @@ def _obj_occlusion(cuboid):
     return ""
 
 
-def _keep_object(cuboid, region_poly, min_points, exclude_occluded):
+OCCLUSION_LEVELS = ["NOT_OCCLUDED", "PARTIALLY_OCCLUDED", "MOSTLY_OCCLUDED", "FULLY_OCCLUDED"]
+SCORABLE_CLASSES = ["CAR", "TRUCK", "VAN", "BUS", "TRAILER", "MOTORCYCLE",
+                    "PEDESTRIAN", "BICYCLE", "EMERGENCY_VEHICLE", "OTHER"]
+DEFAULT_CRITERIA = {"min_points": 1, "max_points": None, "max_range": None,
+                    "drop_occlusion": (), "classes": None}
+
+
+def _keep_object(cuboid, obj_type, region_poly, crit):
+    """Decide if an object is scorable, given a criteria dict (see DEFAULT_CRITERIA)."""
     v = cuboid.get("val")
     if not v or len(v) < 3:
         return False
-    if not points_in_polygon(region_poly, np.array([[v[0], v[1]]]))[0]:
+    x, y = v[0], v[1]
+    if not points_in_polygon(region_poly, np.array([[x, y]]))[0]:
         return False
-    if _obj_num_points(cuboid) < min_points:
+    npn = _obj_num_points(cuboid)
+    if npn < crit.get("min_points", 1):
         return False
-    if exclude_occluded and _obj_occlusion(cuboid) in ("MOSTLY_OCCLUDED", "FULLY_OCCLUDED"):
+    mx = crit.get("max_points")
+    if mx is not None and npn > mx:
+        return False
+    mr = crit.get("max_range")
+    if mr is not None and (x * x + y * y) ** 0.5 > mr:
+        return False
+    if _obj_occlusion(cuboid) in (crit.get("drop_occlusion") or ()):
+        return False
+    classes = crit.get("classes")
+    if classes is not None and str(obj_type).upper() not in classes:
         return False
     return True
 
@@ -138,8 +157,9 @@ def _box_footprint(val):
     return local @ np.array([[c, -s], [s, c]]).T + np.array([x, y])
 
 
-def scorable_classify(label_path, region_poly, min_points=1, exclude_occluded=False):
+def scorable_classify(label_path, region_poly, crit=None):
     """Return (kept_boxes, dropped_boxes): lists of closed (x,y) box footprints."""
+    crit = crit or DEFAULT_CRITERIA
     ol = json.load(open(label_path))["openlabel"]
     frames = ol.get("frames", {})
     kept, dropped = [], []
@@ -151,14 +171,16 @@ def scorable_classify(label_path, region_poly, min_points=1, exclude_occluded=Fa
             if not v or len(v) < 10:
                 continue
             fp = _box_footprint(v)
-            (kept if _keep_object(cub, region_poly, min_points, exclude_occluded) else dropped).append(fp)
+            ok = _keep_object(cub, o["object_data"].get("type"), region_poly, crit)
+            (kept if ok else dropped).append(fp)
     return kept, dropped
 
 
-def generate_scorable_gt(src_label_dir, out_dir, region_poly, min_points=1,
-                         exclude_occluded=False, max_frames=0, progress=None):
+def generate_scorable_gt(src_label_dir, out_dir, region_poly, crit=None,
+                         max_frames=0, progress=None):
     """Write filtered OpenLABEL files (same structure, subset of objects) to out_dir.
     Returns (n_files, kept, total)."""
+    crit = crit or DEFAULT_CRITERIA
     files = sorted_by_frame_index(glob.glob(os.path.join(src_label_dir, "*.json")))
     if max_frames and max_frames > 0:
         files = files[:max_frames]
@@ -172,7 +194,8 @@ def generate_scorable_gt(src_label_dir, out_dir, region_poly, min_points=1,
             keep = {}
             for oid, o in objs.items():
                 total += 1
-                if _keep_object(o["object_data"].get("cuboid", {}), region_poly, min_points, exclude_occluded):
+                if _keep_object(o["object_data"].get("cuboid", {}), o["object_data"].get("type"),
+                                region_poly, crit):
                     keep[oid] = o
                     kept_tot += 1
             fr["objects"] = keep
