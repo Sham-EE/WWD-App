@@ -29,11 +29,13 @@ def _bbox_editor(poly, label, step=1.0):
     (No widget keys -> the value re-seeds from `poly` each run, so reset-to-default works.)"""
     xs = [p[0] for p in poly] or [-10.0, 10.0]
     ys = [p[1] for p in poly] or [-10.0, 10.0]
-    c1, c2, c3, c4 = st.columns(4)
-    xmin = c1.number_input(f"{label} X min", value=float(min(xs)), step=step, format="%.1f")
-    xmax = c2.number_input(f"{label} X max", value=float(max(xs)), step=step, format="%.1f")
-    ymin = c3.number_input(f"{label} Y min", value=float(min(ys)), step=step, format="%.1f")
-    ymax = c4.number_input(f"{label} Y max", value=float(max(ys)), step=step, format="%.1f")
+    # 2 columns (not 4) so each number_input is wide enough to show its +/- steppers
+    r1c1, r1c2 = st.columns(2)
+    xmin = r1c1.number_input(f"{label} X min", value=float(min(xs)), step=step, format="%.1f")
+    xmax = r1c2.number_input(f"{label} X max", value=float(max(xs)), step=step, format="%.1f")
+    r2c1, r2c2 = st.columns(2)
+    ymin = r2c1.number_input(f"{label} Y min", value=float(min(ys)), step=step, format="%.1f")
+    ymax = r2c2.number_input(f"{label} Y max", value=float(max(ys)), step=step, format="%.1f")
     return [[xmin, ymin], [xmax, ymin], [xmax, ymax], [xmin, ymax]]
 
 

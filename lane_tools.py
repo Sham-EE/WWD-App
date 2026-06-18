@@ -262,11 +262,20 @@ def build_preview(points: np.ndarray, lanes, color_mode: str = 'cardinal',
     # uirevision keeps the user's zoom/rotation across Streamlit reruns (e.g.
     # while editing box numbers); it only resets when the camera mode changes.
     uirev = f"td_{top_down}"
+    # Default to a zoomed-OUT view (the whole intersection / research region) so it
+    # doesn't sit tight on just the lanes when the point-cloud backdrop is off.
+    try:
+        from geometry_config import get_research_polygon
+        bx0, by0, bx1, by1 = get_research_polygon().bounds
+        m = 5.0
+        xrange, yrange = [bx0 - m, bx1 + m], [by0 - m, by1 + m]
+    except Exception:
+        xrange = yrange = None
     fig.update_layout(
         height=680, margin=dict(l=0, r=0, t=30, b=0),
         uirevision=uirev,
-        scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)', zaxis_title='Z (m)',
-                   aspectmode='data', camera=cam, uirevision=uirev),
+        scene=dict(xaxis=dict(title='X (m)', range=xrange), yaxis=dict(title='Y (m)', range=yrange),
+                   zaxis_title='Z (m)', aspectmode='data', camera=cam, uirevision=uirev),
         legend=dict(orientation='h', y=-0.02),
         title='Top-down (drag to rotate, scroll to zoom, right-drag to pan)' if top_down else '3D view')
     return fig

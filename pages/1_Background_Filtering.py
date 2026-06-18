@@ -53,7 +53,8 @@ def create_filtered_figure(foreground_pts, original_pts):
     try:
         from geometry_config import get_road_polygon
         minx, miny, maxx, maxy = get_road_polygon().bounds
-        xr = dict(range=[minx - 3, maxx + 3]); yr = dict(range=[miny - 3, maxy + 3])
+        m = 12.0  # breathing room so it isn't too tight (same for cropped & full)
+        xr = dict(range=[minx - m, maxx + m]); yr = dict(range=[miny - m, maxy + m])
     except Exception:
         xr, yr = {}, {}
     fig.update_layout(margin=dict(l=0, r=0, b=0, t=0),
