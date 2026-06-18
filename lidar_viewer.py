@@ -50,10 +50,33 @@ def _box_edge_groups(objs, color_mode):
     return groups
 
 
+def _dashed_xyz(coords, z, dash=2.5, gap=1.8, step=0.4):
+    """Walk a polygon boundary emitting dashed line points (None = gap) at height z."""
+    pts = np.asarray(coords, dtype=float)
+    xs, ys, zs = [], [], []
+    period, dist = dash + gap, 0.0
+    for i in range(len(pts) - 1):
+        a, b = pts[i], pts[i + 1]
+        seglen = float(np.hypot(*(b - a)))
+        if seglen == 0:
+            continue
+        nsteps = max(1, int(seglen / step))
+        for s in range(nsteps + 1):
+            d = dist + seglen * s / nsteps
+            if (d % period) < dash:
+                p = a + (b - a) * (s / nsteps)
+                xs.append(p[0]); ys.append(p[1]); zs.append(z)
+            else:
+                xs.append(None); ys.append(None); zs.append(None)
+        dist += seglen
+    return xs, ys, zs
+
+
 def build_figure(points, objs, color_mode="by_category", view="side",
-                 height=560, line_width=4, show_labels=True):
+                 height=560, line_width=4, show_labels=True, road_poly=None):
     """Plotly 3D figure: grey points + category-coloured GT boxes, with a preset
-    camera ('bev' = top-down, 'side' = angled)."""
+    camera ('bev' = top-down, 'side' = angled). If `road_poly` is given, its
+    boundary is drawn as a black dashed outline at ground level."""
     import plotly.graph_objects as go
     fig = go.Figure()
     if points is not None and len(points):
@@ -74,6 +97,15 @@ def build_figure(points, objs, color_mode="by_category", view="side",
         fig.add_trace(go.Scatter3d(x=lx, y=ly, z=lz, mode="text", text=lt,
                                    textfont=dict(size=11, color=lcol),
                                    hoverinfo="skip", showlegend=False))
+    if road_poly is not None:
+        z0 = float(np.percentile(points[:, 2], 2)) if (points is not None and len(points)) else -7.5
+        geoms = [road_poly] if road_poly.geom_type == "Polygon" else list(road_poly.geoms)
+        for g in geoms:
+            gx, gy = g.exterior.xy
+            dx, dy, dz = _dashed_xyz(list(zip(gx, gy)), z0)
+            fig.add_trace(go.Scatter3d(x=dx, y=dy, z=dz, mode="lines",
+                                       line=dict(color="black", width=4),
+                                       hoverinfo="skip", showlegend=False))
     fig.update_layout(
         height=height, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor=_BG,
         scene=dict(aspectmode="data", bgcolor=_BG, camera=_CAMERAS.get(view, _CAMERAS["side"]),
