@@ -104,7 +104,7 @@ def build_figure(points, objs, color_mode="by_category", view="side",
             gx, gy = g.exterior.xy
             dx, dy, dz = _dashed_xyz(list(zip(gx, gy)), z0)
             fig.add_trace(go.Scatter3d(x=dx, y=dy, z=dz, mode="lines",
-                                       line=dict(color="black", width=4),
+                                       line=dict(color="limegreen", width=5),
                                        hoverinfo="skip", showlegend=False))
     fig.update_layout(
         height=height, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor=_BG,

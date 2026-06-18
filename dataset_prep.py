@@ -71,7 +71,7 @@ def crop_preview_figure(points, margin=0.0, height=620, title="", draw_boundary=
         for g in geoms:
             x, y = g.exterior.xy
             fig.add_trace(go.Scatter(x=list(x), y=list(y), mode="lines",
-                                     line=dict(color="black", width=2, dash="dash"),
+                                     line=dict(color="limegreen", width=3, dash="dash"),
                                      hoverinfo="skip", showlegend=False))
     fig.update_layout(
         height=height, margin=dict(l=0, r=0, t=30, b=0), title=title, showlegend=False,
