@@ -117,6 +117,71 @@ with tab_crop:
 
 # ===================== Tab 2: Scorable GT =====================
 with tab_gt:
-    st.caption("Filter the raw labels down to objects that are in-region and actually perceived by "
-               "the LiDAR — reproduces `labels_visible_south` for fair evaluation.")
-    st.info("Coming next — this is the step we'll build after the crop preview.")
+    st.caption("Build a **scorable** ground-truth set: keep only objects inside the processed region "
+               "(the eval ROI) that actually have LiDAR points. Transparent + reproducible — the basis "
+               "for fair evaluation. (The bundled `labels_visible_south` used an opaque per-frame "
+               "visibility check that can't be reproduced from the labels; this is the principled "
+               "equivalent.)")
+
+    gt_src = ds.raw_labels_south_dir
+    gt_out = ds.gt_dir
+    gc1, gc2, gc3 = st.columns([1.2, 1, 1])
+    gt_margin = gc1.slider("Region margin (m)", 0.0, 15.0, 0.0, 1.0,
+                           help="Expand the research/ROI polygon outward before filtering.")
+    min_points = gc2.slider("Min LiDAR points", 0, 50, 1, 1,
+                            help="Drop objects with fewer than this many points (0 = keep all in-region).")
+    excl_occ = gc3.checkbox("Drop mostly/fully occluded", value=False)
+    region = dp.research_region(gt_margin)
+
+    st.text_input("Source labels", value=gt_src, key="gt_src", disabled=True)
+    st.text_input("Output (scorable GT) folder", value=gt_out, key="gt_out", disabled=True)
+    gt_labels = rv.list_by_frame(gt_src, [".json"])
+    if not gt_labels:
+        st.warning(f"No label files in `{gt_src}`.")
+    elif st.button("🏷️ Generate scorable GT", type="primary", use_container_width=True):
+        bar = st.progress(0.0, text="Filtering labels…")
+        nfiles, kept, total = dp.generate_scorable_gt(
+            gt_src, gt_out, region, min_points=int(min_points), exclude_occluded=excl_occ,
+            progress=lambda c, t: bar.progress(c / t, text=f"Filtering {c}/{t}"))
+        bar.empty()
+        st.success(f"Wrote **{nfiles}** label files → `{gt_out}`  (kept {kept:,} / {total:,} objects, "
+                   f"{100*kept/max(total,1):.0f}%).")
+
+    # ---- preview: kept (green) vs dropped (grey) + ROI outline ----
+    st.divider()
+    st.subheader("👁 Preview")
+    if gt_labels:
+        n_gt = len(gt_labels)
+        st.session_state.setdefault("gt_frame", 0)
+
+        @st.fragment
+        def _gt_preview():
+            st.session_state.gt_frame = max(0, min(st.session_state.gt_frame, n_gt - 1))
+            nav = st.columns([1, 1, 1, 1, 1.3, 3])
+            if nav[0].button("⏮ First", use_container_width=True, key="gt_first"):
+                st.session_state.gt_frame = 0
+            if nav[1].button("◀ Prev", use_container_width=True, key="gt_prev"):
+                st.session_state.gt_frame = max(0, st.session_state.gt_frame - 1)
+            if nav[2].button("Next ▶", use_container_width=True, key="gt_next"):
+                st.session_state.gt_frame = min(n_gt - 1, st.session_state.gt_frame + 1)
+            if nav[3].button("Last ⏭", use_container_width=True, key="gt_last"):
+                st.session_state.gt_frame = n_gt - 1
+            playing = nav[4].toggle("▶ Play", value=False, key="gt_play")
+            delay = nav[5].slider("Play delay (s)", 0.0, 1.0, 0.15, 0.05, key="gt_delay")
+            i = st.slider("Frame", 0, max(n_gt - 1, 1), st.session_state.gt_frame, key="gt_slider")
+            st.session_state.gt_frame = i
+
+            kept_xy, dropped_xy = dp.scorable_classify(gt_labels[i], region,
+                                                       min_points=int(min_points), exclude_occluded=excl_occ)
+            with st.container(height=620):
+                st.plotly_chart(dp.scorable_preview_figure(
+                    kept_xy, dropped_xy, region,
+                    title=f"frame {i+1}/{n_gt} · kept {len(kept_xy)} · dropped {len(dropped_xy)}"),
+                    use_container_width=True, key="gt_fig")
+
+            if playing and i < n_gt - 1:
+                time.sleep(float(delay))
+                st.session_state.gt_frame = i + 1
+                st.rerun(scope="fragment")
+
+        _gt_preview()

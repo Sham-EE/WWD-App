@@ -6,14 +6,16 @@ Tool 1 — Crop to ROI:
     **road polygons** in site_geometry.json (verified: clipping to the road polygon
     reproduces the existing cropped clouds exactly). This regenerates them so.
 """
+import copy
 import glob
+import json
 import os
 
 import numpy as np
 import open3d as o3d
 
 from bg_filter_core import sorted_by_frame_index
-from geometry_config import get_road_polygon, points_in_polygon
+from geometry_config import get_road_polygon, get_research_polygon, points_in_polygon
 
 
 def crop_points_to_region(points, polygon):
@@ -83,4 +85,115 @@ def crop_preview_figure(points, margin=0.0, height=620, title="", draw_boundary=
         xaxis=dict(title="x (m)", range=[cx - half, cx + half]),
         yaxis=dict(title="y (m)", range=[cy - half, cy + half], scaleanchor="x", scaleratio=1),
         uirevision="dp_preview")
+    return fig
+
+
+# ============== Tool 2: Scorable ground truth (visible-only) ==============
+# The bundled `labels_visible_south` was made by an opaque per-frame visibility
+# check we can't reproduce from the labels. Instead this builds a transparent,
+# reproducible "scorable GT": objects in the processed ROI (research polygon) that
+# actually have LiDAR points — the right basis for fair evaluation.
+
+def research_region(margin=0.0):
+    poly = get_research_polygon()
+    return poly.buffer(float(margin)) if margin else poly
+
+
+def _obj_num_points(cuboid):
+    for a in cuboid.get("attributes", {}).get("num", []):
+        if a.get("name") == "num_points":
+            return a.get("val", 0) or 0
+    return 0
+
+
+def _obj_occlusion(cuboid):
+    for a in cuboid.get("attributes", {}).get("text", []):
+        if a.get("name") == "occlusion_level":
+            return a.get("val", "")
+    return ""
+
+
+def _keep_object(cuboid, region_poly, min_points, exclude_occluded):
+    v = cuboid.get("val")
+    if not v or len(v) < 3:
+        return False
+    if not points_in_polygon(region_poly, np.array([[v[0], v[1]]]))[0]:
+        return False
+    if _obj_num_points(cuboid) < min_points:
+        return False
+    if exclude_occluded and _obj_occlusion(cuboid) in ("MOSTLY_OCCLUDED", "FULLY_OCCLUDED"):
+        return False
+    return True
+
+
+def scorable_classify(label_path, region_poly, min_points=1, exclude_occluded=False):
+    """Return (kept_xy, dropped_xy) object centres for a single label file (preview)."""
+    ol = json.load(open(label_path))["openlabel"]
+    frames = ol.get("frames", {})
+    kept, dropped = [], []
+    if frames:
+        fr = frames[next(iter(frames))]
+        for o in fr.get("objects", {}).values():
+            cub = o["object_data"].get("cuboid", {})
+            v = cub.get("val")
+            if not v:
+                continue
+            (kept if _keep_object(cub, region_poly, min_points, exclude_occluded) else dropped).append((v[0], v[1]))
+    return (np.array(kept) if kept else np.zeros((0, 2))), (np.array(dropped) if dropped else np.zeros((0, 2)))
+
+
+def generate_scorable_gt(src_label_dir, out_dir, region_poly, min_points=1,
+                         exclude_occluded=False, max_frames=0, progress=None):
+    """Write filtered OpenLABEL files (same structure, subset of objects) to out_dir.
+    Returns (n_files, kept, total)."""
+    files = sorted_by_frame_index(glob.glob(os.path.join(src_label_dir, "*.json")))
+    if max_frames and max_frames > 0:
+        files = files[:max_frames]
+    os.makedirs(out_dir, exist_ok=True)
+    kept_tot, total = 0, 0
+    for i, f in enumerate(files):
+        ol = json.load(open(f))["openlabel"]
+        out = copy.deepcopy(ol)
+        for fid, fr in out.get("frames", {}).items():
+            objs = fr.get("objects", {})
+            keep = {}
+            for oid, o in objs.items():
+                total += 1
+                if _keep_object(o["object_data"].get("cuboid", {}), region_poly, min_points, exclude_occluded):
+                    keep[oid] = o
+                    kept_tot += 1
+            fr["objects"] = keep
+        with open(os.path.join(out_dir, os.path.basename(f)), "w", encoding="utf-8") as fp:
+            json.dump({"openlabel": out}, fp)
+        if progress:
+            progress(i + 1, len(files))
+    return len(files), kept_tot, total
+
+
+def scorable_preview_figure(kept_xy, dropped_xy, region_poly, height=560, title=""):
+    """BEV: kept objects (green), dropped (grey), + ROI region outline."""
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    if len(dropped_xy):
+        fig.add_trace(go.Scatter(x=dropped_xy[:, 0], y=dropped_xy[:, 1], mode="markers",
+                                 marker=dict(size=9, color="#888", symbol="x"),
+                                 name="dropped", hoverinfo="skip"))
+    if len(kept_xy):
+        fig.add_trace(go.Scatter(x=kept_xy[:, 0], y=kept_xy[:, 1], mode="markers",
+                                 marker=dict(size=11, color="limegreen", line=dict(color="#0a0", width=1)),
+                                 name="kept (scorable)", hoverinfo="skip"))
+    geoms = [region_poly] if region_poly.geom_type == "Polygon" else list(region_poly.geoms)
+    for g in geoms:
+        x, y = g.exterior.xy
+        fig.add_trace(go.Scatter(x=list(x), y=list(y), mode="lines",
+                                 line=dict(color="limegreen", width=2, dash="dash"),
+                                 hoverinfo="skip", showlegend=False))
+    minx, miny, maxx, maxy = region_poly.bounds
+    cx, cy = (minx + maxx) / 2, (miny + maxy) / 2
+    half = max(maxx - minx, maxy - miny) / 2 + 8.0
+    fig.update_layout(height=height, margin=dict(l=0, r=0, t=30, b=0), title=title,
+                      legend=dict(orientation="h", y=1.02, x=0),
+                      xaxis=dict(title="x (m)", range=[cx - half, cx + half]),
+                      yaxis=dict(title="y (m)", range=[cy - half, cy + half], scaleanchor="x", scaleratio=1),
+                      uirevision="dp_gt")
     return fig
