@@ -72,8 +72,8 @@ so no dev-kit, no calibration files, and no extra dependencies.
   shown as **Bird's-Eye** and **Side** views (rotate/zoom), coloured by category.
 
 Frame stepping is isolated with `st.fragment` + cached loads so playback is smooth
-(no full-page refresh). The same playback control is on **Background Filtering**
-(which also has a **3D-zoom slider** that persists across frames).
+(no full-page refresh). The same playback control is on **Background Filtering**,
+which is also a full **3D inspector** (see its section below).
 
 ## Dataset Prep (page 7) — derived data + editable geometry
 
@@ -94,10 +94,20 @@ by file mtime, so a save updates the whole app with no restart).
   can't be reproduced from the labels). Editable keep/drop **criteria** (min/max
   points, max range, occlusion levels, classes) with a live kept-vs-dropped preview.
 - **🗺️ Geometry Editor** — edit the **research polygon (ROI)**, **road polygons**
-  (cropping), and **foreground-exclusion rectangles** with Lane-Editor-style
-  **+/- steppers** and a live BEV preview. **Reset any component (or all) to the
-  dataset default**, add/delete polygons & vertices, derive the ROI from the data
-  extent, then **Save** to update the whole pipeline.
+  (cropping), and **foreground-exclusion rectangles**, then **Save** to update the
+  whole pipeline. Editing options:
+  - **+/- steppers** (Lane-Editor style), **draw a box** on the plot to add an
+    exclusion / road / set the ROI, **nudge** a whole polygon with ◀▶▲▼, add/delete
+    polygons & vertices, **vertex labels** (`ROIn` / `R<road>.<v>` / `X<rect>.<v>`).
+  - **Reset any component (or all) to the dataset default**, derive the ROI from the
+    data extent, or set **ROI = road bounds + margin**.
+  - **Live overlays:** colour the cloud **by height** (Turbo, like the dev-kit),
+    overlay the **background-filter foreground** (red) and **GT boxes**
+    (category-coloured), and a **live FG-quality readout** (objects covered / on-object
+    recall / off-object foreground). Crucially the foreground is split by the *current,
+    unsaved* geometry — points your exclusion rects / road crop would remove turn
+    **grey** and drop out of the metric, so you can tune exclusions and watch the
+    numbers move **before** saving or rebuilding the model.
 
 ### Cropped vs full (uncropped) A/B pipeline
 
@@ -108,6 +118,29 @@ model / filtered / detection folders (`…` vs `…_full`), so you can build bot
 **compare eval metrics** without overwriting each other. (Resolved by
 `dataset_manager`'s `input_pcd_for` / `model_path_for` / `filtered_dir_for` /
 `detection_dir_for` helpers.)
+
+## Background Filtering — 3D inspector
+
+The Background Filtering viewer (page 1) is a full inspection tool for tuning the
+filter, not just a preview:
+
+- **Layers (persist across frames):** 🔴 foreground / ⚪ original cloud toggles, plus
+  geometry overlays that show *why* a point survives — 🛣️ road outline (solid on
+  cropped = the real crop; dashed on full = reference), 🔵 ROI, 🟣 exclusion zones.
+- **🏷️ GT boxes** (category-coloured + `TYPE_id` labels, matched per frame) and a
+  **📊 FG quality** metric (objects covered ≥N pts / on-object recall / off-object
+  foreground) — a fast *proxy* for detectability so you can tune filter params without
+  running the whole Detection→Evaluation loop.
+- **🌈 Color by height** (Turbo) with a **Height span** slider that compresses the
+  colormap to the lowest few metres so even cars show a bottom→top gradient.
+- **Persistent camera:** 🔍 zoom / 🔄 rotate / 📐 tilt sliders drive the 3D camera
+  from Streamlit state, so the view holds across frame steps **and** toggles (Streamlit
+  does not preserve the Plotly 3D camera via `uirevision`, so sliders are the reliable
+  way; mouse drag still works for quick looks). The full/uncropped view is clipped to
+  the road window so it isn't flattened by the raw ~200 m extent.
+
+The same height-colour toggle is also on the **Object Detection & Tracking** 3D
+viewer and the Dataset-Prep 2D previews.
 
 ## Running
 
@@ -276,7 +309,20 @@ i.e. `atan2(vy,vx)` in the sensor frame). The file is **currently calibrated**
 - **Cropped vs full A/B pipeline**: shared *Input cloud* toggle across
   Filtering / Detection / Evaluation, each source writing to its own
   `…`/`…_full` folders so metrics can be compared.
-- Background Filtering viewer gained a **3D-zoom slider** (persists across frames).
+
+**Inspection & 3D-visualization tooling**
+- **Background Filtering 3D inspector**: persistent foreground/original layer toggles;
+  road / ROI / exclusion geometry overlays; per-frame **GT boxes** (category-coloured
+  + labels); a live **FG-quality** proxy metric; **height colouring** (Turbo) with a
+  tunable span; and a **persistent camera** (zoom/rotate/tilt sliders, since Streamlit
+  won't preserve the Plotly 3D camera). Full/uncropped view clipped to the road window
+  so it isn't flattened by the raw extent.
+- **Geometry Editor live tooling**: draw-box / nudge / vertex-label editing; overlay
+  the BG-filter foreground + GT; and a **what-if FG-quality metric** that applies the
+  *unsaved* geometry (cropped-out points grey out and leave the metric) so you tune
+  exclusions before saving.
+- **Dev-kit-style height colouring** available across the Dataset-Prep 2D previews and
+  the Object-Detection 3D viewer too.
 
 **Visualization (V2X + dev-kit replacement)**
 - **WWD Simulator** + embedded **V2X dashboard**: a synthetic wrong-way driver
@@ -289,38 +335,40 @@ i.e. `atan2(vy,vx)` in the sensor frame). The file is **currently calibrated**
 
 ## Next up: Point-cloud registration (south + north → one cloud)
 
-The s110 site has **two** roadside LiDARs (ouster *south* and *north*). Each cloud
-is currently in **its own sensor frame** (each sensor sits at the origin of its own
-cloud; cuboids are in the sensor frame, `coordinate_system: None`), and there is no
-GPS in the data. The Dataset Prep "Crop to road" tab already exposes a **Registered
-(south + north)** source and the Geometry Editor previews south ↔ north, so the
-hooks are in place — the missing piece is the actual **registration** that fuses
-them into one denser cloud covering the full intersection.
+The s110 site has **two** roadside LiDARs (ouster *south* and *north*), each cloud in
+its own sensor frame. The Dataset Prep "Crop to road" tab already exposes a
+**Registered (south + north)** source and the Geometry Editor previews south ↔ north,
+so the hooks are in place — the missing piece is fusing them into one denser cloud
+covering the full intersection.
 
-**Goal.** Estimate the rigid transform `T_north→south` (4×4, rotation + translation)
-that maps the north cloud into the south sensor frame, write fused frames to
-`derived/registered/`, and let the rest of the pipeline run on the registered
-source (the A/B toggle + `*_for(source)` path helpers already generalise to it).
+**Key fact (verified):** the dataset is **already calibrated**. Every OpenLABEL label
+JSON (south *and* north) carries the sensor→`s110_base` extrinsic in
+`coordinate_systems` (south LiDAR at `(−2.37, 16.20, 8.62)`, north at
+`(−1.03, 2.56, 8.62)`, both relative to the common `s110_base`). So registration is
+**deterministic and objective** — apply each cloud's provided transform into
+`s110_base` and they align. No GPS or from-scratch estimation needed.
 
-**Plan (proposed).**
-1. **New page / Dataset Prep tab — "Registration".** Pick a frame pair (south,
-   north) matched by timestamp; load both raw clouds.
-2. **Coarse init.** Offer (a) a manual 6-DoF nudge (x/y/z + yaw/pitch/roll steppers,
-   same UX as the Geometry Editor) with a live overlaid preview, and/or (b) a
-   global init (FPFH features + RANSAC) for an automatic starting guess.
-3. **Refine.** **ICP** (point-to-plane, Open3D — already a dependency) from the
-   coarse init; report fitness / inlier RMSE so the user can judge the fit.
-4. **Persist.** Save `T_north→south` to `config/registration.json` (+ a `defaults/`
-   snapshot for reset-to-default, consistent with geometry/lanes).
-5. **Apply.** Add `dataset_manager` helpers to transform + merge north into south
-   per frame → `derived/registered/`; optionally voxel-downsample the union.
-6. **Propagate.** The cropped/full toggle gains the registered source end-to-end;
-   the 3D viewers can then mark **both** sensor origins exactly (today only one is
-   shown, since pre-registration the second position is a guess).
+**Approach — calibration-first, ICP-optional** (following the dev-kit, which bakes
+calibration into the data; extending it with verification):
+1. **New "Registration" tab** in Dataset Prep — timestamp-matched south/north frame
+   pair, both raw clouds loaded.
+2. **Primary: provided extrinsics.** Read `south→base` / `north→base` from the labels,
+   transform both into `s110_base`; overlaid preview (reuse the height-colour / box
+   tooling) to eyeball alignment.
+3. **Optional: ICP refine.** Point-to-plane ICP (Open3D, already a dep) from the
+   calibration as the initial guess; report fitness / inlier RMSE so the calibration
+   can be *verified* rather than trusted blindly. Manual 6-DoF nudge as a fallback.
+4. **Persist** the resolved transforms to `config/registration.json` (+ a `defaults/`
+   snapshot, consistent with geometry/lanes).
+5. **Apply** via `dataset_manager` helpers: transform + merge per frame →
+   `derived/registered/` (optionally voxel-downsample the union).
+6. **Propagate** the registered source through the cropped/full toggle end-to-end; the
+   3D viewers can then mark **both** sensor origins exactly.
 
-**Why it matters.** A registered cloud roughly doubles coverage of the
-intersection (fills each sensor's occlusion shadows), which should improve recall
-on far/occluded objects and make WWD at the junction more reliable.
+**Why it matters.** A registered cloud roughly doubles intersection coverage (fills
+each sensor's occlusion shadows), which should improve recall on far/occluded objects
+and make WWD at the junction more reliable. Note `num_points` in the scorable GT is
+currently south-only — recompute it on the fused cloud once registered.
 
 ## Other open follow-ups
 - Reduce **ID switches** further (association / `max_missed` tuning).
