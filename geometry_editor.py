@@ -88,7 +88,8 @@ def default_rect(geom):
     return _rect_corners(cx - 3, cy - 3, cx + 3, cy + 3)
 
 
-def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=None, dragmode="pan"):
+def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=None,
+                   dragmode="pan", show_vertex_labels=False):
     """BEV: point cloud + research (cyan dotted), road (green), exclusion (magenta).
     If `fg_points` is given (background-filter foreground), overlay it in red. If
     `gt_objs` is given, overlay GT box footprints + TYPE_id labels, category-coloured
@@ -141,6 +142,24 @@ def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=N
             fig.add_trace(go.Scatter(x=[p[0] for p in c], y=[p[1] for p in c], mode="lines",
                                      line=dict(color="#ff5fec", width=2),
                                      name="exclusion", legendgroup="excl", showlegend=(i == 0)))
+
+    if show_vertex_labels:
+        # tag each vertex so you know its polygon + index while editing:
+        #   ROI1.. / R<road>.<v> / X<rect>.<v>
+        for tag, color, items in (("ROI", "#17becf", [geom.get("research_polygon", [])]),
+                                   ("R", "limegreen", geom.get("road_polygons", [])),
+                                   ("X", "#ff5fec", geom.get("foreground_exclusion_rects", []))):
+            tx, ty, tt = [], [], []
+            multi = tag != "ROI"
+            for pi, poly in enumerate(items):
+                for vi, (x, y) in enumerate(poly):
+                    tx.append(x); ty.append(y)
+                    tt.append(f"{tag}{pi+1}.{vi+1}" if multi else f"{tag}{vi+1}")
+            if tx:
+                fig.add_trace(go.Scatter(x=tx, y=ty, mode="markers+text", text=tt,
+                                         textposition="top center", marker=dict(size=5, color=color),
+                                         textfont=dict(size=9, color=color),
+                                         hoverinfo="skip", showlegend=False))
 
     allx, ally = [], []
     for poly in [geom.get("research_polygon", [])] + list(geom.get("road_polygons", [])):

@@ -430,6 +430,14 @@ with tab_geom:
                 if rcv2.button("🗑️ Delete polygon", key="ge_del_road"):
                     roads.pop(ridx); geom["road_polygons"] = roads
                     st.session_state.ge_road_idx = 0; st.rerun()
+                # Move the whole polygon by `step` metres (the working drag-move).
+                st.caption(f"Move polygon #{ridx+1} (±{step:g} m)")
+                mv = st.columns(4)
+                _moves = {"◀": (-step, 0), "▶": (step, 0), "▲": (0, step), "▼": (0, -step)}
+                for _c, (_lbl, (_dx, _dy)) in zip(mv, _moves.items()):
+                    if _c.button(_lbl, key=f"ge_road_mv_{_lbl}", use_container_width=True):
+                        roads[ridx] = [[p[0] + _dx, p[1] + _dy] for p in roads[ridx]]
+                        geom["road_polygons"] = roads; st.rerun()
                 roads[ridx] = _vertex_editor(roads[ridx], f"Road{ridx+1}", step)
                 geom["road_polygons"] = roads
             else:
@@ -459,17 +467,20 @@ with tab_geom:
             else:
                 st.info("No exclusion rectangles.")
     with g_right:
-        pv1, pv2 = st.columns([1.4, 1])
-        pv1.markdown("**👁 Live preview** — scroll to zoom.")
+        pv1, pv2, pv3 = st.columns([1.1, 1, 1])
+        pv1.markdown("**👁 Live preview**")
         mode = pv2.radio("Mouse", ["🖐 Pan", "⬛ Draw box"], horizontal=True, key="geom_drawmode",
                          label_visibility="collapsed",
                          help="Draw box: drag a rectangle on the plot, then add it as an exclusion "
                               "zone or set it as the ROI.")
+        show_verts = pv3.toggle("🔖 Vertex labels", value=False, key="geom_verts",
+                                help="Tag every vertex (ROIn / R<road>.<v> / X<rect>.<v>) so you know "
+                                     "which polygon and vertex you're editing.")
         dm_mode = "select" if mode.startswith("⬛") else "pan"
         ev = st.plotly_chart(ge.preview_figure(geom_bg, geom, height=620,
                                                fg_points=geom_fg if show_fg else None,
                                                gt_objs=geom_gt if show_gt else None,
-                                               dragmode=dm_mode),
+                                               dragmode=dm_mode, show_vertex_labels=show_verts),
                              use_container_width=True, config={"scrollZoom": True},
                              on_select="rerun", key="geom_preview")
 
