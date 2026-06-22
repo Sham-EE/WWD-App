@@ -598,15 +598,20 @@ with tab_reg:
     st.caption("Sensors fire asynchronously, so each south frame is paired with its nearest-in-time "
                "north frame. Small Δt ⇒ negligible motion between the two captures.")
 
-    # --- ICP refine (verification) ---
+    # --- ICP refine ---
     st.divider()
+    st.markdown("**🔧 ICP refinement** — the bundled extrinsics align the ground plane but carry a "
+                "relative **yaw + translation** error between the two sensors. Coarse-to-fine "
+                "point-to-plane ICP measures and corrects it; the rig is static, so one correction "
+                "applies to every frame.")
     ic1, ic2, ic3, ic4 = st.columns([1.4, 1, 1, 1])
-    use_refine = ic1.toggle("🔧 Apply ICP refinement", value=False, key="reg_use_icp",
-                            help="Refine north→south with ICP on top of the calibration. Off = pure "
-                                 "calibration (recommended; ICP is mainly to *verify* the calibration).")
-    icp_dist = ic2.slider("ICP max dist (m)", 0.2, 3.0, 1.0, 0.1, key="reg_icp_dist")
-    icp_iter = ic3.slider("ICP iters", 10, 100, 40, 10, key="reg_icp_iter")
-    icp_voxel = ic4.slider("ICP voxel (m)", 0.0, 1.0, 0.3, 0.1, key="reg_icp_voxel",
+    use_refine = ic1.toggle("Apply ICP correction", value=True, key="reg_use_icp",
+                            help="On = north corrected by ICP on top of the calibration (recommended — "
+                                 "the raw calibration is visibly off). Off = pure calibration only.")
+    icp_dist = ic2.slider("ICP fine dist (m)", 0.2, 2.0, 0.5, 0.1, key="reg_icp_dist",
+                          help="Finest correspondence distance (coarse-to-fine starts at 5 m).")
+    icp_iter = ic3.slider("ICP iters/level", 10, 100, 60, 10, key="reg_icp_iter")
+    icp_voxel = ic4.slider("ICP voxel (m)", 0.0, 1.0, 0.25, 0.05, key="reg_icp_voxel",
                            help="Downsample before ICP for speed (0 = full resolution).")
 
     st.session_state.setdefault("reg_frame", 0)
@@ -626,6 +631,14 @@ with tab_reg:
         refine = np.array(refine_l) if refine_l else None
         f = reg.fuse_pair(s_pts, n_pts, np.array(Ms_l), np.array(Mn_l), refine=refine)
         return {"south": f["south"], "north": f["north"]}
+
+    @st.cache_data(show_spinner="Running ICP…")
+    def _icp_for(sp, npath, Ms_l, Mn_l, dist, iters, voxel):
+        """Coarse-to-fine ICP correction (north→south) for one pair, cached by
+        pair + params. Returns (delta_list, info)."""
+        f = reg.fuse_pair(reg.load_xyz(sp), reg.load_xyz(npath), np.array(Ms_l), np.array(Mn_l))
+        delta, info = reg.icp_refine(f["north"], f["south"], max_dist=dist, max_iter=iters, voxel=voxel)
+        return delta.tolist(), info
 
     @st.fragment
     def _reg_preview():
@@ -668,25 +681,21 @@ with tab_reg:
                               help="Research region (s110_base frame — Registered view only).")
         hspan = st.slider("🌈 Height span (m)", 1.0, 12.0, 4.0, 0.5, key="reg_hspan")
 
-        refine_l = st.session_state.reg_delta if (use_refine and st.session_state.reg_delta) else None
+        # ICP correction for this pair (auto-computed + cached). Always measured
+        # so the read-out quantifies the calibration error; applied only if the
+        # toggle is on. Stored as reg_delta so the batch writer reuses it.
+        delta_l, inf = _icp_for(sp, npath, Ms.tolist(), Mn.tolist(), icp_dist, icp_iter, icp_voxel)
+        st.session_state.reg_delta = delta_l
+        refine_l = delta_l if use_refine else None
         f = _fused(sp, npath, Ms.tolist(), Mn.tolist(), refine_l)
 
-        # ICP read-out on the current frame
-        ib1, ib2 = st.columns([1, 3])
-        if ib1.button("🔧 Run ICP on this pair", use_container_width=True, key="reg_run_icp"):
-            with st.spinner("Running ICP…"):
-                delta, info = reg.icp_refine(f["north"], f["south"], max_dist=icp_dist,
-                                             max_iter=icp_iter, voxel=icp_voxel)
-            st.session_state.reg_delta = delta.tolist()
-            st.session_state.reg_icp_info = info
-            st.rerun(scope="fragment")
-        if st.session_state.get("reg_icp_info"):
-            inf = st.session_state.reg_icp_info
-            verdict = ("✅ calibration aligns well" if inf["fitness"] > 0.4 and inf["inlier_rmse"] < 0.5
-                       else "⚠️ check overlap / params")
-            ib2.info(f"ICP: fitness **{inf['fitness']:.2f}** · RMSE **{inf['inlier_rmse']:.3f} m** · "
-                     f"correction Δt **{inf['translation_m']:.3f} m**, Δθ **{inf['rotation_deg']:.2f}°** "
-                     f"— {verdict}")
+        big_yaw = abs(inf["yaw_deg"]) > 1.0 or inf["translation_m"] > 0.5
+        verdict = ("⚠️ calibration is off — refinement recommended" if big_yaw
+                   else "✅ calibration already aligns well")
+        st.info(f"ICP correction (north→south): yaw **{inf['yaw_deg']:+.2f}°** · "
+                f"Δt **{inf['translation_m']:.2f} m** · fitness **{inf['fitness']:.2f}** · "
+                f"RMSE **{inf['inlier_rmse']:.3f} m** — {verdict}"
+                + ("  ·  *applied*" if use_refine else "  ·  *not applied (toggle on to correct)*"))
 
         is_raw = view.startswith("Raw")
         if is_raw:

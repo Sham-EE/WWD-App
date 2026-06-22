@@ -339,30 +339,34 @@ The s110 site has **two** roadside LiDARs (ouster *south* and *north*), each clo
 its own sensor frame. The Dataset Prep **🧭 Registration** tab fuses them into one
 denser cloud in the shared `s110_base` frame, covering the full intersection.
 
-**Key fact (verified):** the dataset is **already calibrated**. Every OpenLABEL label
-JSON (south *and* north) carries the sensor→`s110_base` extrinsic in
-`coordinate_systems` (south LiDAR at `(−2.37, 16.20, 8.62)`, north at
-`(−1.03, 2.56, 8.62)`, both relative to the common `s110_base`). The rig is static, so
-the 4×4 is **constant across frames** (verified max frame-to-frame drift = 0). So
-registration is **deterministic and objective** — apply each cloud's provided transform
-into `s110_base` and they align. No GPS or from-scratch estimation needed.
+**Key fact:** the dataset ships **per-sensor extrinsics**. Every OpenLABEL label JSON
+(south *and* north) carries the sensor→`s110_base` transform in `coordinate_systems`
+(south LiDAR at `(−2.37, 16.20, 8.62)`, north at `(−1.03, 2.56, 8.62)`, both relative to
+the common `s110_base`). The rig is static, so the 4×4 is **constant across frames**
+(verified drift = 0). These extrinsics make a good *initialization* — but they are **not
+exact**: composing them through `s110_base` aligns the **ground plane** (south/north
+ground within 7 cm) yet leaves a **systematic ~8° relative yaw + ~2 m translation** error
+between the two sensors (verified: structures only overlap once north is rotated ≈ −8°).
+So calibration alone is **not** sufficient; an ICP correction is required.
 
-**Implemented — calibration-first, ICP-optional** (`registration.py` + the Registration
-tab). Following the dev-kit, which bakes calibration into the data, and extending it
-with measured verification:
+**Implemented — calibration-init + ICP refinement** (`registration.py` + the Registration
+tab):
 1. **Read the extrinsics** straight from the labels (`read_sensor_to_base` /
    `calibration_for`), with a static-rig sanity check (`calibration_is_constant`).
 2. **Nearest-timestamp pairing** (`match_frame_pairs`) — the sensors fire async, so each
    south frame pairs with its nearest north frame (mean Δt ≈ 12 ms, max ≈ 89 ms over the
    282-frame clip).
 3. **Fuse** both clouds into `s110_base` (`fuse_pair`), tagging each point by source so
-   the preview can colour **south vs north distinctly** — the "do they line up?" QA view
-   (also a Turbo height ramp, road/ROI overlays, persistent zoom/rotate/tilt camera).
-4. **ICP read-out** (`icp_refine`, Open3D point-to-point) reports **fitness / inlier
-   RMSE** and the size of the correction (Δt, Δθ) so the bundled calibration is
-   *verified*, not trusted blindly. Off by default; can be baked in if desired.
+   the preview can colour **south vs north distinctly** — the "do they line up?" QA view.
+   One cohesive viewer toggles **Raw ↔ Registered** and **by-sensor / by-height** (Turbo),
+   with road/ROI overlays + persistent zoom/rotate/tilt camera.
+4. **ICP correction** (`icp_refine`, Open3D) — **coarse-to-fine** (5 → 2 → 1 → 0.5 m)
+   **point-to-plane** ICP recovers the yaw the calibration misses (a single tight pass
+   gets stuck in a local minimum). It reports **yaw / Δt / fitness / inlier RMSE**; the
+   correction is consistent frame-to-frame (yaw −7.85° to −7.90°), confirming it's a
+   static systematic error, so one correction applies to every frame. **On by default.**
 5. **Batch register** writes fused clouds → `data/derived/registered/` plus a
-   `registration.json` manifest (matrices + ICP result + pairing stats).
+   `registration.json` manifest (matrices + ICP delta + pairing stats).
 6. **Propagates** through the existing **Registered (south + north)** source in the
    Crop-to-road and Scorable-GT tabs end-to-end.
 

@@ -176,42 +176,68 @@ def fuse_pair(south_pts, north_pts, M_south, M_north, refine=None):
     return {"south": s_base, "north": n_base, "points": pts, "source": src}
 
 
-def icp_refine(north_base, south_base, max_dist=1.0, max_iter=50, voxel=0.0):
-    """Point-to-point ICP aligning the north cloud onto the south cloud (both
-    already in ``s110_base``). Returns ``(delta_4x4, info)`` where ``delta`` is
-    the correction to apply to the north cloud and ``info`` has fitness/RMSE.
+def icp_refine(north_base, south_base, max_dist=0.5, max_iter=60, voxel=0.25,
+               point_to_plane=True, coarse_to_fine=True):
+    """ICP aligning the north cloud onto the south cloud (both already in
+    ``s110_base``). Returns ``(delta_4x4, info)`` where ``delta`` is the
+    correction to apply to the north cloud and ``info`` has fitness/RMSE + the
+    yaw/translation magnitude of the correction.
 
-    This is a *verification* of the bundled calibration: a near-identity delta
-    with high fitness + low RMSE means the labels' extrinsics already align the
-    clouds well."""
+    The bundled extrinsics get the ground plane right but carry a notable
+    **relative yaw** error (~8°) between the two sensors, so a single tight ICP
+    pass gets stuck in a local minimum. This runs **coarse-to-fine**
+    (5 → 2 → 1 → ``max_dist`` m correspondence distance) with **point-to-plane**
+    by default, which reliably recovers the yaw. Because the rig is static the
+    resulting correction is constant, so it can be computed once and applied to
+    every frame."""
     import open3d as o3d
-    src = o3d.geometry.PointCloud()
-    src.points = o3d.utility.Vector3dVector(np.asarray(north_base, dtype=np.float64)[:, :3])
-    tgt = o3d.geometry.PointCloud()
-    tgt.points = o3d.utility.Vector3dVector(np.asarray(south_base, dtype=np.float64)[:, :3])
+
+    def _pc(p):
+        c = o3d.geometry.PointCloud()
+        c.points = o3d.utility.Vector3dVector(np.asarray(p, dtype=np.float64)[:, :3])
+        return c
+
+    src = _pc(north_base)
+    tgt = _pc(south_base)
     if voxel and voxel > 0:
         src = src.voxel_down_sample(voxel)
         tgt = tgt.voxel_down_sample(voxel)
-    crit = o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=int(max_iter))
-    res = o3d.pipelines.registration.registration_icp(
-        src, tgt, float(max_dist), np.eye(4),
-        o3d.pipelines.registration.TransformationEstimationPointToPoint(),
-        crit)
-    delta = np.asarray(res.transformation, dtype=float)
-    t = delta[:3, 3]
-    R = delta[:3, :3]
-    # rotation magnitude (deg) of the correction
+    if point_to_plane:
+        tgt.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=max(voxel * 4, 1.0), max_nn=30))
+        estimator = o3d.pipelines.registration.TransformationEstimationPointToPlane()
+    else:
+        estimator = o3d.pipelines.registration.TransformationEstimationPointToPoint()
+
+    if coarse_to_fine:
+        schedule = sorted({d for d in (5.0, 2.0, 1.0, float(max_dist)) if d >= float(max_dist)},
+                          reverse=True)
+    else:
+        schedule = [float(max_dist)]
+
+    T = np.eye(4)
+    res = None
+    for md in schedule:
+        res = o3d.pipelines.registration.registration_icp(
+            src, tgt, md, T, estimator,
+            o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=int(max_iter)))
+        T = np.asarray(res.transformation, dtype=float)
+
+    t = T[:3, 3]
+    R = T[:3, :3]
     cos = (np.trace(R) - 1.0) / 2.0
     ang = float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
+    yaw = float(np.degrees(np.arctan2(R[1, 0], R[0, 0])))
     info = {
         "fitness": float(res.fitness),          # fraction of points with a match
         "inlier_rmse": float(res.inlier_rmse),  # metres
         "translation_m": float(np.linalg.norm(t)),
         "rotation_deg": ang,
+        "yaw_deg": yaw,                          # the dominant error component
         "max_dist": float(max_dist),
         "max_iter": int(max_iter),
+        "point_to_plane": bool(point_to_plane),
     }
-    return delta, info
+    return T, info
 
 
 # --------------------------------------------------------------------------- #
