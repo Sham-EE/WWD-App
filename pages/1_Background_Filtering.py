@@ -56,7 +56,8 @@ def discover_gt_index(gt_dir: str):
 def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
                            show_road=False, road_dashed=False, show_roi=False,
                            show_excl=False, gt_objs=None, color_by_height=False, height_span=4.0,
-                           show_foreground=True, show_original=True, height=560):
+                           show_foreground=True, show_original=True, height=560,
+                           azimuth=45.0, elevation=35.0):
     fig = go.Figure()
     # Resolve the road window first so we can lock the view AND clip the plotted points
     # to it. Clipping is the key: aspectmode="data" sizes the 3D box from the POINT
@@ -146,16 +147,22 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
         fig.add_trace(go.Scatter3d(x=lx, y=ly, z=lz, mode="text", text=lt,
             textfont=dict(size=11, color=lcol), hoverinfo="skip", showlegend=False))
 
-    eye = float(zoom)
-    # uirevision keyed to zoom: your manual pan/rotate/zoom persists across frame steps
-    # AND toggles (uirevision unchanged), but moving the zoom slider changes the key so
-    # the new camera actually applies. Double-click resets.
+    # Camera is driven entirely by the (persistent) sliders: zoom = distance,
+    # azimuth = orbit angle, elevation = tilt. Building eye from these angles is what
+    # makes the view persist across frames/toggles (the slider values live in
+    # session_state). Default az=45, el=35 reproduces the classic (z,z,z) view.
+    r = float(zoom) * np.sqrt(3.0)
+    az, el = np.radians(float(azimuth)), np.radians(float(elevation))
+    eye = dict(x=float(r * np.cos(el) * np.cos(az)),
+               y=float(r * np.cos(el) * np.sin(az)),
+               z=float(r * np.sin(el)))
+    urev = f"bf_{zoom}_{azimuth}_{elevation}"
     fig.update_layout(height=height, margin=dict(l=0, r=0, b=0, t=0), showlegend=True,
-                      uirevision=f"bf_{zoom}",
+                      uirevision=urev,
                       scene=dict(aspectmode="data", xaxis=xr, yaxis=yr,
                                  zaxis=dict(range=[zmin, zmax]),
-                                 camera=dict(eye=dict(x=eye, y=eye, z=eye)),
-                                 uirevision=f"bf_{zoom}"))
+                                 camera=dict(eye=eye, up=dict(x=0, y=0, z=1)),
+                                 uirevision=urev))
     return fig
 
 
@@ -308,10 +315,16 @@ if st.session_state.bg_model:
             # to set the zoom each source loads at. Each source has its own slider/key,
             # so cropped and full remember their own zoom independently.
             ZOOM_DEFAULTS = {"cropped": 0.7, "full": 0.9}
-            zoom = st.slider("3D zoom (lower = closer)", 0.35, 2.0,
-                             ZOOM_DEFAULTS.get(_src, 0.9), 0.05, key=f"bf_zoom_{_src}",
-                             help="Persists across frames & toggles (it's the persistent camera "
-                                  "control). Mouse scroll/drag is for quick looks but resets on rerun.")
+            # Persistent camera controls on one line (zoom + rotate + tilt). These drive
+            # the camera from session_state, so the view holds across frames & toggles
+            # (mouse drag/scroll is for quick looks only and resets on rerun).
+            cz, _s1, ca, _s2, ce = st.columns([3, 0.4, 3, 0.4, 3])
+            zoom = cz.slider("🔍 Zoom", 0.35, 2.0, ZOOM_DEFAULTS.get(_src, 0.9), 0.05,
+                             key=f"bf_zoom_{_src}", help="Lower = closer.")
+            azimuth = ca.slider("🔄 Rotate", 0, 360, 45, 5, key="bf_az",
+                                help="Orbit angle around the scene (degrees).")
+            elevation = ce.slider("📐 Tilt", 5, 88, 35, 1, key="bf_el",
+                                  help="Camera height angle; 88 ≈ straight-down bird's-eye.")
 
             # Point-cloud layers (persist across frames, unlike legend clicks).
             lc = st.columns(2)
@@ -372,7 +385,7 @@ if st.session_state.bg_model:
                                        gt_objs=gt_objs if gt_on else None,
                                        color_by_height=color_h, height_span=h_span,
                                        show_foreground=show_fg_pts, show_original=show_orig,
-                                       height=560),
+                                       height=560, azimuth=azimuth, elevation=elevation),
                 use_container_width=True, key="bf_fig")
             st.caption(f"{os.path.basename(pcd_files[i])} · frame {i+1}/{n_bf} · "
                        f"{len(fg)} foreground / {len(pts)} points")
