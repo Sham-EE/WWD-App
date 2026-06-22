@@ -612,6 +612,13 @@ with tab_reg:
     st.session_state.setdefault("reg_frame", 0)
     st.session_state.setdefault("reg_delta", None)
 
+    st.divider()
+    st.subheader("👁 Preview — Raw vs Registered")
+    st.caption("One viewer, two modes. **Raw** overlays the two clouds in their own sensor frames "
+               "(the 'before' — they won't line up). **Registered** transforms both into `s110_base` "
+               "(the 'after'). Toggle **By sensor** to colour south (blue) / north (orange) — if a "
+               "vehicle shows up as two offset copies in Registered view, that's a registration error.")
+
     @st.cache_data(show_spinner=False)
     def _fused(sp, npath, Ms_l, Mn_l, refine_l):
         s_pts = reg.load_xyz(sp)
@@ -638,21 +645,28 @@ with tab_reg:
         st.session_state.reg_frame = i
         sp, npath, dt_ms = pairs[i]
 
-        # view controls (one line, persistent camera like the BG inspector)
+        # view controls — one cohesive viewer with a Raw <-> Registered toggle
+        tc1, tc2 = st.columns([1, 1])
+        view = tc1.radio("View", ["Raw (unregistered)", "Registered (s110_base)"],
+                         horizontal=True, index=1, key="reg_view",
+                         help="Raw = each cloud in its OWN sensor frame, overlaid (the 'before' — they "
+                              "won't line up). Registered = both transformed into the shared s110_base "
+                              "frame (the 'after').")
+        color_mode = tc2.radio("Color", ["By sensor", "By height"], horizontal=True,
+                               key="reg_color", help="By sensor = south (blue) / north (orange) distinct "
+                                                     "— alignment QA. By height = Turbo z-ramp.")
         vc1, _s1, vc2, _s2, vc3 = st.columns([3, 0.3, 3, 0.3, 3])
-        color_mode = vc1.radio("Color", ["By sensor", "By height"], horizontal=True,
-                               key="reg_color", help="By sensor = south/north distinct (alignment QA). "
-                                                      "By height = Turbo z-ramp.")
-        zoom = vc2.slider("🔍 Zoom", 0.35, 2.0, 0.9, 0.05, key="reg_zoom")
-        hspan = vc3.slider("🌈 Height span (m)", 1.0, 12.0, 4.0, 0.5, key="reg_hspan")
-        rc1, _r1, rc2, _r2, rc3, rc4 = st.columns([3, 0.3, 3, 0.3, 1.5, 1.5])
-        az = rc1.slider("🔄 Rotate", 0, 360, 45, key="reg_az")
-        el = rc2.slider("📐 Tilt", 5, 88, 35, key="reg_el")
-        show_s = rc3.toggle("🔵 South", value=True, key="reg_show_s")
-        show_n = rc4.toggle("🟠 North", value=True, key="reg_show_n")
-        gc1, gc2, _g = st.columns([1.5, 1.5, 5])
-        show_road = gc1.toggle("🟢 Road", value=False, key="reg_road")
-        show_roi = gc2.toggle("🔵 ROI", value=False, key="reg_roi")
+        zoom = vc1.slider("🔍 Zoom", 0.35, 2.0, 0.9, 0.05, key="reg_zoom")
+        az = vc2.slider("🔄 Rotate", 0, 360, 45, key="reg_az")
+        el = vc3.slider("📐 Tilt", 5, 88, 35, key="reg_el")
+        rc1, rc2, rc3, rc4, _r = st.columns([1.4, 1.4, 1.4, 1.4, 3])
+        show_s = rc1.toggle("🔵 South", value=True, key="reg_show_s")
+        show_n = rc2.toggle("🟠 North", value=True, key="reg_show_n")
+        show_road = rc3.toggle("🟢 Road", value=False, key="reg_road",
+                               help="Road outline (s110_base frame — Registered view only).")
+        show_roi = rc4.toggle("🔵 ROI", value=False, key="reg_roi",
+                              help="Research region (s110_base frame — Registered view only).")
+        hspan = st.slider("🌈 Height span (m)", 1.0, 12.0, 4.0, 0.5, key="reg_hspan")
 
         refine_l = st.session_state.reg_delta if (use_refine and st.session_state.reg_delta) else None
         f = _fused(sp, npath, Ms.tolist(), Mn.tolist(), refine_l)
@@ -674,13 +688,22 @@ with tab_reg:
                      f"correction Δt **{inf['translation_m']:.3f} m**, Δθ **{inf['rotation_deg']:.2f}°** "
                      f"— {verdict}")
 
-        title = f"pair {i+1}/{len(pairs)} · Δt {dt_ms:.0f} ms · {len(f['south']):,}+{len(f['north']):,} pts"
+        is_raw = view.startswith("Raw")
+        if is_raw:
+            # raw clouds in their OWN sensor frames — don't clip to the base-frame
+            # road window and don't draw base-frame overlays (they wouldn't line up)
+            data = {"south": _load_raw(sp)[:, :3], "north": _load_raw(npath)[:, :3]}
+            tag, clip, road_on, roi_on = "RAW · unregistered", False, False, False
+        else:
+            data, tag, clip, road_on, roi_on = f, "REGISTERED · s110_base", True, show_road, show_roi
+        title = (f"{tag} · pair {i+1}/{len(pairs)} · Δt {dt_ms:.0f} ms · "
+                 f"{len(data['south']):,}+{len(data['north']):,} pts")
         with st.container(height=680):
             st.plotly_chart(
                 reg.registration_figure(
-                    f, color_mode=("by_height" if color_mode == "By height" else "by_sensor"),
+                    data, color_mode=("by_height" if color_mode == "By height" else "by_sensor"),
                     height_span=hspan, show_south=show_s, show_north=show_n,
-                    show_road=show_road, show_roi=show_roi, height=660, title=title,
+                    show_road=road_on, show_roi=roi_on, clip=clip, height=660, title=title,
                     zoom=zoom, azimuth=float(az), elevation=float(el)),
                 use_container_width=True, key="reg_fig", config={"scrollZoom": True})
 
@@ -712,55 +735,3 @@ with tab_reg:
         bar.empty()
         st.success(f"Wrote **{n}** fused clouds → `{reg_out}`  (manifest: `registration.json`). "
                    "Now crop or score the **Registered (south + north)** source in the other tabs.")
-
-    # --- registered OUTPUT viewer (visual proof: loads the written .pcd from disk) ---
-    reg_files = rv.list_by_frame(reg_out, [".pcd"])
-    if reg_files:
-        st.divider()
-        st.subheader("✅ Registered output — written to disk")
-        st.caption(f"Loaded straight from `{reg_out}` — the **single fused cloud** the registration "
-                   "actually wrote. Compare it against the south/north overlay above: same camera, same "
-                   "frame — proof the two sensors were merged into one cloud in `s110_base`.")
-        st.session_state.setdefault("rego_frame", 0)
-
-        @st.fragment
-        def _registered_output_view():
-            st.session_state.rego_frame = max(0, min(st.session_state.rego_frame, len(reg_files) - 1))
-            nav = st.columns([1, 1, 1, 1, 1.6, 1.6])
-            if nav[0].button("⏮ First", use_container_width=True, key="rego_first"):
-                st.session_state.rego_frame = 0
-            if nav[1].button("◀ Prev", use_container_width=True, key="rego_prev"):
-                st.session_state.rego_frame = max(0, st.session_state.rego_frame - 1)
-            if nav[2].button("Next ▶", use_container_width=True, key="rego_next"):
-                st.session_state.rego_frame = min(len(reg_files) - 1, st.session_state.rego_frame + 1)
-            if nav[3].button("Last ⏭", use_container_width=True, key="rego_last"):
-                st.session_state.rego_frame = len(reg_files) - 1
-            if nav[4].button("🔗 Match overlay frame", use_container_width=True, key="rego_sync",
-                             help="Jump to the same frame as the south/north overlay above."):
-                st.session_state.rego_frame = min(st.session_state.get("reg_frame", 0), len(reg_files) - 1)
-            color_o = nav[5].radio("Color", ["By height", "By sensor mix"], horizontal=True,
-                                   key="rego_color", label_visibility="collapsed",
-                                   help="By height = Turbo z-ramp · By sensor mix = single colour (the "
-                                        "two sensors are merged on disk, so per-sensor colour is gone).")
-            i = st.slider("Registered frame", 0, max(len(reg_files) - 1, 1),
-                          st.session_state.rego_frame, key="rego_slider")
-            st.session_state.rego_frame = i
-
-            pts = _load_raw(reg_files[i])
-            # reuse the overlay's camera so both views line up frame-for-frame
-            zoom = st.session_state.get("reg_zoom", 0.9)
-            az = st.session_state.get("reg_az", 45)
-            el = st.session_state.get("reg_el", 35)
-            hspan = st.session_state.get("reg_hspan", 4.0)
-            show_road = st.session_state.get("reg_road", False)
-            show_roi = st.session_state.get("reg_roi", False)
-            title = f"registered {i+1}/{len(reg_files)} · {len(pts):,} pts (south + north fused)"
-            with st.container(height=680):
-                st.plotly_chart(
-                    reg.registered_figure(
-                        pts, color_mode=("by_height" if color_o == "By height" else "single"),
-                        height_span=hspan, show_road=show_road, show_roi=show_roi,
-                        height=660, title=title, zoom=zoom, azimuth=float(az), elevation=float(el)),
-                    use_container_width=True, key="rego_fig", config={"scrollZoom": True})
-
-        _registered_output_view()

@@ -332,8 +332,14 @@ def _apply_scene(go, traces, height, title, zoom, azimuth, elevation, rev):
 def registration_figure(fused, color_mode="by_sensor", height_span=4.0,
                         show_south=True, show_north=True, show_road=False,
                         show_roi=False, height=640, title="",
-                        zoom=0.9, azimuth=45.0, elevation=35.0, margin=12.0):
-    """Plotly 3D figure of a fused pair in ``s110_base``.
+                        zoom=0.9, azimuth=45.0, elevation=35.0, margin=12.0,
+                        clip=True):
+    """Plotly 3D figure of a south/north pair.
+
+    Works for both the **registered** view (points already in ``s110_base``;
+    ``clip=True`` frames the site by the road window) and the **raw** view
+    (points still in each sensor's own frame; pass ``clip=False`` so they're not
+    clipped against the base-frame road box).
 
     ``color_mode``: ``"by_sensor"`` (south/north distinct — the alignment QA
     view) or ``"by_height"`` (Turbo z-ramp like the dev kit)."""
@@ -345,7 +351,7 @@ def registration_figure(fused, color_mode="by_sensor", height_span=4.0,
     win = _road_window(margin)
 
     def _clip(p):
-        return _clip_to_window(p, win)
+        return _clip_to_window(p, win) if clip else p
 
     if color_mode == "by_height":
         allp = np.vstack([p for p, show in ((s_base, show_south), (n_base, show_north)) if show and len(p)]) \
@@ -373,36 +379,6 @@ def registration_figure(fused, color_mode="by_sensor", height_span=4.0,
                 x=p[:, 0], y=p[:, 1], z=p[:, 2], mode="markers", name=name,
                 marker=dict(size=1.5, color=col, opacity=0.55)))
 
-    traces += _geometry_overlay_traces(go, show_road, show_roi)
-    rev = f"reg_{zoom}_{azimuth}_{elevation}"
-    return _apply_scene(go, traces, height, title, zoom, azimuth, elevation, rev)
-
-
-def registered_figure(pts, color_mode="by_height", height_span=4.0,
-                      show_road=False, show_roi=False, height=640, title="",
-                      zoom=0.9, azimuth=45.0, elevation=35.0, margin=12.0,
-                      point_color="#a78bfa"):
-    """Plotly 3D figure of a *single fused* cloud (e.g. a written
-    ``derived/registered/*.pcd``) — the visual proof that registration produced
-    one merged cloud in ``s110_base``. Shares the camera + overlays + road-clip
-    with :func:`registration_figure` so the two views line up frame-for-frame.
-
-    ``color_mode``: ``"by_height"`` (Turbo z-ramp) or ``"single"`` (one colour)."""
-    import plotly.graph_objects as go
-
-    pts = np.asarray(pts, dtype=float)
-    win = _road_window(margin)
-    p = _clip_to_window(pts, win)
-    traces = []
-    if len(p):
-        if color_mode == "by_height":
-            z0 = float(np.percentile(p[:, 2], 1))
-            marker = dict(size=1.5, color=p[:, 2], colorscale="Turbo",
-                          cmin=z0, cmax=z0 + float(height_span), opacity=0.6, showscale=False)
-        else:
-            marker = dict(size=1.5, color=point_color, opacity=0.55)
-        traces.append(go.Scatter3d(x=p[:, 0], y=p[:, 1], z=p[:, 2], mode="markers",
-                                   name="Registered", marker=marker))
     traces += _geometry_overlay_traces(go, show_road, show_roi)
     rev = f"reg_{zoom}_{azimuth}_{elevation}"
     return _apply_scene(go, traces, height, title, zoom, azimuth, elevation, rev)
