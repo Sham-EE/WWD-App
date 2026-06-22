@@ -126,7 +126,8 @@ with tab_crop:
                         help="Expand the road polygon outward before clipping (0 = exact).")
 
     frames = rv.list_by_frame(src_dir, [".pcd"])
-    st.text_input("Output (cropped) folder", value=out_dir, key="dp_out", disabled=True)
+    st.caption("Output (cropped) folder")
+    st.code(out_dir, language="text")
     if not frames:
         st.warning(f"No `.pcd` files in `{src_dir}`."
                    + ("  — register the clouds first (Registration page)." if "Registered" in source else ""))
@@ -246,8 +247,10 @@ with tab_gt:
             "classes": (set(classes) if classes else None),
         }
 
-    st.text_input("Source labels", value=gt_src, key="gt_src", disabled=True)
-    st.text_input("Output (scorable GT) folder", value=gt_out, key="gt_out", disabled=True)
+    st.caption("Source labels")
+    st.code(gt_src, language="text")
+    st.caption("Output (scorable GT) folder")
+    st.code(gt_out, language="text")
     gt_labels = rv.list_by_frame(gt_src, [".json"])
     if not gt_labels:
         st.warning(f"No label files in `{gt_src}`.")

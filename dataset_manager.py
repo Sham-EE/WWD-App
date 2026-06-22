@@ -92,12 +92,27 @@ class Dataset:
             pass
         return self.raw_labels_north_dir
 
+    def _registered_gt_dir(self):
+        """Registered GT: prefer the generated scorable set, else fused labels."""
+        for c in (os.path.join(self.derived_dir, "labels_visible_registered"),
+                  os.path.join(self.derived_dir, "registered_labels")):
+            try:
+                if os.path.isdir(c) and any(f.endswith(".json") for f in os.listdir(c)):
+                    return c
+            except OSError:
+                pass
+        return self.gt_dir
+
     def gt_dir_for_input(self, input_pcd_dir):
         """Pick the GT folder whose sensor matches the input clouds, so the GT
         overlay + FG-quality metric line up no matter which sensor is filtered.
-        North inputs -> north GT; everything else -> the configured `gt_dir`
-        (south). Lets south/north A/B work without hand-editing `gt_dir`."""
-        if "north" in (input_pcd_dir or "").lower():
+        North/registered inputs -> their GT; everything else -> the configured
+        `gt_dir` (south). Lets south/north/registered A/B work without hand-
+        editing `gt_dir`."""
+        p = (input_pcd_dir or "").lower()
+        if "registered" in p:
+            return self._registered_gt_dir()
+        if "north" in p:
             return self._north_gt_dir()
         return self.gt_dir
 
@@ -201,6 +216,44 @@ class Dataset:
 
     def detection_dir_for(self, source):
         return self.detection_dir + self._sfx(source)
+
+    # --- per-SENSOR A/B (south / north / registered) × cropped/full ---
+    # South keeps the original suffix scheme (back-compat with existing folders);
+    # north/registered get their own model/filtered/detection folders so all
+    # three sensors' results coexist and can be compared.
+    def _dir_has_pcd(self, d):
+        try:
+            return os.path.isdir(d) and any(f.endswith(".pcd") for f in os.listdir(d))
+        except OSError:
+            return False
+
+    def input_pcd_for_sensor(self, sensor, source):
+        if sensor == "north":
+            return (os.path.join(self.derived_dir, "cropped_north", "cropped_pcd")
+                    if source == "cropped" else self.raw_lidar_north_dir)
+        if sensor == "registered":
+            crop = os.path.join(self.derived_dir, "cropped_registered", "cropped_pcd")
+            full = os.path.join(self.derived_dir, "registered")
+            if source == "cropped":
+                # fall back to the full fused cloud if it hasn't been cropped yet
+                return crop if self._dir_has_pcd(crop) else full
+            return full
+        return self.input_pcd_for(source)  # south
+
+    def _sensor_sfx(self, sensor, source):
+        base = self._sfx(source)
+        return base if sensor == "south" else f"_{sensor}{base}"
+
+    def model_path_for_sensor(self, sensor, source):
+        return os.path.join(self.outputs_dir,
+                            "background_model" + self._sensor_sfx(sensor, source),
+                            "background_model.pkl")
+
+    def filtered_dir_for_sensor(self, sensor, source):
+        return self.filtered_dir + self._sensor_sfx(sensor, source)
+
+    def detection_dir_for_sensor(self, sensor, source):
+        return self.detection_dir + self._sensor_sfx(sensor, source)
 
     def ensure_workspace(self):
         """Create the workspace folders (config/outputs) for a user dataset."""

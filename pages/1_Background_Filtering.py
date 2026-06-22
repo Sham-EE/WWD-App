@@ -22,20 +22,27 @@ logging.info("--- Background Filter Page Loaded ---")
 import dataset_manager as dm
 _ds = dm.get_active()
 st.sidebar.caption(f"📂 Dataset: **{_ds.name}**")
+_sensor_label = st.sidebar.radio("Sensor", ["Registered", "South", "North"],
+                                 key="pipeline_sensor", horizontal=True,
+                                 help="Which LiDAR to filter. Registered = the fused south+north cloud "
+                                      "(default). Each sensor writes to its own model/filtered/detection "
+                                      "folders so their metrics can be compared.")
+_sensor = _sensor_label.lower()
 _src_label = st.sidebar.radio("Input cloud", ["Cropped (road)", "Full (uncropped)"],
                               key="pipeline_source", horizontal=True,
-                              help="Cropped = road-clipped clouds; Full = raw clouds (research region). "
+                              help="Cropped = road-clipped clouds; Full = raw/fused clouds (research region). "
                                    "Each writes to its own model/filtered/detection folders so you can "
                                    "compare eval metrics. The choice is shared across Filtering / Detection / Evaluation.")
 _src = "cropped" if _src_label.startswith("Cropped") else "full"
-DEFAULT_MODEL_PATH = _ds.model_path_for(_src)
-DEFAULT_PCD = _ds.input_pcd_for(_src)
-# auto-pick the GT matching the input sensor (south/north) so the overlay +
-# FG-quality metric line up even when the input is pointed at the north clouds.
+DEFAULT_MODEL_PATH = _ds.model_path_for_sensor(_sensor, _src)
+DEFAULT_PCD = _ds.input_pcd_for_sensor(_sensor, _src)
+# auto-pick the GT matching the input sensor so the overlay + FG-quality metric
+# line up across south / north / registered.
 DEFAULT_GT = _ds.gt_dir_for_input(DEFAULT_PCD)
-DEFAULT_OUT = _ds.filtered_dir_for(_src)
-st.sidebar.caption(f"🏷️ GT: `{os.path.basename(DEFAULT_GT.rstrip('/'))}`"
-                   if os.path.isdir(DEFAULT_GT) else "🏷️ GT: none found")
+DEFAULT_OUT = _ds.filtered_dir_for_sensor(_sensor, _src)
+st.sidebar.caption(f"🛰️ Input: `{os.path.basename(DEFAULT_PCD.rstrip('/'))}`"
+                   + (f"  ·  🏷️ GT: `{os.path.basename(DEFAULT_GT.rstrip('/'))}`"
+                      if os.path.isdir(DEFAULT_GT) else "  ·  🏷️ GT: none found"))
 
 @st.cache_data(show_spinner="Discovering PCD files...")
 def discover_pcd_files(dir_path: str):
