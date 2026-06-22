@@ -308,8 +308,10 @@ if st.session_state.bg_model:
             # to set the zoom each source loads at. Each source has its own slider/key,
             # so cropped and full remember their own zoom independently.
             ZOOM_DEFAULTS = {"cropped": 0.7, "full": 0.9}
-            zoom = st.slider("3D zoom (lower = closer)", 0.6, 2.0,
-                             ZOOM_DEFAULTS.get(_src, 1.25), 0.05, key=f"bf_zoom_{_src}")
+            zoom = st.slider("3D zoom (lower = closer)", 0.35, 2.0,
+                             ZOOM_DEFAULTS.get(_src, 0.9), 0.05, key=f"bf_zoom_{_src}",
+                             help="Persists across frames & toggles (it's the persistent camera "
+                                  "control). Mouse scroll/drag is for quick looks but resets on rerun.")
 
             # Point-cloud layers (persist across frames, unlike legend clicks).
             lc = st.columns(2)
