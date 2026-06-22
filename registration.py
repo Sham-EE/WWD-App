@@ -355,11 +355,34 @@ def _apply_scene(go, traces, height, title, zoom, azimuth, elevation, rev):
     return fig
 
 
+def _sensor_marker_traces(go, sensors, z_floor=0.0):
+    """Diamond at each LiDAR's position + dotted plumb line to its nadir (the
+    ground point under it = the blank spot in that sensor's points)."""
+    traces = []
+    for s in sensors or []:
+        x, y, z = s["pos"]
+        col = s.get("color", "#ffffff")
+        name = s["name"]
+        traces.append(go.Scatter3d(
+            x=[x], y=[y], z=[z], mode="markers+text", name=f"{name} LiDAR",
+            text=[f"  {name} LiDAR ({x:.1f}, {y:.1f}, {z:.1f})"], textposition="top center",
+            textfont=dict(color=col, size=12),
+            marker=dict(size=6, color=col, symbol="diamond", line=dict(color="white", width=1)),
+            showlegend=True))
+        traces.append(go.Scatter3d(
+            x=[x, x], y=[y, y], z=[z, z_floor], mode="lines", showlegend=False,
+            line=dict(color=col, width=3, dash="dot")))
+        traces.append(go.Scatter3d(
+            x=[x], y=[y], z=[z_floor], mode="markers", showlegend=False,
+            marker=dict(size=5, color=col, symbol="x")))
+    return traces
+
+
 def registration_figure(fused, color_mode="by_sensor", height_span=4.0,
                         show_south=True, show_north=True, show_road=False,
                         show_roi=False, height=640, title="",
                         zoom=0.9, azimuth=45.0, elevation=35.0, margin=12.0,
-                        clip=True):
+                        clip=True, sensors=None):
     """Plotly 3D figure of a south/north pair.
 
     Works for both the **registered** view (points already in ``s110_base``;
@@ -406,5 +429,6 @@ def registration_figure(fused, color_mode="by_sensor", height_span=4.0,
                 marker=dict(size=1.5, color=col, opacity=0.55)))
 
     traces += _geometry_overlay_traces(go, show_road, show_roi)
+    traces += _sensor_marker_traces(go, sensors)
     rev = f"reg_{zoom}_{azimuth}_{elevation}"
     return _apply_scene(go, traces, height, title, zoom, azimuth, elevation, rev)

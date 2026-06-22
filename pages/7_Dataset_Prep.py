@@ -672,13 +672,16 @@ with tab_reg:
         zoom = vc1.slider("🔍 Zoom", 0.35, 2.0, 0.9, 0.05, key="reg_zoom")
         az = vc2.slider("🔄 Rotate", 0, 360, 45, key="reg_az")
         el = vc3.slider("📐 Tilt", 5, 88, 35, key="reg_el")
-        rc1, rc2, rc3, rc4, _r = st.columns([1.4, 1.4, 1.4, 1.4, 3])
+        rc1, rc2, rc3, rc4, rc5, _r = st.columns([1.3, 1.3, 1.3, 1.3, 1.3, 2])
         show_s = rc1.toggle("🔵 South", value=True, key="reg_show_s")
         show_n = rc2.toggle("🟠 North", value=True, key="reg_show_n")
         show_road = rc3.toggle("🟢 Road", value=False, key="reg_road",
                                help="Road outline (s110_base frame — Registered view only).")
         show_roi = rc4.toggle("🔵 ROI", value=False, key="reg_roi",
                               help="Research region (s110_base frame — Registered view only).")
+        show_sensors = rc5.toggle("📍 Sensors", value=True, key="reg_sensors",
+                                  help="Mark the LiDAR positions + a plumb line to each nadir "
+                                       "(blank spot) — Registered view only.")
         hspan = st.slider("🌈 Height span (m)", 1.0, 12.0, 4.0, 0.5, key="reg_hspan")
 
         # ICP correction for this pair (auto-computed + cached). Always measured
@@ -707,9 +710,19 @@ with tab_reg:
             # raw clouds in their OWN sensor frames — don't clip to the base-frame
             # road window and don't draw base-frame overlays (they wouldn't line up)
             data = {"south": _load_raw(sp)[:, :3], "north": _load_raw(npath)[:, :3]}
-            tag, clip, road_on, roi_on = "RAW · unregistered", False, False, False
+            tag, clip, road_on, roi_on, sensors = "RAW · unregistered", False, False, False, None
         else:
             data, tag, clip, road_on, roi_on = f, "REGISTERED · s110_base", True, show_road, show_roi
+            sensors = None
+            if show_sensors:
+                # sensor origin in base = translation column of its calibration; the
+                # north sensor moves with the ICP correction when it's applied.
+                south_pos = Ms[:3, 3]
+                n_pos = Mn[:3, 3]
+                if use_refine:
+                    n_pos = (np.array(delta_l) @ np.append(n_pos, 1.0))[:3]
+                sensors = [{"name": "South", "pos": [float(v) for v in south_pos], "color": "#ffe600"},
+                           {"name": "North", "pos": [float(v) for v in n_pos], "color": "#00ff7f"}]
         title = (f"{tag} · pair {i+1}/{len(pairs)} · Δt {dt_ms:.0f} ms · "
                  f"{len(data['south']):,}+{len(data['north']):,} pts")
         with st.container(height=680):
@@ -717,8 +730,8 @@ with tab_reg:
                 reg.registration_figure(
                     data, color_mode=("by_height" if color_mode == "By height" else "by_sensor"),
                     height_span=hspan, show_south=show_s, show_north=show_n,
-                    show_road=road_on, show_roi=roi_on, clip=clip, height=660, title=title,
-                    zoom=zoom, azimuth=float(az), elevation=float(el)),
+                    show_road=road_on, show_roi=roi_on, clip=clip, sensors=sensors,
+                    height=660, title=title, zoom=zoom, azimuth=float(az), elevation=float(el)),
                 use_container_width=True, key="reg_fig", config={"scrollZoom": True})
 
         if playing and i < len(pairs) - 1:
