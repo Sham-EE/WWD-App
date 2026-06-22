@@ -721,8 +721,10 @@ with tab_reg:
                 n_pos = Mn[:3, 3]
                 if use_refine:
                     n_pos = (np.array(delta_l) @ np.append(n_pos, 1.0))[:3]
-                sensors = [{"name": "South", "pos": [float(v) for v in south_pos], "color": "#ffe600"},
-                           {"name": "North", "pos": [float(v) for v in n_pos], "color": "#00ff7f"}]
+                # vivid blue / red — coordinated with the south(blue)/north(orange-red)
+                # clouds, but brighter (+ white outline) so the markers stand out.
+                sensors = [{"name": "South", "pos": [float(v) for v in south_pos], "color": "#1e90ff"},
+                           {"name": "North", "pos": [float(v) for v in n_pos], "color": "#ff1744"}]
         title = (f"{tag} · pair {i+1}/{len(pairs)} · Δt {dt_ms:.0f} ms · "
                  f"{len(data['south']):,}+{len(data['north']):,} pts")
         with st.container(height=680):
