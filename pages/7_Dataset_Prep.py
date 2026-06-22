@@ -8,6 +8,7 @@ import streamlit as st
 import dataset_manager as dm
 import dataset_prep as dp
 import geometry_editor as ge
+import registration as reg
 import road_viewer as rv
 
 st.set_page_config(layout="wide", page_title="Dataset Prep")
@@ -101,8 +102,9 @@ def _vertex_editor(poly, label, step=1.0):
     return out
 
 
-tab_crop, tab_gt, tab_geom = st.tabs(
-    ["✂️ Crop to road (ROI)", "🏷️ Scorable GT (visible-only)", "🗺️ Geometry Editor"])
+tab_crop, tab_gt, tab_geom, tab_reg = st.tabs(
+    ["✂️ Crop to road (ROI)", "🏷️ Scorable GT (visible-only)", "🗺️ Geometry Editor",
+     "🧭 Registration (south + north)"])
 
 # ===================== Tab 1: Crop to road =====================
 with tab_crop:
@@ -540,3 +542,173 @@ with tab_geom:
             st.caption("Drag a rectangle on the plot to draw a box.")
 
     st.session_state.geom_edit = geom
+
+
+# ===================== Tab 4: Registration (south + north) =====================
+with tab_reg:
+    st.caption("Fuse the **south** and **north** Ouster LiDARs into one cloud in the shared "
+               "**`s110_base`** frame. The sensor→base extrinsics are read straight from the OpenLABEL "
+               "labels (static rig → constant 4×4), so registration is **deterministic** — no guessing. "
+               "Optional **ICP** then *measures* how well the bundled calibration aligns the clouds.")
+
+    label_dirs = {"south": ds.raw_labels_south_dir, "north": ds.raw_labels_north_dir}
+    pcd_dirs = {"south": ds.raw_lidar_south_dir, "north": ds.raw_lidar_north_dir}
+    reg_out = os.path.join(ds.derived_dir, "registered")
+
+    @st.cache_data(show_spinner=False)
+    def _calib(side, label_dir):
+        M = reg.calibration_for(label_dir, side)
+        dev = reg.calibration_is_constant(label_dir, side)
+        return (M.tolist() if M is not None else None), dev
+
+    Ms_l, dev_s = _calib("south", label_dirs["south"])
+    Mn_l, dev_n = _calib("north", label_dirs["north"])
+    Ms = np.array(Ms_l) if Ms_l else None
+    Mn = np.array(Mn_l) if Mn_l else None
+
+    if Ms is None or Mn is None:
+        st.error("Couldn't read the sensor→base calibration from the labels. "
+                 f"Need OpenLABEL labels with `s110_lidar_ouster_*` poses in "
+                 f"`{label_dirs['south']}` and `{label_dirs['north']}`.")
+        st.stop()
+
+    # --- calibration read-out ---
+    with st.expander("📐 Calibration (sensor → s110_base, read from labels)", expanded=False):
+        for side, M, dev in (("South", Ms, dev_s), ("North", Mn, dev_n)):
+            t = M[:3, 3]
+            st.markdown(f"**{side}** → `s110_base`  ·  translation "
+                        f"(x={t[0]:.2f}, y={t[1]:.2f}, z={t[2]:.2f}) m  ·  "
+                        f"frame-to-frame drift {dev:.1e} "
+                        + ("✅ static" if (dev is not None and dev < 1e-6) else "⚠️ varies"))
+            st.code(np.array2string(M, precision=4, suppress_small=True), language="text")
+
+    # --- frame pairing ---
+    sp_files = rv.list_by_frame(pcd_dirs["south"], [".pcd"])
+    np_files = rv.list_by_frame(pcd_dirs["north"], [".pcd"])
+    if not sp_files or not np_files:
+        st.warning("Need raw point clouds for **both** south and north LiDARs under "
+                   f"`{pcd_dirs['south']}` and `{pcd_dirs['north']}`.")
+        st.stop()
+    pairs = reg.match_frame_pairs(sp_files, np_files)
+    dts = [p[2] for p in pairs]
+    mc1, mc2, mc3 = st.columns(3)
+    mc1.metric("Matched pairs", f"{len(pairs)}")
+    mc2.metric("Mean Δt", f"{np.mean(dts):.0f} ms")
+    mc3.metric("Max Δt", f"{max(dts):.0f} ms")
+    st.caption("Sensors fire asynchronously, so each south frame is paired with its nearest-in-time "
+               "north frame. Small Δt ⇒ negligible motion between the two captures.")
+
+    # --- ICP refine (verification) ---
+    st.divider()
+    ic1, ic2, ic3, ic4 = st.columns([1.4, 1, 1, 1])
+    use_refine = ic1.toggle("🔧 Apply ICP refinement", value=False, key="reg_use_icp",
+                            help="Refine north→south with ICP on top of the calibration. Off = pure "
+                                 "calibration (recommended; ICP is mainly to *verify* the calibration).")
+    icp_dist = ic2.slider("ICP max dist (m)", 0.2, 3.0, 1.0, 0.1, key="reg_icp_dist")
+    icp_iter = ic3.slider("ICP iters", 10, 100, 40, 10, key="reg_icp_iter")
+    icp_voxel = ic4.slider("ICP voxel (m)", 0.0, 1.0, 0.3, 0.1, key="reg_icp_voxel",
+                           help="Downsample before ICP for speed (0 = full resolution).")
+
+    st.session_state.setdefault("reg_frame", 0)
+    st.session_state.setdefault("reg_delta", None)
+
+    @st.cache_data(show_spinner=False)
+    def _fused(sp, npath, Ms_l, Mn_l, refine_l):
+        s_pts = reg.load_xyz(sp)
+        n_pts = reg.load_xyz(npath)
+        refine = np.array(refine_l) if refine_l else None
+        f = reg.fuse_pair(s_pts, n_pts, np.array(Ms_l), np.array(Mn_l), refine=refine)
+        return {"south": f["south"], "north": f["north"]}
+
+    @st.fragment
+    def _reg_preview():
+        st.session_state.reg_frame = max(0, min(st.session_state.reg_frame, len(pairs) - 1))
+        nav = st.columns([1, 1, 1, 1, 1.3, 3])
+        if nav[0].button("⏮ First", use_container_width=True, key="reg_first"):
+            st.session_state.reg_frame = 0
+        if nav[1].button("◀ Prev", use_container_width=True, key="reg_prev"):
+            st.session_state.reg_frame = max(0, st.session_state.reg_frame - 1)
+        if nav[2].button("Next ▶", use_container_width=True, key="reg_next"):
+            st.session_state.reg_frame = min(len(pairs) - 1, st.session_state.reg_frame + 1)
+        if nav[3].button("Last ⏭", use_container_width=True, key="reg_last"):
+            st.session_state.reg_frame = len(pairs) - 1
+        playing = nav[4].toggle("▶ Play", value=False, key="reg_play")
+        delay = nav[5].slider("Play delay (s)", 0.0, 1.0, 0.15, 0.05, key="reg_delay")
+        i = st.slider("Pair", 0, max(len(pairs) - 1, 1), st.session_state.reg_frame, key="reg_slider")
+        st.session_state.reg_frame = i
+        sp, npath, dt_ms = pairs[i]
+
+        # view controls (one line, persistent camera like the BG inspector)
+        vc1, _s1, vc2, _s2, vc3 = st.columns([3, 0.3, 3, 0.3, 3])
+        color_mode = vc1.radio("Color", ["By sensor", "By height"], horizontal=True,
+                               key="reg_color", help="By sensor = south/north distinct (alignment QA). "
+                                                      "By height = Turbo z-ramp.")
+        zoom = vc2.slider("🔍 Zoom", 0.35, 2.0, 0.9, 0.05, key="reg_zoom")
+        hspan = vc3.slider("🌈 Height span (m)", 1.0, 12.0, 4.0, 0.5, key="reg_hspan")
+        rc1, _r1, rc2, _r2, rc3, rc4 = st.columns([3, 0.3, 3, 0.3, 1.5, 1.5])
+        az = rc1.slider("🔄 Rotate", 0, 360, 45, key="reg_az")
+        el = rc2.slider("📐 Tilt", 5, 88, 35, key="reg_el")
+        show_s = rc3.toggle("🔵 South", value=True, key="reg_show_s")
+        show_n = rc4.toggle("🟠 North", value=True, key="reg_show_n")
+        gc1, gc2, _g = st.columns([1.5, 1.5, 5])
+        show_road = gc1.toggle("🟢 Road", value=False, key="reg_road")
+        show_roi = gc2.toggle("🔵 ROI", value=False, key="reg_roi")
+
+        refine_l = st.session_state.reg_delta if (use_refine and st.session_state.reg_delta) else None
+        f = _fused(sp, npath, Ms.tolist(), Mn.tolist(), refine_l)
+
+        # ICP read-out on the current frame
+        ib1, ib2 = st.columns([1, 3])
+        if ib1.button("🔧 Run ICP on this pair", use_container_width=True, key="reg_run_icp"):
+            with st.spinner("Running ICP…"):
+                delta, info = reg.icp_refine(f["north"], f["south"], max_dist=icp_dist,
+                                             max_iter=icp_iter, voxel=icp_voxel)
+            st.session_state.reg_delta = delta.tolist()
+            st.session_state.reg_icp_info = info
+            st.rerun(scope="fragment")
+        if st.session_state.get("reg_icp_info"):
+            inf = st.session_state.reg_icp_info
+            verdict = ("✅ calibration aligns well" if inf["fitness"] > 0.4 and inf["inlier_rmse"] < 0.5
+                       else "⚠️ check overlap / params")
+            ib2.info(f"ICP: fitness **{inf['fitness']:.2f}** · RMSE **{inf['inlier_rmse']:.3f} m** · "
+                     f"correction Δt **{inf['translation_m']:.3f} m**, Δθ **{inf['rotation_deg']:.2f}°** "
+                     f"— {verdict}")
+
+        title = f"pair {i+1}/{len(pairs)} · Δt {dt_ms:.0f} ms · {len(f['south']):,}+{len(f['north']):,} pts"
+        with st.container(height=680):
+            st.plotly_chart(
+                reg.registration_figure(
+                    f, color_mode=("by_height" if color_mode == "By height" else "by_sensor"),
+                    height_span=hspan, show_south=show_s, show_north=show_n,
+                    show_road=show_road, show_roi=show_roi, height=660, title=title,
+                    zoom=zoom, azimuth=float(az), elevation=float(el)),
+                use_container_width=True, key="reg_fig", config={"scrollZoom": True})
+
+        if playing and i < len(pairs) - 1:
+            time.sleep(float(delay))
+            st.session_state.reg_frame = i + 1
+            st.rerun(scope="fragment")
+
+    _reg_preview()
+
+    # --- batch register ---
+    st.divider()
+    st.subheader("💾 Register all frames")
+    st.text_input("Output (registered) folder", value=reg_out, key="reg_out", disabled=True)
+    batch_refine = st.session_state.reg_delta if (use_refine and st.session_state.reg_delta) else None
+    if batch_refine is not None:
+        st.caption("ICP refinement **will** be baked into the written clouds (north corrected by the "
+                   "last-run ICP delta).")
+    else:
+        st.caption("Pure calibration will be written (recommended). Run + apply ICP above to bake a "
+                   "refinement instead.")
+    if st.button("🧭 Register & write fused clouds", type="primary", use_container_width=True,
+                 key="reg_go"):
+        bar = st.progress(0.0, text="Registering…")
+        n, total = reg.register_dataset(
+            pcd_dirs["south"], pcd_dirs["north"], Ms, Mn, reg_out,
+            refine=(np.array(batch_refine) if batch_refine is not None else None),
+            progress=lambda c, t: bar.progress(c / t, text=f"Registering {c}/{t}"))
+        bar.empty()
+        st.success(f"Wrote **{n}** fused clouds → `{reg_out}`  (manifest: `registration.json`). "
+                   "Now crop or score the **Registered (south + north)** source in the other tabs.")

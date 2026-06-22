@@ -333,37 +333,38 @@ i.e. `atan2(vy,vx)` in the sensor frame). The file is **currently calibrated**
   overlays with track-history trails + video, and a 3D LiDAR BEV/Side view.
 - Smooth playback everywhere (`st.fragment` + cached loads).
 
-## Next up: Point-cloud registration (south + north → one cloud)
+## Point-cloud registration (south + north → one cloud) ✅
 
 The s110 site has **two** roadside LiDARs (ouster *south* and *north*), each cloud in
-its own sensor frame. The Dataset Prep "Crop to road" tab already exposes a
-**Registered (south + north)** source and the Geometry Editor previews south ↔ north,
-so the hooks are in place — the missing piece is fusing them into one denser cloud
-covering the full intersection.
+its own sensor frame. The Dataset Prep **🧭 Registration** tab fuses them into one
+denser cloud in the shared `s110_base` frame, covering the full intersection.
 
 **Key fact (verified):** the dataset is **already calibrated**. Every OpenLABEL label
 JSON (south *and* north) carries the sensor→`s110_base` extrinsic in
 `coordinate_systems` (south LiDAR at `(−2.37, 16.20, 8.62)`, north at
-`(−1.03, 2.56, 8.62)`, both relative to the common `s110_base`). So registration is
-**deterministic and objective** — apply each cloud's provided transform into
-`s110_base` and they align. No GPS or from-scratch estimation needed.
+`(−1.03, 2.56, 8.62)`, both relative to the common `s110_base`). The rig is static, so
+the 4×4 is **constant across frames** (verified max frame-to-frame drift = 0). So
+registration is **deterministic and objective** — apply each cloud's provided transform
+into `s110_base` and they align. No GPS or from-scratch estimation needed.
 
-**Approach — calibration-first, ICP-optional** (following the dev-kit, which bakes
-calibration into the data; extending it with verification):
-1. **New "Registration" tab** in Dataset Prep — timestamp-matched south/north frame
-   pair, both raw clouds loaded.
-2. **Primary: provided extrinsics.** Read `south→base` / `north→base` from the labels,
-   transform both into `s110_base`; overlaid preview (reuse the height-colour / box
-   tooling) to eyeball alignment.
-3. **Optional: ICP refine.** Point-to-plane ICP (Open3D, already a dep) from the
-   calibration as the initial guess; report fitness / inlier RMSE so the calibration
-   can be *verified* rather than trusted blindly. Manual 6-DoF nudge as a fallback.
-4. **Persist** the resolved transforms to `config/registration.json` (+ a `defaults/`
-   snapshot, consistent with geometry/lanes).
-5. **Apply** via `dataset_manager` helpers: transform + merge per frame →
-   `derived/registered/` (optionally voxel-downsample the union).
-6. **Propagate** the registered source through the cropped/full toggle end-to-end; the
-   3D viewers can then mark **both** sensor origins exactly.
+**Implemented — calibration-first, ICP-optional** (`registration.py` + the Registration
+tab). Following the dev-kit, which bakes calibration into the data, and extending it
+with measured verification:
+1. **Read the extrinsics** straight from the labels (`read_sensor_to_base` /
+   `calibration_for`), with a static-rig sanity check (`calibration_is_constant`).
+2. **Nearest-timestamp pairing** (`match_frame_pairs`) — the sensors fire async, so each
+   south frame pairs with its nearest north frame (mean Δt ≈ 12 ms, max ≈ 89 ms over the
+   282-frame clip).
+3. **Fuse** both clouds into `s110_base` (`fuse_pair`), tagging each point by source so
+   the preview can colour **south vs north distinctly** — the "do they line up?" QA view
+   (also a Turbo height ramp, road/ROI overlays, persistent zoom/rotate/tilt camera).
+4. **ICP read-out** (`icp_refine`, Open3D point-to-point) reports **fitness / inlier
+   RMSE** and the size of the correction (Δt, Δθ) so the bundled calibration is
+   *verified*, not trusted blindly. Off by default; can be baked in if desired.
+5. **Batch register** writes fused clouds → `data/derived/registered/` plus a
+   `registration.json` manifest (matrices + ICP result + pairing stats).
+6. **Propagates** through the existing **Registered (south + north)** source in the
+   Crop-to-road and Scorable-GT tabs end-to-end.
 
 **Why it matters.** A registered cloud roughly doubles intersection coverage (fills
 each sensor's occlusion shadows), which should improve recall on far/occluded objects
