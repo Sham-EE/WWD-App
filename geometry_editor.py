@@ -88,8 +88,10 @@ def default_rect(geom):
     return _rect_corners(cx - 3, cy - 3, cx + 3, cy + 3)
 
 
-def preview_figure(points, geom, height=640, title=""):
-    """BEV: point cloud + research (cyan dotted), road (green), exclusion (red)."""
+def preview_figure(points, geom, height=640, title="", fg_points=None):
+    """BEV: point cloud + research (cyan dotted), road (green), exclusion (red).
+    If `fg_points` is given (background-filter foreground), overlay it in red so you
+    can see what the model classifies as foreground while editing geometry."""
     import numpy as np
     import plotly.graph_objects as go
     fig = go.Figure()
@@ -98,6 +100,10 @@ def preview_figure(points, geom, height=640, title=""):
             points = points[np.random.default_rng(0).choice(len(points), 40000, replace=False)]
         fig.add_trace(go.Scattergl(x=points[:, 0], y=points[:, 1], mode="markers",
                                    marker=dict(size=2, color="#1f77b4"), hoverinfo="skip", showlegend=False))
+    if fg_points is not None and len(fg_points):
+        fig.add_trace(go.Scattergl(x=fg_points[:, 0], y=fg_points[:, 1], mode="markers",
+                                   marker=dict(size=3, color="red"), name="foreground (BG filter)",
+                                   hoverinfo="skip"))
 
     def _closed(poly):
         return (list(poly) + [poly[0]]) if poly else []

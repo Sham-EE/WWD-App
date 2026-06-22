@@ -24,6 +24,49 @@ def _load_raw(path):
     return np.asarray(o3d.io.read_point_cloud(path).points)
 
 
+# Filter-time config (matches the Background Filtering page defaults) — lets the
+# geometry editor reuse a saved background model to show foreground classification.
+_GEOM_FILTER_CFG = {
+    "ground_grid": 0.5, "dz_thresh": 0.3, "bg_voxel": 1.0, "bg_ratio": 0.98,
+    "cell_size": 1.0, "cell_ratio": 0.9,
+    "cluster": {"ds_voxel": 0.15, "eps0": 0.35, "eps_k": 0.008, "eps_min": 0.35,
+                "eps_max": 2.0, "min_samples": 16},
+    "enable_pole_filter": True, "pole_min_height": 1.5, "pole_min_aspect_xy": 6.0,
+    "pole_max_xy_area": 1.0, "pole_min_linearity": 0.75, "pole_min_points": 8,
+    "pole_max_points": 80,
+}
+
+
+@st.cache_resource(show_spinner=False)
+def _load_bg_model(path, _mtime):
+    import pickle
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+
+@st.cache_data(show_spinner="Filtering foreground…", max_entries=16)
+def _geom_foreground(cloud_path, model_path, model_mtime, geom_mtime):
+    """Run the saved background model over one cloud, return foreground Nx3.
+    Cached by model + geometry mtime, so it only recomputes when you rebuild the
+    model or Save the geometry (geom_mtime busts it via remove_fg_rects)."""
+    import bg_filter_core as bf
+    try:
+        pts = _load_raw(cloud_path)
+        model = _load_bg_model(model_path, model_mtime)
+        fg, _ = bf.filter_points_with_model(pts, model, _GEOM_FILTER_CFG)
+        return fg
+    except Exception:
+        return None
+
+
+def _resolve_bg_model(src):
+    """Saved model path matching `src`, else the other source's, else None."""
+    for p in (ds.model_path_for(src), ds.model_path_for("cropped" if src == "full" else "full")):
+        if p and os.path.exists(p):
+            return p
+    return None
+
+
 def _bbox_editor(poly, label, step=1.0):
     """Lane-Editor-style rectangle editor: X/Y min-max with +/- steppers. Returns 4 corners.
     (No widget keys -> the value re-seeds from `poly` each run, so reset-to-default works.)"""
@@ -285,12 +328,28 @@ with tab_geom:
         st.session_state.geom_edit = copy.deepcopy(default_geom)
         st.rerun()
 
-    geom_clouds = rv.list_by_frame(ds.raw_lidar_south_dir, [".pcd"]) or rv.list_by_frame(ds.pcd_dir, [".pcd"])
+    geom_clouds = rv.list_by_frame(ds.raw_lidar_south_dir, [".pcd"])
+    geom_src = "full"
+    if not geom_clouds:
+        geom_clouds = rv.list_by_frame(ds.pcd_dir, [".pcd"]); geom_src = "cropped"
     geom_bg = None
     if geom_clouds:
         gfi = st.slider("Backdrop frame", 0, len(geom_clouds) - 1, 0, key="geom_bg_frame")
         geom_bg = _load_raw(geom_clouds[gfi])
-    step = st.select_slider("Stepper increment (m)", [0.5, 1.0, 2.0, 5.0], value=1.0, key="geom_step")
+    bc1, bc2 = st.columns([1.4, 1])
+    step = bc1.select_slider("Stepper increment (m)", [0.5, 1.0, 2.0, 5.0], value=1.0, key="geom_step")
+    show_fg = bc2.toggle("🔴 Show BG-filter foreground", value=False, key="geom_show_fg",
+                         help="Overlay what the background model classifies as foreground (red), so "
+                              "you can drop an exclusion rect over poles/clutter that leak through. "
+                              "Uses the saved background model; Save geometry to see the effect.")
+    geom_fg = None
+    if show_fg and geom_clouds:
+        _mp = _resolve_bg_model(geom_src)
+        if _mp:
+            _gmt = os.path.getmtime(ds.site_geometry_path) if os.path.exists(ds.site_geometry_path) else 0.0
+            geom_fg = _geom_foreground(geom_clouds[gfi], _mp, os.path.getmtime(_mp), _gmt)
+        else:
+            st.caption("⚠️ No saved background model yet — build one on the **Background Filtering** page.")
 
     g_left, g_right = st.columns([1, 1.3], gap="medium")
     with g_left:
@@ -355,7 +414,7 @@ with tab_geom:
                 st.info("No exclusion rectangles.")
     with g_right:
         st.markdown("**👁 Live preview** — scroll to zoom, drag to pan.")
-        st.plotly_chart(ge.preview_figure(geom_bg, geom, height=640),
+        st.plotly_chart(ge.preview_figure(geom_bg, geom, height=640, fg_points=geom_fg),
                         use_container_width=True, config={"scrollZoom": True})
 
     st.session_state.geom_edit = geom
