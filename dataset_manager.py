@@ -43,7 +43,7 @@ TEMPLATES = [
         "id": "A9_r02_s02",
         "name": "TUMTraf A9 r02_s02 (s110 ouster south) — template",
         "template": True,
-        "pcd_dir": "datasets/A9_r02_s02/data/derived/cropped_south/cropped_pcd",
+        "pcd_dir": "datasets/A9_r02_s02/data/derived/cropped_south",
         "gt_dir": "datasets/A9_r02_s02/data/derived/labels_visible_south",
         "workspace": "datasets/A9_r02_s02",
     },
@@ -229,10 +229,10 @@ class Dataset:
 
     def input_pcd_for_sensor(self, sensor, source):
         if sensor == "north":
-            return (os.path.join(self.derived_dir, "cropped_north", "cropped_pcd")
+            return (os.path.join(self.derived_dir, "cropped_north")
                     if source == "cropped" else self.raw_lidar_north_dir)
         if sensor == "registered":
-            crop = os.path.join(self.derived_dir, "cropped_registered", "cropped_pcd")
+            crop = os.path.join(self.derived_dir, "cropped_registered")
             full = os.path.join(self.derived_dir, "registered")
             if source == "cropped":
                 # fall back to the full fused cloud if it hasn't been cropped yet

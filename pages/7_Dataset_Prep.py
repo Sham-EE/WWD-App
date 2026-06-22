@@ -115,9 +115,9 @@ with tab_crop:
     # Source -> (raw input dir, cropped output dir)
     sources = {
         "South LiDAR": (ds.raw_lidar_south_dir, ds.pcd_dir),
-        "North LiDAR": (ds.raw_lidar_north_dir, os.path.join(ds.derived_dir, "cropped_north", "cropped_pcd")),
+        "North LiDAR": (ds.raw_lidar_north_dir, os.path.join(ds.derived_dir, "cropped_north")),
         "Registered (south + north)": (os.path.join(ds.derived_dir, "registered"),
-                                       os.path.join(ds.derived_dir, "cropped_registered", "cropped_pcd")),
+                                       os.path.join(ds.derived_dir, "cropped_registered")),
     }
     sc1, sc2 = st.columns([1, 2])
     source = sc1.selectbox("Source LiDAR", list(sources), index=0)
