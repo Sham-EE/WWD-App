@@ -55,11 +55,15 @@ def discover_gt_index(gt_dir: str):
 
 def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
                            show_road=False, road_dashed=False, show_roi=False,
-                           show_excl=False, gt_objs=None):
+                           show_excl=False, gt_objs=None, color_by_height=False):
     fig = go.Figure()
     if original_pts.size > 0:
+        if color_by_height:
+            omk = dict(size=1.5, color=original_pts[:, 2], colorscale="Turbo", opacity=0.5, showscale=False)
+        else:
+            omk = dict(size=1.5, color="#8fa3bd", opacity=0.2)
         fig.add_trace(go.Scatter3d(x=original_pts[:, 0], y=original_pts[:, 1], z=original_pts[:, 2],
-            mode="markers", name="Original", marker=dict(size=1.5, color="#8fa3bd", opacity=0.2)))
+            mode="markers", name="Original", marker=omk))
     if foreground_pts.size > 0:
         fig.add_trace(go.Scatter3d(x=foreground_pts[:, 0], y=foreground_pts[:, 1], z=foreground_pts[:, 2],
             mode="markers", name="Foreground", marker=dict(size=2.5, color="red", opacity=0.9)))
@@ -285,7 +289,10 @@ if st.session_state.bg_model:
                              ZOOM_DEFAULTS.get(_src, 1.25), 0.05, key=f"bf_zoom_{_src}")
 
             # Geometry overlays — each region actually affects filtering:
-            geo = st.columns(3)
+            geo = st.columns(4)
+            color_h = geo[3].toggle("🌈 Color by height", value=False, key="bf_height",
+                                    help="Colour the original cloud by z (Turbo) like the dev-kit — "
+                                         "ground vs poles/vehicles separate by hue.")
             road_on = geo[0].toggle("🛣️ Road outline", value=(_src == "cropped"),
                                     key=f"bf_road_{_src}",
                                     help="Road polygon boundary. Solid on cropped (the actual crop); "
@@ -323,7 +330,8 @@ if st.session_state.bg_model:
                     create_filtered_figure(fg, pts, margin=12.0, zoom=zoom,
                                            show_road=road_on, road_dashed=(_src != "cropped"),
                                            show_roi=roi_on, show_excl=excl_on,
-                                           gt_objs=gt_objs if gt_on else None),
+                                           gt_objs=gt_objs if gt_on else None,
+                                           color_by_height=color_h),
                     use_container_width=True, key="bf_fig")
             st.caption(f"{os.path.basename(pcd_files[i])} · frame {i+1}/{n_bf} · "
                        f"{len(fg)} foreground / {len(pts)} points")
