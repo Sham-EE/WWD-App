@@ -54,7 +54,7 @@ def discover_gt_index(gt_dir: str):
     return idx
 
 def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
-                           show_road=False, gt_objs=None):
+                           show_road=False, show_roi=False, show_excl=False, gt_objs=None):
     fig = go.Figure()
     if original_pts.size > 0:
         fig.add_trace(go.Scatter3d(x=original_pts[:, 0], y=original_pts[:, 1], z=original_pts[:, 2],
@@ -74,15 +74,36 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
     except Exception:
         xr, yr = {}, {}
 
-    # Optional overlays (kept off by default so the base view is unchanged):
+    # Optional geometry overlays (off by default). Each region affects filtering:
+    #   road = edge-band removal, ROI = bounds processing, exclusion = always dropped.
     z_floor = float(original_pts[:, 2].min()) if original_pts.size else -8.0
-    if show_road and poly is not None:
-        geoms = [poly] if poly.geom_type == "Polygon" else list(poly.geoms)
+
+    def _outline(geom, color, dash, name, show_legend=True):
+        if geom is None:
+            return
+        geoms = [geom] if geom.geom_type == "Polygon" else list(geom.geoms)
         for j, g in enumerate(geoms):
             gx, gy = g.exterior.xy
             fig.add_trace(go.Scatter3d(x=list(gx), y=list(gy), z=[z_floor] * len(gx),
-                mode="lines", line=dict(color="limegreen", width=4), name="Road outline",
-                legendgroup="road", showlegend=(j == 0), hoverinfo="skip"))
+                mode="lines", line=dict(color=color, width=4, dash=dash), name=name,
+                legendgroup=name, showlegend=(show_legend and j == 0), hoverinfo="skip"))
+
+    if show_road:
+        _outline(poly, "limegreen", "solid", "Road outline")
+    if show_roi:
+        try:
+            from geometry_config import get_research_polygon
+            _outline(get_research_polygon(), "#17becf", "dot", "ROI (research region)")
+        except Exception:
+            pass
+    if show_excl:
+        try:
+            from geometry_config import get_fg_exclusion_rects
+            for k, r in enumerate(get_fg_exclusion_rects() or []):
+                _outline(r, "#ff5fec", "dash", "Exclusion zones", show_legend=(k == 0))
+        except Exception:
+            pass
+
     if gt_objs:
         import label_projection as lp
         import lidar_viewer as lv
@@ -293,20 +314,28 @@ if st.session_state.bg_model:
             zoom = st.slider("3D zoom (lower = closer)", 0.6, 2.0,
                              ZOOM_DEFAULTS.get(_src, 1.25), 0.05, key=f"bf_zoom_{_src}")
 
-            opt = st.columns([1.1, 1.1, 1.2, 1.0, 1.6])
-            road_on = opt[0].toggle("🛣️ Road outline", value=(_src == "cropped"),
+            # Geometry overlays — each region actually affects filtering:
+            geo = st.columns(3)
+            road_on = geo[0].toggle("🛣️ Road outline", value=(_src == "cropped"),
                                     disabled=(_src != "cropped"), key=f"bf_road_{_src}",
-                                    help="Draw the road-crop polygon boundary (cropped source).")
-            gt_on = opt[1].toggle("🏷️ GT boxes", value=False, disabled=not has_gt,
+                                    help="Road polygon (drives edge-band removal). Cropped source.")
+            roi_on = geo[1].toggle("🔵 ROI (research region)", value=False, key="bf_roi",
+                                   help="Bounds what the filter processes — points outside are never kept.")
+            excl_on = geo[2].toggle("🔴 Exclusion zones", value=False, key="bf_excl",
+                                    help="Foreground-exclusion rects — points inside are always dropped "
+                                         "as background.")
+            # GT overlays / metric:
+            opt = st.columns([1.1, 1.2, 1.0, 2.7])
+            gt_on = opt[0].toggle("🏷️ GT boxes", value=False, disabled=not has_gt,
                                   key="bf_gt",
                                   help="Overlay this frame's ground-truth 3D boxes."
                                        if has_gt else "No ground truth for this dataset.")
-            metric_on = opt[2].toggle("📊 FG quality", value=False, disabled=not has_gt,
+            metric_on = opt[1].toggle("📊 FG quality", value=False, disabled=not has_gt,
                                       key="bf_metric",
                                       help="Live foreground-vs-GT quality for this frame "
                                            "(a tuning proxy, not the detection F1)."
                                            if has_gt else "No ground truth for this dataset.")
-            min_pts = opt[3].number_input("≥ pts", 1, 200, 10, 1, key="bf_minpts",
+            min_pts = opt[2].number_input("≥ pts", 1, 200, 10, 1, key="bf_minpts",
                                           help="A GT object counts as 'covered' with at "
                                                "least this many surviving foreground points.")
 
@@ -322,6 +351,7 @@ if st.session_state.bg_model:
                 st.plotly_chart(
                     create_filtered_figure(fg, pts, margin=12.0, zoom=zoom,
                                            show_road=road_on and _src == "cropped",
+                                           show_roi=roi_on, show_excl=excl_on,
                                            gt_objs=gt_objs if gt_on else None),
                     use_container_width=True, key="bf_fig")
             st.caption(f"{os.path.basename(pcd_files[i])} · frame {i+1}/{n_bf} · "
