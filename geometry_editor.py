@@ -89,7 +89,7 @@ def default_rect(geom):
 
 
 def preview_figure(points, geom, height=640, title="", fg_points=None):
-    """BEV: point cloud + research (cyan dotted), road (green), exclusion (red).
+    """BEV: point cloud + research (cyan dotted), road (green), exclusion (magenta).
     If `fg_points` is given (background-filter foreground), overlay it in red so you
     can see what the model classifies as foreground while editing geometry."""
     import numpy as np
@@ -121,8 +121,9 @@ def preview_figure(points, geom, height=640, title="", fg_points=None):
     for i, r in enumerate(geom.get("foreground_exclusion_rects", [])):
         c = _closed(r)
         if c:
+            # magenta (not red) so it stays distinct from the red foreground overlay
             fig.add_trace(go.Scatter(x=[p[0] for p in c], y=[p[1] for p in c], mode="lines",
-                                     line=dict(color="red", width=2),
+                                     line=dict(color="#ff5fec", width=2),
                                      name="exclusion", legendgroup="excl", showlegend=(i == 0)))
 
     allx, ally = [], []

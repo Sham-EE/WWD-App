@@ -282,7 +282,7 @@ with tab_gt:
                                     help="Research region — objects outside it are dropped (red).")
             show_road = bt[1].toggle("🟢 Road outline", value=False, key="gt_show_road",
                                      help="Drivable area used for cropping.")
-            show_excl = bt[2].toggle("🔴 Exclusion zones", value=False, key="gt_show_excl",
+            show_excl = bt[2].toggle("🟣 Exclusion zones", value=False, key="gt_show_excl",
                                      help="Foreground-exclusion rectangles (static clutter).")
 
             kept_boxes, dropped_boxes = dp.scorable_classify(gt_labels[i], region, crit)
@@ -389,7 +389,7 @@ with tab_geom:
             else:
                 st.info("No road polygons — add one (cropping keeps everything until you do).")
 
-        with st.expander("🔴 Exclusion rectangles", expanded=False):
+        with st.expander("🟣 Exclusion rectangles", expanded=False):
             st.caption("Regions always treated as background (static clutter).")
             rects = geom.get("foreground_exclusion_rects", [])
             if st.button("🔄 Reset exclusions to default", key="ge_reset_excl",

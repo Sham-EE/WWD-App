@@ -326,7 +326,7 @@ if st.session_state.bg_model:
                                          "dashed on full (reference only — shows what's outside it).")
             roi_on = geo[1].toggle("🔵 ROI (research region)", value=False, key="bf_roi",
                                    help="Bounds what the filter processes — points outside are never kept.")
-            excl_on = geo[2].toggle("🔴 Exclusion zones", value=False, key="bf_excl",
+            excl_on = geo[2].toggle("🟣 Exclusion zones", value=False, key="bf_excl",
                                     help="Foreground-exclusion rects — points inside are always dropped "
                                          "as background.")
             # GT overlays / metric:
