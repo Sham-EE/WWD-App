@@ -225,10 +225,22 @@ def scorable_preview_figure(points, kept_boxes, dropped_boxes, region_poly,
             points = points[np.random.default_rng(0).choice(len(points), max_points, replace=False)]
         fig.add_trace(go.Scattergl(x=points[:, 0], y=points[:, 1], mode="markers",
                                    marker=dict(size=2, color="#1f77b4"), hoverinfo="skip", showlegend=False))
+    # ROI boundary (cyan dashed) so it's obvious WHY far boxes are red: they're
+    # outside the processed region. Edit its shape in the Geometry Editor.
+    try:
+        geoms = [region_poly] if region_poly.geom_type == "Polygon" else list(region_poly.geoms)
+        for j, g in enumerate(geoms):
+            rx, ry = g.exterior.xy
+            fig.add_trace(go.Scatter(x=list(rx), y=list(ry), mode="lines",
+                                     line=dict(color="#17becf", width=2, dash="dot"),
+                                     name="ROI (research region)", legendgroup="roi",
+                                     showlegend=(j == 0), hoverinfo="skip"))
+    except Exception:
+        pass
     dx, dy = _boxes_xy(dropped_boxes)
     if dx:
         fig.add_trace(go.Scatter(x=dx, y=dy, mode="lines", line=dict(color="red", width=2),
-                                 name="dropped", hoverinfo="skip"))
+                                 name="dropped (out of ROI / too few pts)", hoverinfo="skip"))
     kx, ky = _boxes_xy(kept_boxes)
     if kx:
         fig.add_trace(go.Scatter(x=kx, y=ky, mode="lines", line=dict(color="limegreen", width=2),

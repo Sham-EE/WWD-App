@@ -139,7 +139,7 @@ with right:
     top_down = head[1].toggle("⬇️ Top-down", value=True,
                               help="On = bird's-eye. Off = oblique 3D.")
 
-    show_bg = st.checkbox("🛰️ Point cloud background", value=False)
+    show_bg = st.checkbox("🛰️ Point cloud background", value=True)
     bg_xyz = None
     if show_bg and os.path.isdir(DEFAULT_PCD_BG):
         try:
