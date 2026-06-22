@@ -57,6 +57,32 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
                            show_road=False, road_dashed=False, show_roi=False,
                            show_excl=False, gt_objs=None, color_by_height=False, height_span=4.0):
     fig = go.Figure()
+    # Resolve the road window first so we can lock the view AND clip the plotted points
+    # to it. Clipping is the key: aspectmode="data" sizes the 3D box from the POINT
+    # extent, so the full cloud's ~200 m span would crush z (flatten the view). Points
+    # outside the locked window are off-screen anyway, so clipping is visually lossless
+    # and keeps the SAME camera/zoom feel as the cropped view (back to aspectmode="data").
+    poly = None
+    zmin, zmax = -12.0, 1.0
+    xlo = xhi = ylo = yhi = None
+    try:
+        from geometry_config import get_road_polygon
+        poly = get_road_polygon()
+        minx, miny, maxx, maxy = poly.bounds
+        m = float(margin)
+        xlo, xhi, ylo, yhi = minx - m, maxx + m, miny - m, maxy + m
+        xr = dict(range=[xlo, xhi]); yr = dict(range=[ylo, yhi])
+    except Exception:
+        xr, yr = {}, {}
+
+    def _clip(p):
+        if p is None or not len(p) or xlo is None:
+            return p
+        mask = (p[:, 0] >= xlo) & (p[:, 0] <= xhi) & (p[:, 1] >= ylo) & (p[:, 1] <= yhi)
+        return p[mask]
+    original_pts = _clip(original_pts)
+    foreground_pts = _clip(foreground_pts)
+
     if original_pts.size > 0:
         if color_by_height:
             z = original_pts[:, 2]; z0 = float(np.percentile(z, 1))
@@ -69,25 +95,6 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
     if foreground_pts.size > 0:
         fig.add_trace(go.Scatter3d(x=foreground_pts[:, 0], y=foreground_pts[:, 1], z=foreground_pts[:, 2],
             mode="markers", name="Foreground", marker=dict(size=2.5, color="red", opacity=0.9)))
-    # 3D zoom is the CAMERA distance (eye). No uirevision so the camera below applies
-    # on every render; smaller eye = more zoomed in. The slider persists across frames.
-    poly = None
-    zmin, zmax = -12.0, 1.0
-    aspect = None
-    try:
-        from geometry_config import get_road_polygon
-        poly = get_road_polygon()
-        minx, miny, maxx, maxy = poly.bounds
-        m = float(margin)
-        xr = dict(range=[minx - m, maxx + m]); yr = dict(range=[miny - m, maxy + m])
-        # Fix the box proportions to the ROAD region (not the data) so the full cloud's
-        # ~200 m extent no longer crushes z. aspectmode="data" flattened the full view;
-        # manual + this ratio makes Full look like Cropped.
-        dxw, dyw, dzw = (maxx - minx) + 2 * m, (maxy - miny) + 2 * m, (zmax - zmin)
-        md = max(dxw, dyw, dzw)
-        aspect = dict(x=dxw / md, y=dyw / md, z=dzw / md)
-    except Exception:
-        xr, yr = {}, {}
 
     # Optional geometry overlays (off by default). Each region affects filtering:
     #   road = edge-band removal, ROI = bounds processing, exclusion = always dropped.
@@ -139,13 +146,10 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
             textfont=dict(size=11, color=lcol), hoverinfo="skip", showlegend=False))
 
     eye = float(zoom)
-    scene = dict(xaxis=xr, yaxis=yr, zaxis=dict(range=[zmin, zmax]),
-                 camera=dict(eye=dict(x=eye, y=eye, z=eye)))
-    if aspect:
-        scene["aspectmode"] = "manual"; scene["aspectratio"] = aspect
-    else:
-        scene["aspectmode"] = "data"
-    fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), showlegend=True, scene=scene)
+    fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), showlegend=True,
+                      scene=dict(aspectmode="data", xaxis=xr, yaxis=yr,
+                                 zaxis=dict(range=[zmin, zmax]),
+                                 camera=dict(eye=dict(x=eye, y=eye, z=eye))))
     return fig
 
 
