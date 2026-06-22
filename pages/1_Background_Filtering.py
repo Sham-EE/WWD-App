@@ -56,7 +56,7 @@ def discover_gt_index(gt_dir: str):
 def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
                            show_road=False, road_dashed=False, show_roi=False,
                            show_excl=False, gt_objs=None, color_by_height=False, height_span=4.0,
-                           show_foreground=True, show_original=True):
+                           show_foreground=True, show_original=True, height=560):
     fig = go.Figure()
     # Resolve the road window first so we can lock the view AND clip the plotted points
     # to it. Clipping is the key: aspectmode="data" sizes the 3D box from the POINT
@@ -150,7 +150,7 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
     # uirevision keyed to zoom: your manual pan/rotate/zoom persists across frame steps
     # AND toggles (uirevision unchanged), but moving the zoom slider changes the key so
     # the new camera actually applies. Double-click resets.
-    fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), showlegend=True,
+    fig.update_layout(height=height, margin=dict(l=0, r=0, b=0, t=0), showlegend=True,
                       uirevision=f"bf_{zoom}",
                       scene=dict(aspectmode="data", xaxis=xr, yaxis=yr,
                                  zaxis=dict(range=[zmin, zmax]),
@@ -360,15 +360,18 @@ if st.session_state.bg_model:
                 gp = gt_index.get(_frame_key(pcd_files[i]))
                 if gp:
                     gt_objs = lp.load_objects(gp)
-            with st.container(height=560):
-                st.plotly_chart(
-                    create_filtered_figure(fg, pts, margin=12.0, zoom=zoom,
-                                           show_road=road_on, road_dashed=(_src != "cropped"),
-                                           show_roi=roi_on, show_excl=excl_on,
-                                           gt_objs=gt_objs if gt_on else None,
-                                           color_by_height=color_h, height_span=h_span,
-                                           show_foreground=show_fg_pts, show_original=show_orig),
-                    use_container_width=True, key="bf_fig")
+            # NOTE: render the chart directly (no fixed-height st.container) — wrapping
+            # it in a container remounts the plot each rerun and wipes the camera, which
+            # defeats uirevision. Height is set on the figure instead.
+            st.plotly_chart(
+                create_filtered_figure(fg, pts, margin=12.0, zoom=zoom,
+                                       show_road=road_on, road_dashed=(_src != "cropped"),
+                                       show_roi=roi_on, show_excl=excl_on,
+                                       gt_objs=gt_objs if gt_on else None,
+                                       color_by_height=color_h, height_span=h_span,
+                                       show_foreground=show_fg_pts, show_original=show_orig,
+                                       height=560),
+                use_container_width=True, key="bf_fig")
             st.caption(f"{os.path.basename(pcd_files[i])} · frame {i+1}/{n_bf} · "
                        f"{len(fg)} foreground / {len(pts)} points")
 
