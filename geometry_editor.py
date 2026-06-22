@@ -88,10 +88,11 @@ def default_rect(geom):
     return _rect_corners(cx - 3, cy - 3, cx + 3, cy + 3)
 
 
-def preview_figure(points, geom, height=640, title="", fg_points=None):
+def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=None):
     """BEV: point cloud + research (cyan dotted), road (green), exclusion (magenta).
-    If `fg_points` is given (background-filter foreground), overlay it in red so you
-    can see what the model classifies as foreground while editing geometry."""
+    If `fg_points` is given (background-filter foreground), overlay it in red. If
+    `gt_objs` is given, overlay GT box footprints + TYPE_id labels, category-coloured
+    like the Visualizer."""
     import numpy as np
     import plotly.graph_objects as go
     fig = go.Figure()
@@ -104,6 +105,21 @@ def preview_figure(points, geom, height=640, title="", fg_points=None):
         fig.add_trace(go.Scattergl(x=fg_points[:, 0], y=fg_points[:, 1], mode="markers",
                                    marker=dict(size=3, color="red"), name="foreground (BG filter)",
                                    hoverinfo="skip"))
+    if gt_objs:
+        import label_projection as lp
+        import lidar_viewer as lv
+        import dataset_prep as dp
+        for k, o in enumerate(gt_objs):
+            fp = dp._box_footprint(o["val"])  # closed (x, y) rectangle
+            col = lv._hex(lp._color_for(o, "by_category"))
+            fig.add_trace(go.Scatter(x=fp[:, 0], y=fp[:, 1], mode="lines",
+                                     line=dict(color=col, width=2), name="GT boxes",
+                                     legendgroup="gt", showlegend=(k == 0), hoverinfo="skip"))
+        lx = [float(o["val"][0]) for o in gt_objs]; ly = [float(o["val"][1]) for o in gt_objs]
+        lt = [lp._label_text(o) for o in gt_objs]
+        lc = [lv._hex(lp._color_for(o, "by_category")) for o in gt_objs]
+        fig.add_trace(go.Scatter(x=lx, y=ly, mode="text", text=lt,
+                                 textfont=dict(size=10, color=lc), hoverinfo="skip", showlegend=False))
 
     def _closed(poly):
         return (list(poly) + [poly[0]]) if poly else []

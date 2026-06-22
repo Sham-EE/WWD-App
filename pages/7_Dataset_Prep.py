@@ -67,6 +67,13 @@ def _resolve_bg_model(src):
     return None
 
 
+@st.cache_data(show_spinner=False)
+def _gt_map(label_dir):
+    """{frame key -> label .json} for matching GT to a backdrop cloud frame."""
+    files = rv.list_by_frame(label_dir, [".json"])
+    return {"_".join(os.path.basename(f).split("_")[:2]): f for f in files}
+
+
 def _bbox_editor(poly, label, step=1.0):
     """Lane-Editor-style rectangle editor: X/Y min-max with +/- steppers. Returns 4 corners.
     (No widget keys -> the value re-seeds from `poly` each run, so reset-to-default works.)"""
@@ -336,12 +343,16 @@ with tab_geom:
     if geom_clouds:
         gfi = st.slider("Backdrop frame", 0, len(geom_clouds) - 1, 0, key="geom_bg_frame")
         geom_bg = _load_raw(geom_clouds[gfi])
-    bc1, bc2 = st.columns([1.4, 1])
+    gt_map = _gt_map(ds.raw_labels_south_dir) or _gt_map(ds.gt_dir)
+    bc1, bc2, bc3 = st.columns([1.3, 1, 1])
     step = bc1.select_slider("Stepper increment (m)", [0.5, 1.0, 2.0, 5.0], value=1.0, key="geom_step")
     show_fg = bc2.toggle("🔴 Show BG-filter foreground", value=False, key="geom_show_fg",
                          help="Overlay what the background model classifies as foreground (red), so "
                               "you can drop an exclusion rect over poles/clutter that leak through. "
                               "Uses the saved background model; Save geometry to see the effect.")
+    show_gt = bc3.toggle("🏷️ GT boxes", value=False, key="geom_show_gt", disabled=not gt_map,
+                         help="Overlay this frame's ground-truth boxes (category-coloured + labels)."
+                              if gt_map else "No ground truth for this dataset.")
     geom_fg = None
     if show_fg and geom_clouds:
         _mp = _resolve_bg_model(geom_src)
@@ -350,6 +361,12 @@ with tab_geom:
             geom_fg = _geom_foreground(geom_clouds[gfi], _mp, os.path.getmtime(_mp), _gmt)
         else:
             st.caption("⚠️ No saved background model yet — build one on the **Background Filtering** page.")
+    geom_gt = None
+    if show_gt and gt_map and geom_clouds:
+        import label_projection as lp
+        _gp = gt_map.get("_".join(os.path.basename(geom_clouds[gfi]).split("_")[:2]))
+        if _gp:
+            geom_gt = lp.load_objects(_gp)
 
     g_left, g_right = st.columns([1, 1.3], gap="medium")
     with g_left:
@@ -414,7 +431,7 @@ with tab_geom:
                 st.info("No exclusion rectangles.")
     with g_right:
         st.markdown("**👁 Live preview** — scroll to zoom, drag to pan.")
-        st.plotly_chart(ge.preview_figure(geom_bg, geom, height=640, fg_points=geom_fg),
+        st.plotly_chart(ge.preview_figure(geom_bg, geom, height=640, fg_points=geom_fg, gt_objs=geom_gt),
                         use_container_width=True, config={"scrollZoom": True})
 
     st.session_state.geom_edit = geom
