@@ -88,12 +88,37 @@ def default_rect(geom):
     return _rect_corners(cx - 3, cy - 3, cx + 3, cy + 3)
 
 
+def apply_geometry_crop(fg, geom):
+    """Split foreground Nx3 into (kept, excluded) by the CURRENT in-editor geometry:
+    a point is excluded if it falls inside any exclusion rect OR outside every road
+    polygon (the crop). Lets the editor show — live, before saving — what the geometry
+    would remove (grey) vs keep (red)."""
+    import numpy as np
+    from matplotlib.path import Path
+    if fg is None or not len(fg):
+        empty = fg if fg is not None else None
+        return empty, empty
+    xy = fg[:, :2]
+    excluded = np.zeros(len(xy), dtype=bool)
+    roads = geom.get("road_polygons", [])
+    if roads:
+        in_road = np.zeros(len(xy), dtype=bool)
+        for poly in roads:
+            if len(poly) >= 3:
+                in_road |= Path(np.asarray(poly, dtype=float)).contains_points(xy)
+        excluded |= ~in_road
+    for r in geom.get("foreground_exclusion_rects", []):
+        if len(r) >= 3:
+            excluded |= Path(np.asarray(r, dtype=float)).contains_points(xy)
+    return fg[~excluded], fg[excluded]
+
+
 def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=None,
-                   dragmode="pan", show_vertex_labels=False):
+                   dragmode="pan", show_vertex_labels=False, fg_excluded_points=None):
     """BEV: point cloud + research (cyan dotted), road (green), exclusion (magenta).
-    If `fg_points` is given (background-filter foreground), overlay it in red. If
-    `gt_objs` is given, overlay GT box footprints + TYPE_id labels, category-coloured
-    like the Visualizer."""
+    `fg_points` (kept foreground) is drawn red; `fg_excluded_points` (foreground that
+    the current geometry crops out) is drawn grey. If `gt_objs` is given, overlay GT
+    box footprints + TYPE_id labels, category-coloured like the Visualizer."""
     import numpy as np
     import plotly.graph_objects as go
     fig = go.Figure()
@@ -102,9 +127,13 @@ def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=N
             points = points[np.random.default_rng(0).choice(len(points), 40000, replace=False)]
         fig.add_trace(go.Scattergl(x=points[:, 0], y=points[:, 1], mode="markers",
                                    marker=dict(size=2, color="#1f77b4"), hoverinfo="skip", showlegend=False))
+    if fg_excluded_points is not None and len(fg_excluded_points):
+        fig.add_trace(go.Scattergl(x=fg_excluded_points[:, 0], y=fg_excluded_points[:, 1], mode="markers",
+                                   marker=dict(size=3, color="#888888"),
+                                   name="cropped-out foreground", hoverinfo="skip"))
     if fg_points is not None and len(fg_points):
         fig.add_trace(go.Scattergl(x=fg_points[:, 0], y=fg_points[:, 1], mode="markers",
-                                   marker=dict(size=3, color="red"), name="foreground (BG filter)",
+                                   marker=dict(size=3, color="red"), name="foreground (kept)",
                                    hoverinfo="skip"))
     if gt_objs:
         import label_projection as lp

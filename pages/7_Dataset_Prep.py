@@ -373,12 +373,19 @@ with tab_geom:
         if _gp:
             geom_gt = lp.load_objects(_gp)
 
-    if show_metric and geom_fg is not None and geom_gt is not None:
+    # Split the model foreground by the CURRENT (unsaved) geometry: kept (red) vs
+    # cropped-out (grey). Metrics use only the kept set, so editing updates them live.
+    geom_fg_kept, geom_fg_excl = (None, None)
+    if geom_fg is not None:
+        geom_fg_kept, geom_fg_excl = ge.apply_geometry_crop(geom_fg, geom)
+
+    if show_metric and geom_fg_kept is not None and geom_gt is not None:
         mpts = st.number_input("Covered if ≥ pts", 1, 200, 10, 1, key="geom_minpts",
                                help="A GT object counts as 'covered' with at least this many "
                                     "surviving foreground points.")
-        q = dp.foreground_quality(geom_fg, geom_bg, geom_gt, min_pts=int(mpts))
-        mm = st.columns(3)
+        q = dp.foreground_quality(geom_fg_kept, geom_bg, geom_gt, min_pts=int(mpts))
+        n_excl = int(len(geom_fg_excl)) if geom_fg_excl is not None else 0
+        mm = st.columns(4)
         mm[0].metric(f"Objects covered (≥{q['min_pts']} pts)", f"{q['covered']} / {q['scanned']}",
                      help="GT objects with enough surviving foreground points, out of objects "
                           "the LiDAR actually hit this frame.")
@@ -386,11 +393,15 @@ with tab_geom:
                      f"{q['recall']*100:.0f}%" if q['recall'] is not None else "—",
                      help="Foreground points inside GT boxes ÷ original points inside GT boxes.")
         mm[2].metric("Off-object foreground", f"{q['off_object']:,}",
-                     help="Foreground points outside every GT box (clutter / false-foreground proxy).")
+                     help="Kept foreground outside every GT box (clutter / false-foreground proxy).")
+        mm[3].metric("Cropped out (grey)", f"{n_excl:,}",
+                     help="Foreground removed by the CURRENT geometry (exclusion rects / outside "
+                          "road) — live, before you Save.")
+        st.caption("Live: reflects unsaved edits. Grey dots = removed by current geometry.")
 
     g_left, g_right = st.columns([1, 1.3], gap="medium")
     with g_left:
-        with st.expander("🔵 Research polygon (ROI)", expanded=True):
+        with st.expander("🔵 Research polygon (ROI)", expanded=False):
             st.caption("Overall analysed region (a rectangle); the default scorable-GT region.")
             geom["research_polygon"] = _bbox_editor(geom.get("research_polygon", []), "ROI", step)
             rr1, rr2, rr3 = st.columns(3)
@@ -408,7 +419,7 @@ with tab_geom:
                 _x0, _x1, _y0, _y1 = min(_ax) - _m, max(_ax) + _m, min(_ay) - _m, max(_ay) + _m
                 geom["research_polygon"] = [[_x0, _y0], [_x1, _y0], [_x1, _y1], [_x0, _y1]]; st.rerun()
 
-        with st.expander("🟢 Road polygons (cropping)", expanded=True):
+        with st.expander("🟢 Road polygons (cropping)", expanded=False):
             st.caption("Drivable area (any shape). Crop-to-road keeps only points inside these.")
             roads = geom.get("road_polygons", [])
             if st.button("🔄 Reset road polygons to default", key="ge_reset_road",
@@ -478,7 +489,8 @@ with tab_geom:
                                      "which polygon and vertex you're editing.")
         dm_mode = "select" if mode.startswith("⬛") else "pan"
         ev = st.plotly_chart(ge.preview_figure(geom_bg, geom, height=620,
-                                               fg_points=geom_fg if show_fg else None,
+                                               fg_points=geom_fg_kept if show_fg else None,
+                                               fg_excluded_points=geom_fg_excl if show_fg else None,
                                                gt_objs=geom_gt if show_gt else None,
                                                dragmode=dm_mode, show_vertex_labels=show_verts),
                              use_container_width=True, config={"scrollZoom": True},
@@ -497,11 +509,15 @@ with tab_geom:
             x0, y0, x1, y1 = drawn
             rect = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
             st.caption(f"⬛ Drawn box: x[{x0:.1f}, {x1:.1f}]  y[{y0:.1f}, {y1:.1f}]")
-            db1, db2 = st.columns(2)
-            if db1.button("🟣 Add as exclusion zone", use_container_width=True, key="geom_box_excl"):
+            db1, db2, db3 = st.columns(3)
+            if db1.button("🟢 Add as road", use_container_width=True, key="geom_box_road",
+                          help="Add a rough road polygon, then refine its vertices in the Road panel."):
+                geom.setdefault("road_polygons", []).append(rect)
+                st.session_state.geom_edit = geom; st.rerun()
+            if db2.button("🟣 Add exclusion", use_container_width=True, key="geom_box_excl"):
                 geom.setdefault("foreground_exclusion_rects", []).append(rect)
                 st.session_state.geom_edit = geom; st.rerun()
-            if db2.button("🔵 Set as ROI", use_container_width=True, key="geom_box_roi"):
+            if db3.button("🔵 Set as ROI", use_container_width=True, key="geom_box_roi"):
                 geom["research_polygon"] = rect
                 st.session_state.geom_edit = geom; st.rerun()
         elif dm_mode == "select":
