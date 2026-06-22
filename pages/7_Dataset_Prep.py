@@ -233,13 +233,23 @@ with tab_gt:
             i = st.slider("GT frame", 0, max(n_gt - 1, 1), st.session_state.gt_frame)
             st.session_state.gt_frame = i
 
+            # Toggle each Geometry-Editor boundary onto the preview.
+            bt = st.columns(3)
+            show_roi = bt[0].toggle("🔵 ROI", value=True, key="gt_show_roi",
+                                    help="Research region — objects outside it are dropped (red).")
+            show_road = bt[1].toggle("🟢 Road outline", value=False, key="gt_show_road",
+                                     help="Drivable area used for cropping.")
+            show_excl = bt[2].toggle("🔴 Exclusion zones", value=False, key="gt_show_excl",
+                                     help="Foreground-exclusion rectangles (static clutter).")
+
             kept_boxes, dropped_boxes = dp.scorable_classify(gt_labels[i], region, crit)
             pts = _load_raw(gt_clouds[i]) if (gt_clouds and i < len(gt_clouds)) else None
             tot = len(kept_boxes) + len(dropped_boxes)
             with st.container(height=640):
                 st.plotly_chart(dp.scorable_preview_figure(
                     pts, kept_boxes, dropped_boxes, region,
-                    title=f"frame {i+1}/{n_gt} · kept {len(kept_boxes)}/{tot}"),
+                    title=f"frame {i+1}/{n_gt} · kept {len(kept_boxes)}/{tot}",
+                    show_roi=show_roi, show_road=show_road, show_exclusion=show_excl),
                     use_container_width=True, key="gt_fig", config={"scrollZoom": True})
 
             if playing and i < n_gt - 1:

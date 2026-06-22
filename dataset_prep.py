@@ -15,7 +15,8 @@ import numpy as np
 import open3d as o3d
 
 from bg_filter_core import sorted_by_frame_index
-from geometry_config import get_road_polygon, get_research_polygon, points_in_polygon
+from geometry_config import (get_road_polygon, get_research_polygon,
+                             get_fg_exclusion_rects, points_in_polygon)
 
 
 def crop_points_to_region(points, polygon):
@@ -215,9 +216,12 @@ def _boxes_xy(boxes):
 
 
 def scorable_preview_figure(points, kept_boxes, dropped_boxes, region_poly,
-                            height=620, title="", max_points=40000):
+                            height=620, title="", max_points=40000,
+                            show_roi=True, show_road=False, show_exclusion=False):
     """BEV like the bundled vis: point cloud (blue) + kept GT boxes (green) and
-    dropped GT boxes (red), locked to the ROI region."""
+    dropped GT boxes (red), locked to the ROI region. Optionally overlay the
+    Geometry-Editor boundaries: ROI (cyan dotted), road (orange dashed), and
+    foreground-exclusion rects (magenta dashed)."""
     import plotly.graph_objects as go
     fig = go.Figure()
     if points is not None and len(points):
@@ -225,18 +229,30 @@ def scorable_preview_figure(points, kept_boxes, dropped_boxes, region_poly,
             points = points[np.random.default_rng(0).choice(len(points), max_points, replace=False)]
         fig.add_trace(go.Scattergl(x=points[:, 0], y=points[:, 1], mode="markers",
                                    marker=dict(size=2, color="#1f77b4"), hoverinfo="skip", showlegend=False))
-    # ROI boundary (cyan dashed) so it's obvious WHY far boxes are red: they're
-    # outside the processed region. Edit its shape in the Geometry Editor.
-    try:
-        geoms = [region_poly] if region_poly.geom_type == "Polygon" else list(region_poly.geoms)
+
+    # Geometry-Editor boundaries (each toggleable). ROI shows WHY far boxes are red.
+    def _draw_poly(poly, color, dash, name, show_legend):
+        geoms = [poly] if poly.geom_type == "Polygon" else list(poly.geoms)
         for j, g in enumerate(geoms):
-            rx, ry = g.exterior.xy
-            fig.add_trace(go.Scatter(x=list(rx), y=list(ry), mode="lines",
-                                     line=dict(color="#17becf", width=2, dash="dot"),
-                                     name="ROI (research region)", legendgroup="roi",
-                                     showlegend=(j == 0), hoverinfo="skip"))
-    except Exception:
-        pass
+            gx, gy = g.exterior.xy
+            fig.add_trace(go.Scatter(x=list(gx), y=list(gy), mode="lines",
+                                     line=dict(color=color, width=2, dash=dash),
+                                     name=name, legendgroup=name,
+                                     showlegend=(show_legend and j == 0), hoverinfo="skip"))
+    if show_roi:
+        _draw_poly(region_poly, "#17becf", "dot", "ROI (research region)", True)
+    if show_road:
+        try:
+            _draw_poly(get_road_polygon(), "#ffa500", "dash", "road outline", True)
+        except Exception:
+            pass
+    if show_exclusion:
+        try:
+            for k, r in enumerate(get_fg_exclusion_rects() or []):
+                _draw_poly(r, "#ff5fec", "dash", "exclusion zone", k == 0)
+        except Exception:
+            pass
+
     dx, dy = _boxes_xy(dropped_boxes)
     if dx:
         fig.add_trace(go.Scatter(x=dx, y=dy, mode="lines", line=dict(color="red", width=2),
