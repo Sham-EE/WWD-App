@@ -82,6 +82,25 @@ class Dataset:
     def gt_dir(self):
         return self.d.get("gt_dir", os.path.join(self.workspace, "data", "labels"))
 
+    def _north_gt_dir(self):
+        """North GT: prefer the generated scorable set, else the raw north labels."""
+        scorable = os.path.join(self.derived_dir, "labels_visible_north")
+        try:
+            if os.path.isdir(scorable) and any(f.endswith(".json") for f in os.listdir(scorable)):
+                return scorable
+        except OSError:
+            pass
+        return self.raw_labels_north_dir
+
+    def gt_dir_for_input(self, input_pcd_dir):
+        """Pick the GT folder whose sensor matches the input clouds, so the GT
+        overlay + FG-quality metric line up no matter which sensor is filtered.
+        North inputs -> north GT; everything else -> the configured `gt_dir`
+        (south). Lets south/north A/B work without hand-editing `gt_dir`."""
+        if "north" in (input_pcd_dir or "").lower():
+            return self._north_gt_dir()
+        return self.gt_dir
+
     @property
     def images_dir(self):
         return self.d.get("images_dir", os.path.join(self.data_dir, "raw", "images"))
