@@ -262,8 +262,73 @@ def register_dataset(south_pcd_dir, north_pcd_dir, M_south, M_north, out_dir,
 
 
 # --------------------------------------------------------------------------- #
-# Preview figure (south vs north overlay / height colour + geometry overlays)
+# Preview figures (south vs north overlay / height colour + geometry overlays)
 # --------------------------------------------------------------------------- #
+def _road_window(margin=12.0):
+    """(xlo, ylo, xhi, yhi) road bounding box (+margin) used to frame the view —
+    same trick as the background-filtering inspector: clipping to the road window
+    keeps the camera zoom calibrated regardless of stray distant returns."""
+    try:
+        from geometry_config import get_road_polygon
+        b = get_road_polygon().bounds
+        return b[0] - margin, b[1] - margin, b[2] + margin, b[3] + margin
+    except Exception:
+        return -60.0, -60.0, 60.0, 60.0
+
+
+def _clip_to_window(p, win):
+    if len(p) == 0:
+        return p
+    xlo, ylo, xhi, yhi = win
+    m = (p[:, 0] >= xlo) & (p[:, 0] <= xhi) & (p[:, 1] >= ylo) & (p[:, 1] <= yhi)
+    return p[m]
+
+
+def _geometry_overlay_traces(go, show_road, show_roi, z_floor=0.0):
+    traces = []
+    try:
+        if show_road:
+            from geometry_config import get_road_polygon
+            xs, ys = get_road_polygon().exterior.xy
+            traces.append(go.Scatter3d(x=list(xs), y=list(ys), z=[z_floor] * len(xs),
+                                       mode="lines", name="Road",
+                                       line=dict(color="#39ff14", width=4), showlegend=True))
+        if show_roi:
+            from geometry_config import get_research_polygon
+            xs, ys = get_research_polygon().exterior.xy
+            traces.append(go.Scatter3d(x=list(xs), y=list(ys), z=[z_floor] * len(xs),
+                                       mode="lines", name="ROI",
+                                       line=dict(color="#00e5ff", width=3, dash="dot"), showlegend=True))
+    except Exception:
+        pass
+    return traces
+
+
+def _apply_scene(go, traces, height, title, zoom, azimuth, elevation, rev):
+    el = np.radians(elevation)
+    az = np.radians(azimuth)
+    r = float(zoom) * np.sqrt(3.0)
+    eye = dict(x=float(r * np.cos(el) * np.cos(az)),
+               y=float(r * np.cos(el) * np.sin(az)),
+               z=float(r * np.sin(el)))
+    fig = go.Figure(data=traces)
+    fig.update_layout(
+        height=height, title=title, showlegend=True,
+        legend=dict(x=0.01, y=0.99, bgcolor="rgba(14,17,23,0.6)"),
+        margin=dict(l=0, r=0, t=30 if title else 0, b=0),
+        paper_bgcolor="#0e1117", font=dict(color="#c9d1d9"),
+        uirevision=rev,
+        scene=dict(
+            aspectmode="data",
+            xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False),
+            bgcolor="#0e1117",
+            camera=dict(eye=eye, up=dict(x=0, y=0, z=1), center=dict(x=0, y=0, z=0)),
+            uirevision=rev,
+        ),
+    )
+    return fig
+
+
 def registration_figure(fused, color_mode="by_sensor", height_span=4.0,
                         show_south=True, show_north=True, show_road=False,
                         show_roi=False, height=640, title="",
@@ -277,24 +342,10 @@ def registration_figure(fused, color_mode="by_sensor", height_span=4.0,
     s_base = fused["south"]
     n_base = fused["north"]
     traces = []
-
-    # clip to the road window so the view frames the site (and the camera zoom
-    # stays calibrated regardless of stray distant returns) — same trick as the
-    # background-filtering inspector.
-    xlo = ylo = -60.0
-    xhi = yhi = 60.0
-    try:
-        from geometry_config import get_road_polygon
-        b = get_road_polygon().bounds
-        xlo, ylo, xhi, yhi = b[0] - margin, b[1] - margin, b[2] + margin, b[3] + margin
-    except Exception:
-        pass
+    win = _road_window(margin)
 
     def _clip(p):
-        if len(p) == 0:
-            return p
-        m = (p[:, 0] >= xlo) & (p[:, 0] <= xhi) & (p[:, 1] >= ylo) & (p[:, 1] <= yhi)
-        return p[m]
+        return _clip_to_window(p, win)
 
     if color_mode == "by_height":
         allp = np.vstack([p for p, show in ((s_base, show_south), (n_base, show_north)) if show and len(p)]) \
@@ -322,44 +373,36 @@ def registration_figure(fused, color_mode="by_sensor", height_span=4.0,
                 x=p[:, 0], y=p[:, 1], z=p[:, 2], mode="markers", name=name,
                 marker=dict(size=1.5, color=col, opacity=0.55)))
 
-    # geometry overlays (drawn flat at the floor)
-    z_floor = 0.0
-    try:
-        if show_road:
-            from geometry_config import get_road_polygon
-            xs, ys = get_road_polygon().exterior.xy
-            traces.append(go.Scatter3d(x=list(xs), y=list(ys), z=[z_floor] * len(xs),
-                                       mode="lines", name="Road",
-                                       line=dict(color="#39ff14", width=4), showlegend=True))
-        if show_roi:
-            from geometry_config import get_research_polygon
-            xs, ys = get_research_polygon().exterior.xy
-            traces.append(go.Scatter3d(x=list(xs), y=list(ys), z=[z_floor] * len(xs),
-                                       mode="lines", name="ROI",
-                                       line=dict(color="#00e5ff", width=3, dash="dot"), showlegend=True))
-    except Exception:
-        pass
-
-    el = np.radians(elevation)
-    az = np.radians(azimuth)
-    r = float(zoom) * np.sqrt(3.0)
-    eye = dict(x=float(r * np.cos(el) * np.cos(az)),
-               y=float(r * np.cos(el) * np.sin(az)),
-               z=float(r * np.sin(el)))
+    traces += _geometry_overlay_traces(go, show_road, show_roi)
     rev = f"reg_{zoom}_{azimuth}_{elevation}"
-    fig = go.Figure(data=traces)
-    fig.update_layout(
-        height=height, title=title, showlegend=True,
-        legend=dict(x=0.01, y=0.99, bgcolor="rgba(14,17,23,0.6)"),
-        margin=dict(l=0, r=0, t=30 if title else 0, b=0),
-        paper_bgcolor="#0e1117", font=dict(color="#c9d1d9"),
-        uirevision=rev,
-        scene=dict(
-            aspectmode="data",
-            xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False),
-            bgcolor="#0e1117",
-            camera=dict(eye=eye, up=dict(x=0, y=0, z=1), center=dict(x=0, y=0, z=0)),
-            uirevision=rev,
-        ),
-    )
-    return fig
+    return _apply_scene(go, traces, height, title, zoom, azimuth, elevation, rev)
+
+
+def registered_figure(pts, color_mode="by_height", height_span=4.0,
+                      show_road=False, show_roi=False, height=640, title="",
+                      zoom=0.9, azimuth=45.0, elevation=35.0, margin=12.0,
+                      point_color="#a78bfa"):
+    """Plotly 3D figure of a *single fused* cloud (e.g. a written
+    ``derived/registered/*.pcd``) — the visual proof that registration produced
+    one merged cloud in ``s110_base``. Shares the camera + overlays + road-clip
+    with :func:`registration_figure` so the two views line up frame-for-frame.
+
+    ``color_mode``: ``"by_height"`` (Turbo z-ramp) or ``"single"`` (one colour)."""
+    import plotly.graph_objects as go
+
+    pts = np.asarray(pts, dtype=float)
+    win = _road_window(margin)
+    p = _clip_to_window(pts, win)
+    traces = []
+    if len(p):
+        if color_mode == "by_height":
+            z0 = float(np.percentile(p[:, 2], 1))
+            marker = dict(size=1.5, color=p[:, 2], colorscale="Turbo",
+                          cmin=z0, cmax=z0 + float(height_span), opacity=0.6, showscale=False)
+        else:
+            marker = dict(size=1.5, color=point_color, opacity=0.55)
+        traces.append(go.Scatter3d(x=p[:, 0], y=p[:, 1], z=p[:, 2], mode="markers",
+                                   name="Registered", marker=marker))
+    traces += _geometry_overlay_traces(go, show_road, show_roi)
+    rev = f"reg_{zoom}_{azimuth}_{elevation}"
+    return _apply_scene(go, traces, height, title, zoom, azimuth, elevation, rev)

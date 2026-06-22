@@ -712,3 +712,55 @@ with tab_reg:
         bar.empty()
         st.success(f"Wrote **{n}** fused clouds → `{reg_out}`  (manifest: `registration.json`). "
                    "Now crop or score the **Registered (south + north)** source in the other tabs.")
+
+    # --- registered OUTPUT viewer (visual proof: loads the written .pcd from disk) ---
+    reg_files = rv.list_by_frame(reg_out, [".pcd"])
+    if reg_files:
+        st.divider()
+        st.subheader("✅ Registered output — written to disk")
+        st.caption(f"Loaded straight from `{reg_out}` — the **single fused cloud** the registration "
+                   "actually wrote. Compare it against the south/north overlay above: same camera, same "
+                   "frame — proof the two sensors were merged into one cloud in `s110_base`.")
+        st.session_state.setdefault("rego_frame", 0)
+
+        @st.fragment
+        def _registered_output_view():
+            st.session_state.rego_frame = max(0, min(st.session_state.rego_frame, len(reg_files) - 1))
+            nav = st.columns([1, 1, 1, 1, 1.6, 1.6])
+            if nav[0].button("⏮ First", use_container_width=True, key="rego_first"):
+                st.session_state.rego_frame = 0
+            if nav[1].button("◀ Prev", use_container_width=True, key="rego_prev"):
+                st.session_state.rego_frame = max(0, st.session_state.rego_frame - 1)
+            if nav[2].button("Next ▶", use_container_width=True, key="rego_next"):
+                st.session_state.rego_frame = min(len(reg_files) - 1, st.session_state.rego_frame + 1)
+            if nav[3].button("Last ⏭", use_container_width=True, key="rego_last"):
+                st.session_state.rego_frame = len(reg_files) - 1
+            if nav[4].button("🔗 Match overlay frame", use_container_width=True, key="rego_sync",
+                             help="Jump to the same frame as the south/north overlay above."):
+                st.session_state.rego_frame = min(st.session_state.get("reg_frame", 0), len(reg_files) - 1)
+            color_o = nav[5].radio("Color", ["By height", "By sensor mix"], horizontal=True,
+                                   key="rego_color", label_visibility="collapsed",
+                                   help="By height = Turbo z-ramp · By sensor mix = single colour (the "
+                                        "two sensors are merged on disk, so per-sensor colour is gone).")
+            i = st.slider("Registered frame", 0, max(len(reg_files) - 1, 1),
+                          st.session_state.rego_frame, key="rego_slider")
+            st.session_state.rego_frame = i
+
+            pts = _load_raw(reg_files[i])
+            # reuse the overlay's camera so both views line up frame-for-frame
+            zoom = st.session_state.get("reg_zoom", 0.9)
+            az = st.session_state.get("reg_az", 45)
+            el = st.session_state.get("reg_el", 35)
+            hspan = st.session_state.get("reg_hspan", 4.0)
+            show_road = st.session_state.get("reg_road", False)
+            show_roi = st.session_state.get("reg_roi", False)
+            title = f"registered {i+1}/{len(reg_files)} · {len(pts):,} pts (south + north fused)"
+            with st.container(height=680):
+                st.plotly_chart(
+                    reg.registered_figure(
+                        pts, color_mode=("by_height" if color_o == "By height" else "single"),
+                        height_span=hspan, show_road=show_road, show_roi=show_roi,
+                        height=660, title=title, zoom=zoom, azimuth=float(az), elevation=float(el)),
+                    use_container_width=True, key="rego_fig", config={"scrollZoom": True})
+
+        _registered_output_view()
