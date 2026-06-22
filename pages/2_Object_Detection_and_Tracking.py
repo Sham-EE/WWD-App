@@ -201,8 +201,8 @@ if st.session_state.detection_results:
             st.error(f"⚠ {n_ww} wrong-way vehicle(s) detected.")
             st.dataframe(rows, use_container_width=True)
 
-    # --- View toggles (lane overlay + bird's-eye) ---
-    vc1, vc2 = st.columns(2)
+    # --- View toggles (lane overlay + bird's-eye + height colouring) ---
+    vc1, vc2, vc3 = st.columns(3)
     if lanes:
         results['lanes'] = lanes
         results['show_lanes'] = vc1.checkbox(
@@ -213,6 +213,14 @@ if st.session_state.detection_results:
     results['top_down'] = vc2.checkbox(
         "⬇️ Top-down (bird's-eye) view", value=False,
         help="Snap the camera straight down to verify lane alignment against the road.")
+    color_h = vc3.checkbox(
+        "🌈 Color by height", value=False,
+        help="Colour the point cloud by z (Turbo) like the dev-kit — ground vs vehicles separate by hue.")
+    h_span = 4.0
+    if color_h:
+        h_span = st.slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="odt_hspan",
+                           help="Colour spreads over this many metres above the ground "
+                                "(smaller = cars show a gradient; tall stuff saturates).")
 
     # --- Frame playback controls (steps the live viewer; no animation render) ---
     n_frames = len(results['pcd_files'])
@@ -240,7 +248,8 @@ if st.session_state.detection_results:
     if not os.path.exists(original_pcd_path):
         st.error(f"Original PCD file not found for this frame: {original_pcd_path}")
     else:
-        fig = create_3d_figure(results, frame_idx, original_pcd_path)
+        fig = create_3d_figure(results, frame_idx, original_pcd_path,
+                               color_by_height=color_h, height_span=h_span)
         st.plotly_chart(fig, use_container_width=True, height=800)
 
     # Auto-play: advance one frame and rerun until the end or until paused.
