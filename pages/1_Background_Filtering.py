@@ -54,7 +54,8 @@ def discover_gt_index(gt_dir: str):
     return idx
 
 def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
-                           show_road=False, show_roi=False, show_excl=False, gt_objs=None):
+                           show_road=False, road_dashed=False, show_roi=False,
+                           show_excl=False, gt_objs=None):
     fig = go.Figure()
     if original_pts.size > 0:
         fig.add_trace(go.Scatter3d(x=original_pts[:, 0], y=original_pts[:, 1], z=original_pts[:, 2],
@@ -89,7 +90,10 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
                 legendgroup=name, showlegend=(show_legend and j == 0), hoverinfo="skip"))
 
     if show_road:
-        _outline(poly, "limegreen", "solid", "Road outline")
+        # Dashed on the full cloud = reference only (the full cloud isn't cropped);
+        # solid on the cropped cloud = the actual crop boundary.
+        _outline(poly, "limegreen", "dash" if road_dashed else "solid",
+                 "Road outline (uncropped, ref)" if road_dashed else "Road outline")
     if show_roi:
         try:
             from geometry_config import get_research_polygon
@@ -317,8 +321,9 @@ if st.session_state.bg_model:
             # Geometry overlays — each region actually affects filtering:
             geo = st.columns(3)
             road_on = geo[0].toggle("🛣️ Road outline", value=(_src == "cropped"),
-                                    disabled=(_src != "cropped"), key=f"bf_road_{_src}",
-                                    help="Road polygon (drives edge-band removal). Cropped source.")
+                                    key=f"bf_road_{_src}",
+                                    help="Road polygon boundary. Solid on cropped (the actual crop); "
+                                         "dashed on full (reference only — shows what's outside it).")
             roi_on = geo[1].toggle("🔵 ROI (research region)", value=False, key="bf_roi",
                                    help="Bounds what the filter processes — points outside are never kept.")
             excl_on = geo[2].toggle("🔴 Exclusion zones", value=False, key="bf_excl",
@@ -350,7 +355,7 @@ if st.session_state.bg_model:
             with st.container(height=560):
                 st.plotly_chart(
                     create_filtered_figure(fg, pts, margin=12.0, zoom=zoom,
-                                           show_road=road_on and _src == "cropped",
+                                           show_road=road_on, road_dashed=(_src != "cropped"),
                                            show_roi=roi_on, show_excl=excl_on,
                                            gt_objs=gt_objs if gt_on else None),
                     use_container_width=True, key="bf_fig")
