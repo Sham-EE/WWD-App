@@ -106,6 +106,43 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
                                  camera=dict(eye=dict(x=eye, y=eye, z=eye))))
     return fig
 
+
+def foreground_quality(fg_pts, original_pts, gt_objs, min_pts=10):
+    """How well the filter preserved real objects, vs the GT boxes for this frame.
+    A *proxy* for downstream detectability, not the detection F1.
+
+    Counts foreground (and original) points inside each GT box footprint:
+      - covered / scanned : objects with >= min_pts foreground pts, out of objects the
+        LiDAR actually hit (>=1 original pt) — i.e. of what's visible, what survived.
+      - recall            : foreground pts on objects / original pts on objects.
+      - off_object        : foreground pts outside every box (clutter / false-fg proxy).
+    """
+    import numpy as np
+    from matplotlib.path import Path
+    import dataset_prep as dp
+    fg_xy = fg_pts[:, :2] if (fg_pts is not None and len(fg_pts)) else np.zeros((0, 2))
+    or_xy = original_pts[:, :2] if (original_pts is not None and len(original_pts)) else np.zeros((0, 2))
+    fg_on = np.zeros(len(fg_xy), dtype=bool)
+    or_on = np.zeros(len(or_xy), dtype=bool)
+    scanned = covered = 0
+    for o in gt_objs or []:
+        path = Path(dp._box_footprint(o["val"]))
+        fin = path.contains_points(fg_xy) if len(fg_xy) else np.zeros(0, dtype=bool)
+        oin = path.contains_points(or_xy) if len(or_xy) else np.zeros(0, dtype=bool)
+        fc = int(fin.sum()); oc = int(oin.sum())
+        if oc >= 1:                       # object actually hit by the LiDAR
+            scanned += 1
+            if fc >= min_pts:
+                covered += 1
+        if len(fg_xy): fg_on |= fin
+        if len(or_xy): or_on |= oin
+    on_fg, on_or = int(fg_on.sum()), int(or_on.sum())
+    return {
+        "scanned": scanned, "covered": covered, "min_pts": int(min_pts),
+        "recall": (on_fg / on_or) if on_or else None,
+        "off_object": int(len(fg_xy) - on_fg), "total_fg": int(len(fg_xy)),
+    }
+
 # ---------------- Sidebar parameters ----------------
 side = st.sidebar
 side.header("Input and Model")
@@ -256,19 +293,27 @@ if st.session_state.bg_model:
             zoom = st.slider("3D zoom (lower = closer)", 0.6, 2.0,
                              ZOOM_DEFAULTS.get(_src, 1.25), 0.05, key=f"bf_zoom_{_src}")
 
-            opt = st.columns([1.1, 1.1, 3.8])
+            opt = st.columns([1.1, 1.1, 1.2, 1.0, 1.6])
             road_on = opt[0].toggle("🛣️ Road outline", value=(_src == "cropped"),
                                     disabled=(_src != "cropped"), key=f"bf_road_{_src}",
                                     help="Draw the road-crop polygon boundary (cropped source).")
             gt_on = opt[1].toggle("🏷️ GT boxes", value=False, disabled=not has_gt,
                                   key="bf_gt",
-                                  help="Overlay this frame's ground-truth 3D boxes (cyan)."
+                                  help="Overlay this frame's ground-truth 3D boxes."
                                        if has_gt else "No ground truth for this dataset.")
+            metric_on = opt[2].toggle("📊 FG quality", value=False, disabled=not has_gt,
+                                      key="bf_metric",
+                                      help="Live foreground-vs-GT quality for this frame "
+                                           "(a tuning proxy, not the detection F1)."
+                                           if has_gt else "No ground truth for this dataset.")
+            min_pts = opt[3].number_input("≥ pts", 1, 200, 10, 1, key="bf_minpts",
+                                          help="A GT object counts as 'covered' with at "
+                                               "least this many surviving foreground points.")
 
             pts = _load_raw(pcd_files[i])
             fg, _ = filter_points_with_model(pts, st.session_state.bg_model, config)
             gt_objs = None
-            if gt_on:
+            if (gt_on or metric_on) and has_gt:
                 import label_projection as lp
                 gp = gt_index.get(_frame_key(pcd_files[i]))
                 if gp:
@@ -277,10 +322,27 @@ if st.session_state.bg_model:
                 st.plotly_chart(
                     create_filtered_figure(fg, pts, margin=12.0, zoom=zoom,
                                            show_road=road_on and _src == "cropped",
-                                           gt_objs=gt_objs),
+                                           gt_objs=gt_objs if gt_on else None),
                     use_container_width=True, key="bf_fig")
             st.caption(f"{os.path.basename(pcd_files[i])} · frame {i+1}/{n_bf} · "
                        f"{len(fg)} foreground / {len(pts)} points")
+
+            if metric_on and gt_objs is not None:
+                q = foreground_quality(fg, pts, gt_objs, min_pts=int(min_pts))
+                m = st.columns(3)
+                m[0].metric(f"Objects covered (≥{q['min_pts']} pts)",
+                            f"{q['covered']} / {q['scanned']}",
+                            help="GT objects with enough surviving foreground points, out of "
+                                 "objects the LiDAR actually hit this frame.")
+                m[1].metric("On-object point recall",
+                            f"{q['recall']*100:.0f}%" if q['recall'] is not None else "—",
+                            help="Foreground points inside GT boxes ÷ original points inside GT "
+                                 "boxes — are the real movers being kept?")
+                m[2].metric("Off-object foreground", f"{q['off_object']:,}",
+                            help="Foreground points outside every GT box (clutter / false-"
+                                 "foreground proxy).")
+            elif metric_on and has_gt:
+                st.caption("No GT for this frame.")
 
             if playing and i < n_bf - 1:
                 import time
