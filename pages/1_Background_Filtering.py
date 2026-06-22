@@ -55,7 +55,8 @@ def discover_gt_index(gt_dir: str):
 
 def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
                            show_road=False, road_dashed=False, show_roi=False,
-                           show_excl=False, gt_objs=None, color_by_height=False, height_span=4.0):
+                           show_excl=False, gt_objs=None, color_by_height=False, height_span=4.0,
+                           show_foreground=True, show_original=True):
     fig = go.Figure()
     # Resolve the road window first so we can lock the view AND clip the plotted points
     # to it. Clipping is the key: aspectmode="data" sizes the 3D box from the POINT
@@ -83,7 +84,7 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
     original_pts = _clip(original_pts)
     foreground_pts = _clip(foreground_pts)
 
-    if original_pts.size > 0:
+    if show_original and original_pts.size > 0:
         if color_by_height:
             z = original_pts[:, 2]; z0 = float(np.percentile(z, 1))
             omk = dict(size=1.5, color=z, colorscale="Turbo", cmin=z0, cmax=z0 + float(height_span),
@@ -92,7 +93,7 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
             omk = dict(size=1.5, color="#8fa3bd", opacity=0.2)
         fig.add_trace(go.Scatter3d(x=original_pts[:, 0], y=original_pts[:, 1], z=original_pts[:, 2],
             mode="markers", name="Original", marker=omk))
-    if foreground_pts.size > 0:
+    if show_foreground and foreground_pts.size > 0:
         fig.add_trace(go.Scatter3d(x=foreground_pts[:, 0], y=foreground_pts[:, 1], z=foreground_pts[:, 2],
             mode="markers", name="Foreground", marker=dict(size=2.5, color="red", opacity=0.9)))
 
@@ -146,10 +147,15 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
             textfont=dict(size=11, color=lcol), hoverinfo="skip", showlegend=False))
 
     eye = float(zoom)
+    # uirevision keyed to zoom: your manual pan/rotate/zoom persists across frame steps
+    # AND toggles (uirevision unchanged), but moving the zoom slider changes the key so
+    # the new camera actually applies. Double-click resets.
     fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), showlegend=True,
+                      uirevision=f"bf_{zoom}",
                       scene=dict(aspectmode="data", xaxis=xr, yaxis=yr,
                                  zaxis=dict(range=[zmin, zmax]),
-                                 camera=dict(eye=dict(x=eye, y=eye, z=eye))))
+                                 camera=dict(eye=dict(x=eye, y=eye, z=eye)),
+                                 uirevision=f"bf_{zoom}"))
     return fig
 
 
@@ -301,9 +307,16 @@ if st.session_state.bg_model:
             # Per-source default zoom (lower = more zoomed in). Edit these two numbers
             # to set the zoom each source loads at. Each source has its own slider/key,
             # so cropped and full remember their own zoom independently.
-            ZOOM_DEFAULTS = {"cropped": 0.7, "full": 1.25}
+            ZOOM_DEFAULTS = {"cropped": 0.7, "full": 0.9}
             zoom = st.slider("3D zoom (lower = closer)", 0.6, 2.0,
                              ZOOM_DEFAULTS.get(_src, 1.25), 0.05, key=f"bf_zoom_{_src}")
+
+            # Point-cloud layers (persist across frames, unlike legend clicks).
+            lc = st.columns(2)
+            show_fg_pts = lc[0].toggle("🔴 Foreground points", value=True, key="bf_show_fg",
+                                       help="Show the red moving-foreground points (persists across frames).")
+            show_orig = lc[1].toggle("⚪ Original cloud", value=True, key="bf_show_orig",
+                                     help="Show the faint background/original cloud.")
 
             # Geometry overlays — each region actually affects filtering:
             geo = st.columns(4)
@@ -353,7 +366,8 @@ if st.session_state.bg_model:
                                            show_road=road_on, road_dashed=(_src != "cropped"),
                                            show_roi=roi_on, show_excl=excl_on,
                                            gt_objs=gt_objs if gt_on else None,
-                                           color_by_height=color_h, height_span=h_span),
+                                           color_by_height=color_h, height_span=h_span,
+                                           show_foreground=show_fg_pts, show_original=show_orig),
                     use_container_width=True, key="bf_fig")
             st.caption(f"{os.path.basename(pcd_files[i])} · frame {i+1}/{n_bf} · "
                        f"{len(fg)} foreground / {len(pts)} points")
