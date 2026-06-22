@@ -45,8 +45,15 @@ def render_camera_tab():
     have_labels = len(labels) > 0
 
     c1, c2, c3 = st.columns([1, 1, 1.4])
-    left_default = cameras.index("south2") if "south2" in cameras else 0
-    right_default = cameras.index("south1") if "south1" in cameras else (1 if len(cameras) > 1 else 0)
+
+    def _cam_idx(token, fallback):
+        for k, cam in enumerate(cameras):
+            if token in cam:
+                return k
+        return fallback
+
+    left_default = _cam_idx("south2", 0)
+    right_default = _cam_idx("south1", 1 if len(cameras) > 1 else 0)
     left_cam = c1.selectbox("Left camera", cameras, index=left_default)
     right_cam = c2.selectbox("Right camera", cameras, index=right_default)
 

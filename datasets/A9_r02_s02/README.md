@@ -13,7 +13,8 @@ data/                                ← gitignored (local)
     point_clouds/s110_lidar_ouster_north/   *.pcd
     labels/s110_lidar_ouster_south/         *.json   (OpenLABEL)
     labels/s110_lidar_ouster_north/         *.json
-    images/south1/ , images/south2/         camera frames
+    images/s110_camera_basler_south1_8mm/   camera frames
+    images/s110_camera_basler_south2_8mm/
   derived/                           ← regenerated in-app via the Dataset Prep page
     cropped_south/                   south clouds clipped to the road (pipeline input)
     cropped_north/                   north clouds clipped to the road

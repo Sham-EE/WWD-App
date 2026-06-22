@@ -50,17 +50,17 @@ st.write("")
 GROUPS = [
     ("📂 Data & setup", [
         ("🗂️", "Datasets", "Choose the active dataset or add your own.", "pages/0_Datasets.py"),
-        ("🧰", "Dataset Prep", "Crop, scorable GT, and the geometry editor — recreate derived data.", "pages/7_Dataset_Prep.py"),
-        ("🎬", "Visualizer", "Cameras side by side + 3D LiDAR labels (BEV/side); overlays, trails, video.", "pages/6_Visualizer.py"),
+        ("🧰", "Dataset Prep", "Crop, scorable GT, and the geometry editor — recreate derived data.", "pages/1_Dataset_Prep.py"),
+        ("🎬", "Visualizer", "Cameras side by side + 3D LiDAR labels (BEV/side); overlays, trails, video.", "pages/7_Visualizer.py"),
     ]),
     ("⚙️ Detection pipeline", [
-        ("🔬", "Background Filtering", "Build a background model; keep moving foreground points.", "pages/1_Background_Filtering.py"),
-        ("📦", "Detection & Tracking", "Cluster, Kalman-track, and flag wrong-way vehicles.", "pages/2_Object_Detection_and_Tracking.py"),
-        ("📊", "Evaluation", "Score vs ground truth (P/R/F1, MOTA) + visual compare.", "pages/3_Evaluation.py"),
+        ("🔬", "Background Filtering", "Build a background model; keep moving foreground points.", "pages/2_Background_Filtering.py"),
+        ("📦", "Detection & Tracking", "Cluster, Kalman-track, and flag wrong-way vehicles.", "pages/3_Object_Detection_and_Tracking.py"),
+        ("📊", "Evaluation", "Score vs ground truth (P/R/F1, MOTA) + visual compare.", "pages/4_Evaluation.py"),
     ]),
     ("🚨 Wrong-way driving", [
-        ("🛣️", "Lane Editor", "Build/adjust the lane directions used for WWD.", "pages/4_Lane_Editor.py"),
-        ("🚨", "WWD Simulator", "Spawn a synthetic wrong-way driver; fire the V2X alert.", "pages/5_WWD_Simulator.py"),
+        ("🛣️", "Lane Editor", "Build/adjust the lane directions used for WWD.", "pages/5_Lane_Editor.py"),
+        ("🚨", "WWD Simulator", "Spawn a synthetic wrong-way driver; fire the V2X alert.", "pages/6_WWD_Simulator.py"),
     ]),
 ]
 
