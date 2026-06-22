@@ -344,29 +344,49 @@ with tab_geom:
         gfi = st.slider("Backdrop frame", 0, len(geom_clouds) - 1, 0, key="geom_bg_frame")
         geom_bg = _load_raw(geom_clouds[gfi])
     gt_map = _gt_map(ds.raw_labels_south_dir) or _gt_map(ds.gt_dir)
-    bc1, bc2, bc3 = st.columns([1.3, 1, 1])
+    model_path = _resolve_bg_model(geom_src)
+    bc1, bc2, bc3, bc4 = st.columns([1.2, 1, 1, 1.1])
     step = bc1.select_slider("Stepper increment (m)", [0.5, 1.0, 2.0, 5.0], value=1.0, key="geom_step")
-    show_fg = bc2.toggle("🔴 Show BG-filter foreground", value=False, key="geom_show_fg",
+    show_fg = bc2.toggle("🔴 Foreground", value=False, key="geom_show_fg", disabled=not model_path,
                          help="Overlay what the background model classifies as foreground (red), so "
                               "you can drop an exclusion rect over poles/clutter that leak through. "
-                              "Uses the saved background model; Save geometry to see the effect.")
+                              "Save geometry to see the effect." if model_path
+                              else "No saved background model — build one on the Background Filtering page.")
     show_gt = bc3.toggle("🏷️ GT boxes", value=False, key="geom_show_gt", disabled=not gt_map,
                          help="Overlay this frame's ground-truth boxes (category-coloured + labels)."
                               if gt_map else "No ground truth for this dataset.")
+    show_metric = bc4.toggle("📊 FG quality", value=False, key="geom_metric",
+                             disabled=not (model_path and gt_map),
+                             help="Live foreground-vs-GT quality for this frame (needs a model + GT). "
+                                  "Edit/Save geometry and watch the numbers move."
+                                  if (model_path and gt_map) else "Needs a saved model AND ground truth.")
+
+    # Compute foreground / GT if any of their consumers (overlay or metric) is on.
     geom_fg = None
-    if show_fg and geom_clouds:
-        _mp = _resolve_bg_model(geom_src)
-        if _mp:
-            _gmt = os.path.getmtime(ds.site_geometry_path) if os.path.exists(ds.site_geometry_path) else 0.0
-            geom_fg = _geom_foreground(geom_clouds[gfi], _mp, os.path.getmtime(_mp), _gmt)
-        else:
-            st.caption("⚠️ No saved background model yet — build one on the **Background Filtering** page.")
+    if (show_fg or show_metric) and model_path and geom_clouds:
+        _gmt = os.path.getmtime(ds.site_geometry_path) if os.path.exists(ds.site_geometry_path) else 0.0
+        geom_fg = _geom_foreground(geom_clouds[gfi], model_path, os.path.getmtime(model_path), _gmt)
     geom_gt = None
-    if show_gt and gt_map and geom_clouds:
+    if (show_gt or show_metric) and gt_map and geom_clouds:
         import label_projection as lp
         _gp = gt_map.get("_".join(os.path.basename(geom_clouds[gfi]).split("_")[:2]))
         if _gp:
             geom_gt = lp.load_objects(_gp)
+
+    if show_metric and geom_fg is not None and geom_gt is not None:
+        mpts = st.number_input("Covered if ≥ pts", 1, 200, 10, 1, key="geom_minpts",
+                               help="A GT object counts as 'covered' with at least this many "
+                                    "surviving foreground points.")
+        q = dp.foreground_quality(geom_fg, geom_bg, geom_gt, min_pts=int(mpts))
+        mm = st.columns(3)
+        mm[0].metric(f"Objects covered (≥{q['min_pts']} pts)", f"{q['covered']} / {q['scanned']}",
+                     help="GT objects with enough surviving foreground points, out of objects "
+                          "the LiDAR actually hit this frame.")
+        mm[1].metric("On-object recall",
+                     f"{q['recall']*100:.0f}%" if q['recall'] is not None else "—",
+                     help="Foreground points inside GT boxes ÷ original points inside GT boxes.")
+        mm[2].metric("Off-object foreground", f"{q['off_object']:,}",
+                     help="Foreground points outside every GT box (clutter / false-foreground proxy).")
 
     g_left, g_right = st.columns([1, 1.3], gap="medium")
     with g_left:
@@ -431,7 +451,9 @@ with tab_geom:
                 st.info("No exclusion rectangles.")
     with g_right:
         st.markdown("**👁 Live preview** — scroll to zoom, drag to pan.")
-        st.plotly_chart(ge.preview_figure(geom_bg, geom, height=640, fg_points=geom_fg, gt_objs=geom_gt),
+        st.plotly_chart(ge.preview_figure(geom_bg, geom, height=640,
+                                          fg_points=geom_fg if show_fg else None,
+                                          gt_objs=geom_gt if show_gt else None),
                         use_container_width=True, config={"scrollZoom": True})
 
     st.session_state.geom_edit = geom

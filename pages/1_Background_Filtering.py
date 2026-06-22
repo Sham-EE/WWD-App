@@ -132,41 +132,7 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
     return fig
 
 
-def foreground_quality(fg_pts, original_pts, gt_objs, min_pts=10):
-    """How well the filter preserved real objects, vs the GT boxes for this frame.
-    A *proxy* for downstream detectability, not the detection F1.
-
-    Counts foreground (and original) points inside each GT box footprint:
-      - covered / scanned : objects with >= min_pts foreground pts, out of objects the
-        LiDAR actually hit (>=1 original pt) — i.e. of what's visible, what survived.
-      - recall            : foreground pts on objects / original pts on objects.
-      - off_object        : foreground pts outside every box (clutter / false-fg proxy).
-    """
-    import numpy as np
-    from matplotlib.path import Path
-    import dataset_prep as dp
-    fg_xy = fg_pts[:, :2] if (fg_pts is not None and len(fg_pts)) else np.zeros((0, 2))
-    or_xy = original_pts[:, :2] if (original_pts is not None and len(original_pts)) else np.zeros((0, 2))
-    fg_on = np.zeros(len(fg_xy), dtype=bool)
-    or_on = np.zeros(len(or_xy), dtype=bool)
-    scanned = covered = 0
-    for o in gt_objs or []:
-        path = Path(dp._box_footprint(o["val"]))
-        fin = path.contains_points(fg_xy) if len(fg_xy) else np.zeros(0, dtype=bool)
-        oin = path.contains_points(or_xy) if len(or_xy) else np.zeros(0, dtype=bool)
-        fc = int(fin.sum()); oc = int(oin.sum())
-        if oc >= 1:                       # object actually hit by the LiDAR
-            scanned += 1
-            if fc >= min_pts:
-                covered += 1
-        if len(fg_xy): fg_on |= fin
-        if len(or_xy): or_on |= oin
-    on_fg, on_or = int(fg_on.sum()), int(or_on.sum())
-    return {
-        "scanned": scanned, "covered": covered, "min_pts": int(min_pts),
-        "recall": (on_fg / on_or) if on_or else None,
-        "off_object": int(len(fg_xy) - on_fg), "total_fg": int(len(fg_xy)),
-    }
+from dataset_prep import foreground_quality  # shared with the Geometry Editor
 
 # ---------------- Sidebar parameters ----------------
 side = st.sidebar
