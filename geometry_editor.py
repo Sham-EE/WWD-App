@@ -115,7 +115,7 @@ def apply_geometry_crop(fg, geom):
 
 def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=None,
                    dragmode="pan", show_vertex_labels=False, fg_excluded_points=None,
-                   color_by_height=False):
+                   color_by_height=False, height_span=4.0):
     """BEV: point cloud + research (cyan dotted), road (green), exclusion (magenta).
     `fg_points` (kept foreground) is drawn red; `fg_excluded_points` (foreground that
     the current geometry crops out) is drawn grey. If `gt_objs` is given, overlay GT
@@ -128,7 +128,9 @@ def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=N
         if len(points) > 40000:
             points = points[np.random.default_rng(0).choice(len(points), 40000, replace=False)]
         if color_by_height and points.shape[1] >= 3:
-            mk = dict(size=2, color=points[:, 2], colorscale="Turbo", showscale=False)
+            z = points[:, 2]; z0 = float(np.percentile(z, 1))
+            mk = dict(size=2, color=z, colorscale="Turbo", cmin=z0, cmax=z0 + float(height_span),
+                      showscale=False)
         else:
             mk = dict(size=2, color="#1f77b4")
         fig.add_trace(go.Scattergl(x=points[:, 0], y=points[:, 1], mode="markers",

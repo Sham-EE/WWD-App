@@ -55,11 +55,13 @@ def discover_gt_index(gt_dir: str):
 
 def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
                            show_road=False, road_dashed=False, show_roi=False,
-                           show_excl=False, gt_objs=None, color_by_height=False):
+                           show_excl=False, gt_objs=None, color_by_height=False, height_span=4.0):
     fig = go.Figure()
     if original_pts.size > 0:
         if color_by_height:
-            omk = dict(size=1.5, color=original_pts[:, 2], colorscale="Turbo", opacity=0.5, showscale=False)
+            z = original_pts[:, 2]; z0 = float(np.percentile(z, 1))
+            omk = dict(size=1.5, color=z, colorscale="Turbo", cmin=z0, cmax=z0 + float(height_span),
+                       opacity=0.5, showscale=False)
         else:
             omk = dict(size=1.5, color="#8fa3bd", opacity=0.2)
         fig.add_trace(go.Scatter3d(x=original_pts[:, 0], y=original_pts[:, 1], z=original_pts[:, 2],
@@ -316,6 +318,11 @@ if st.session_state.bg_model:
             min_pts = opt[2].number_input("≥ pts", 1, 200, 10, 1, key="bf_minpts",
                                           help="A GT object counts as 'covered' with at "
                                                "least this many surviving foreground points.")
+            h_span = 4.0
+            if color_h:
+                h_span = opt[3].slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="bf_hspan",
+                                       help="Colour spreads over this many metres above the ground "
+                                            "(smaller = cars show a gradient; tall stuff saturates).")
 
             pts = _load_raw(pcd_files[i])
             fg, _ = filter_points_with_model(pts, st.session_state.bg_model, config)
@@ -331,7 +338,7 @@ if st.session_state.bg_model:
                                            show_road=road_on, road_dashed=(_src != "cropped"),
                                            show_roi=roi_on, show_excl=excl_on,
                                            gt_objs=gt_objs if gt_on else None,
-                                           color_by_height=color_h),
+                                           color_by_height=color_h, height_span=h_span),
                     use_container_width=True, key="bf_fig")
             st.caption(f"{os.path.basename(pcd_files[i])} · frame {i+1}/{n_bf} · "
                        f"{len(fg)} foreground / {len(pts)} points")

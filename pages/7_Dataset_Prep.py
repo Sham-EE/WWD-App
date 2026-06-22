@@ -496,13 +496,19 @@ with tab_geom:
         color_h = pv4.toggle("🌈 Color by height", value=False, key="geom_height",
                              help="Colour the backdrop cloud by z (Turbo) like the dev-kit — ground vs "
                                   "poles/vehicles separate by hue (great for spotting clutter in 2D).")
+        h_span = 4.0
+        if color_h:
+            h_span = st.slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="geom_hspan",
+                               help="Colour spreads over this many metres above the ground. Smaller = "
+                                    "more colour detail on short objects (cars show a gradient too); "
+                                    "taller things saturate at the top colour.")
         dm_mode = "select" if mode.startswith("⬛") else "pan"
         ev = st.plotly_chart(ge.preview_figure(geom_bg, geom, height=620,
                                                fg_points=geom_fg_kept if show_fg else None,
                                                fg_excluded_points=geom_fg_excl if show_fg else None,
                                                gt_objs=geom_gt if show_gt else None,
                                                dragmode=dm_mode, show_vertex_labels=show_verts,
-                                               color_by_height=color_h),
+                                               color_by_height=color_h, height_span=h_span),
                              use_container_width=True, config={"scrollZoom": True},
                              on_select="rerun", key="geom_preview")
 

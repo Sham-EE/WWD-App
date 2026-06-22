@@ -59,7 +59,7 @@ def crop_dataset(src_dir, out_dir, margin=0.0, max_frames=0, progress=None):
 
 
 def crop_preview_figure(points, margin=0.0, height=620, title="", draw_boundary=True,
-                        color_by_height=False):
+                        color_by_height=False, height_span=4.0):
     """Top-down BEV of `points` + (optionally) the road boundary as a black dashed
     line (matches the bundled cropped/vis previews). `points` may be the cropped or
     the full/uncropped cloud. `color_by_height` colours points by z (Turbo)."""
@@ -68,7 +68,9 @@ def crop_preview_figure(points, margin=0.0, height=620, title="", draw_boundary=
     fig = go.Figure()
     if points is not None and len(points):
         if color_by_height and points.shape[1] >= 3:
-            mk = dict(size=2, color=points[:, 2], colorscale="Turbo", showscale=False)
+            z = points[:, 2]; z0 = float(np.percentile(z, 1))
+            mk = dict(size=2, color=z, colorscale="Turbo", cmin=z0, cmax=z0 + float(height_span),
+                      showscale=False)
         else:
             mk = dict(size=2, color="#1f77b4")
         fig.add_trace(go.Scattergl(
@@ -257,7 +259,7 @@ def _boxes_xy(boxes):
 def scorable_preview_figure(points, kept_boxes, dropped_boxes, region_poly,
                             height=620, title="", max_points=40000,
                             show_roi=True, show_road=False, show_exclusion=False,
-                            color_by_height=False):
+                            color_by_height=False, height_span=4.0):
     """BEV like the bundled vis: point cloud (blue) + kept GT boxes (green) and
     dropped GT boxes (red), locked to the ROI region. Optionally overlay the
     Geometry-Editor boundaries: ROI (cyan dotted), road (orange dashed), and
@@ -268,7 +270,9 @@ def scorable_preview_figure(points, kept_boxes, dropped_boxes, region_poly,
         if len(points) > max_points:
             points = points[np.random.default_rng(0).choice(len(points), max_points, replace=False)]
         if color_by_height and points.shape[1] >= 3:
-            mk = dict(size=2, color=points[:, 2], colorscale="Turbo", showscale=False)
+            z = points[:, 2]; z0 = float(np.percentile(z, 1))
+            mk = dict(size=2, color=z, colorscale="Turbo", cmin=z0, cmax=z0 + float(height_span),
+                      showscale=False)
         else:
             mk = dict(size=2, color="#1f77b4")
         fig.add_trace(go.Scattergl(x=points[:, 0], y=points[:, 1], mode="markers",
