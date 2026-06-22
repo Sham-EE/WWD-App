@@ -393,11 +393,20 @@ with tab_geom:
         with st.expander("🔵 Research polygon (ROI)", expanded=True):
             st.caption("Overall analysed region (a rectangle); the default scorable-GT region.")
             geom["research_polygon"] = _bbox_editor(geom.get("research_polygon", []), "ROI", step)
-            rr1, rr2 = st.columns(2)
-            if rr1.button("🔄 Reset to default", key="ge_reset_research", disabled=not ge.has_defaults(ds)):
+            rr1, rr2, rr3 = st.columns(3)
+            if rr1.button("🔄 Default", key="ge_reset_research", disabled=not ge.has_defaults(ds),
+                          help="Reset the ROI to the dataset default."):
                 geom["research_polygon"] = [list(p) for p in default_geom["research_polygon"]]; st.rerun()
-            if rr2.button("📐 From data extent", key="ge_derive_research"):
+            if rr2.button("📐 Data extent", key="ge_derive_research",
+                          help="Fit the ROI to the full point-cloud extent."):
                 geom["research_polygon"] = dm.derive_site_geometry(ds.pcd_dir)["research_polygon"]; st.rerun()
+            _roads = geom.get("road_polygons", [])
+            if rr3.button("🛣️ From road", key="ge_roi_from_road", disabled=not _roads,
+                          help="Set the ROI to the road bounds + a 5 m margin (keeps off-road edge)."):
+                _ax = [p[0] for poly in _roads for p in poly]; _ay = [p[1] for poly in _roads for p in poly]
+                _m = 5.0
+                _x0, _x1, _y0, _y1 = min(_ax) - _m, max(_ax) + _m, min(_ay) - _m, max(_ay) + _m
+                geom["research_polygon"] = [[_x0, _y0], [_x1, _y0], [_x1, _y1], [_x0, _y1]]; st.rerun()
 
         with st.expander("🟢 Road polygons (cropping)", expanded=True):
             st.caption("Drivable area (any shape). Crop-to-road keeps only points inside these.")
@@ -450,10 +459,41 @@ with tab_geom:
             else:
                 st.info("No exclusion rectangles.")
     with g_right:
-        st.markdown("**👁 Live preview** — scroll to zoom, drag to pan.")
-        st.plotly_chart(ge.preview_figure(geom_bg, geom, height=640,
-                                          fg_points=geom_fg if show_fg else None,
-                                          gt_objs=geom_gt if show_gt else None),
-                        use_container_width=True, config={"scrollZoom": True})
+        pv1, pv2 = st.columns([1.4, 1])
+        pv1.markdown("**👁 Live preview** — scroll to zoom.")
+        mode = pv2.radio("Mouse", ["🖐 Pan", "⬛ Draw box"], horizontal=True, key="geom_drawmode",
+                         label_visibility="collapsed",
+                         help="Draw box: drag a rectangle on the plot, then add it as an exclusion "
+                              "zone or set it as the ROI.")
+        dm_mode = "select" if mode.startswith("⬛") else "pan"
+        ev = st.plotly_chart(ge.preview_figure(geom_bg, geom, height=620,
+                                               fg_points=geom_fg if show_fg else None,
+                                               gt_objs=geom_gt if show_gt else None,
+                                               dragmode=dm_mode),
+                             use_container_width=True, config={"scrollZoom": True},
+                             on_select="rerun", key="geom_preview")
+
+        # Read a drawn box from the selection and let the user apply it.
+        drawn = None
+        try:
+            bx = (ev.get("selection") or {}).get("box") or []
+            if bx:
+                xs, ys = bx[0]["x"], bx[0]["y"]
+                drawn = (min(xs), min(ys), max(xs), max(ys))
+        except Exception:
+            drawn = None
+        if drawn:
+            x0, y0, x1, y1 = drawn
+            rect = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+            st.caption(f"⬛ Drawn box: x[{x0:.1f}, {x1:.1f}]  y[{y0:.1f}, {y1:.1f}]")
+            db1, db2 = st.columns(2)
+            if db1.button("🟣 Add as exclusion zone", use_container_width=True, key="geom_box_excl"):
+                geom.setdefault("foreground_exclusion_rects", []).append(rect)
+                st.session_state.geom_edit = geom; st.rerun()
+            if db2.button("🔵 Set as ROI", use_container_width=True, key="geom_box_roi"):
+                geom["research_polygon"] = rect
+                st.session_state.geom_edit = geom; st.rerun()
+        elif dm_mode == "select":
+            st.caption("Drag a rectangle on the plot to draw a box.")
 
     st.session_state.geom_edit = geom

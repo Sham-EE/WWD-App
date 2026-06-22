@@ -88,7 +88,7 @@ def default_rect(geom):
     return _rect_corners(cx - 3, cy - 3, cx + 3, cy + 3)
 
 
-def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=None):
+def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=None, dragmode="pan"):
     """BEV: point cloud + research (cyan dotted), road (green), exclusion (magenta).
     If `fg_points` is given (background-filter foreground), overlay it in red. If
     `gt_objs` is given, overlay GT box footprints + TYPE_id labels, category-coloured
@@ -150,7 +150,7 @@ def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=N
         half = max(max(allx) - min(allx), max(ally) - min(ally)) / 2 + 8.0
     else:
         cx, cy, half = 0.0, 0.0, 60.0
-    fig.update_layout(height=height, margin=dict(l=0, r=0, t=30, b=0), title=title, dragmode="pan",
+    fig.update_layout(height=height, margin=dict(l=0, r=0, t=30, b=0), title=title, dragmode=dragmode,
                       legend=dict(orientation="h", y=1.02, x=0),
                       xaxis=dict(title="x (m)", range=[cx - half, cx + half]),
                       yaxis=dict(title="y (m)", range=[cy - half, cy + half], scaleanchor="x", scaleratio=1),
