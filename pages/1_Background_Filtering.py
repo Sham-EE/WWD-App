@@ -30,8 +30,12 @@ _src_label = st.sidebar.radio("Input cloud", ["Cropped (road)", "Full (uncropped
 _src = "cropped" if _src_label.startswith("Cropped") else "full"
 DEFAULT_MODEL_PATH = _ds.model_path_for(_src)
 DEFAULT_PCD = _ds.input_pcd_for(_src)
-DEFAULT_GT = _ds.gt_dir
+# auto-pick the GT matching the input sensor (south/north) so the overlay +
+# FG-quality metric line up even when the input is pointed at the north clouds.
+DEFAULT_GT = _ds.gt_dir_for_input(DEFAULT_PCD)
 DEFAULT_OUT = _ds.filtered_dir_for(_src)
+st.sidebar.caption(f"🏷️ GT: `{os.path.basename(DEFAULT_GT.rstrip('/'))}`"
+                   if os.path.isdir(DEFAULT_GT) else "🏷️ GT: none found")
 
 @st.cache_data(show_spinner="Discovering PCD files...")
 def discover_pcd_files(dir_path: str):
@@ -266,6 +270,14 @@ if side.button("Build Background Model", use_container_width=True, type="primary
 
         if save_filtered:
             os.makedirs(output_dir, exist_ok=True)
+            # clear stale filtered clouds (e.g. from a previous naming generation)
+            # so the folder always matches THIS run's frames — outputs are named by
+            # input basename, so a renamed input would otherwise leave orphans.
+            for _old in glob.glob(os.path.join(output_dir, "*.pcd")):
+                try:
+                    os.remove(_old)
+                except OSError:
+                    pass
             save_bar = st.progress(0.0, text="Saving filtered clouds...")
             buildN = len(pcd_files) if config['build_frames'] == 0 else min(config['build_frames'], len(pcd_files))
             for idx, pcd_path in enumerate(pcd_files[:buildN]):
