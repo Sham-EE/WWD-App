@@ -140,11 +140,13 @@ with tab_crop:
     st.divider()
     st.subheader("👁 Preview")
     pv_sensors = {"South": ds.raw_lidar_south_dir, "North": ds.raw_lidar_north_dir}
-    pc1, pc2, pc3, pc4 = st.columns([1, 1, 1.4, 1])
+    pc1, pc2, pc3, pc4, pc5 = st.columns([1, 1, 1.3, 1, 1])
     pv_left = pc1.selectbox("Left LiDAR", list(pv_sensors), index=0, key="dp_left")
     pv_right = pc2.selectbox("Right LiDAR", list(pv_sensors), index=1, key="dp_right")
     crop_mode = pc3.radio("Points", ["Cropped (road)", "Full (uncropped)"], horizontal=True, key="dp_crop")
     show_road = pc4.checkbox("🛣️ Road outline", value=True, key="dp_road")
+    color_h = pc5.checkbox("🌈 Color by height", value=False, key="dp_height",
+                           help="Colour points by z (Turbo) like the dev-kit.")
     cropped = crop_mode.startswith("Cropped")
 
     Lf = rv.list_by_frame(pv_sensors[pv_left], [".pcd"])
@@ -159,7 +161,8 @@ with tab_crop:
             pts = _load_raw(files[i])
             shown = dp.crop_points_to_region(pts, dp.road_polygon(margin)) if cropped else pts
             st.markdown(f"**{sensor} LiDAR** · {len(shown):,} pts")
-            st.plotly_chart(dp.crop_preview_figure(shown, margin=margin, height=520, draw_boundary=show_road),
+            st.plotly_chart(dp.crop_preview_figure(shown, margin=margin, height=520, draw_boundary=show_road,
+                                                   color_by_height=color_h),
                             use_container_width=True, key=key, config={"scrollZoom": True})
 
         @st.fragment
@@ -284,13 +287,15 @@ with tab_gt:
             st.session_state.gt_frame = i
 
             # Toggle each Geometry-Editor boundary onto the preview.
-            bt = st.columns(3)
+            bt = st.columns(4)
             show_roi = bt[0].toggle("🔵 ROI", value=True, key="gt_show_roi",
                                     help="Research region — objects outside it are dropped (red).")
             show_road = bt[1].toggle("🟢 Road outline", value=False, key="gt_show_road",
                                      help="Drivable area used for cropping.")
             show_excl = bt[2].toggle("🟣 Exclusion zones", value=False, key="gt_show_excl",
                                      help="Foreground-exclusion rectangles (static clutter).")
+            color_h = bt[3].toggle("🌈 Color by height", value=False, key="gt_height",
+                                   help="Colour points by z (Turbo) like the dev-kit.")
 
             kept_boxes, dropped_boxes = dp.scorable_classify(gt_labels[i], region, crit)
             pts = _load_raw(gt_clouds[i]) if (gt_clouds and i < len(gt_clouds)) else None
@@ -299,7 +304,8 @@ with tab_gt:
                 st.plotly_chart(dp.scorable_preview_figure(
                     pts, kept_boxes, dropped_boxes, region,
                     title=f"frame {i+1}/{n_gt} · kept {len(kept_boxes)}/{tot}",
-                    show_roi=show_roi, show_road=show_road, show_exclusion=show_excl),
+                    show_roi=show_roi, show_road=show_road, show_exclusion=show_excl,
+                    color_by_height=color_h),
                     use_container_width=True, key="gt_fig", config={"scrollZoom": True})
 
             if playing and i < n_gt - 1:
@@ -478,7 +484,7 @@ with tab_geom:
             else:
                 st.info("No exclusion rectangles.")
     with g_right:
-        pv1, pv2, pv3 = st.columns([1.1, 1, 1])
+        pv1, pv2, pv3, pv4 = st.columns([1, 1, 1, 1])
         pv1.markdown("**👁 Live preview**")
         mode = pv2.radio("Mouse", ["🖐 Pan", "⬛ Draw box"], horizontal=True, key="geom_drawmode",
                          label_visibility="collapsed",
@@ -487,12 +493,22 @@ with tab_geom:
         show_verts = pv3.toggle("🔖 Vertex labels", value=False, key="geom_verts",
                                 help="Tag every vertex (ROIn / R<road>.<v> / X<rect>.<v>) so you know "
                                      "which polygon and vertex you're editing.")
+        color_h = pv4.toggle("🌈 Color by height", value=False, key="geom_height",
+                             help="Colour the backdrop cloud by z (Turbo) like the dev-kit — ground vs "
+                                  "poles/vehicles separate by hue (great for spotting clutter in 2D).")
+        h_span = 4.0
+        if color_h:
+            h_span = st.slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="geom_hspan",
+                               help="Colour spreads over this many metres above the ground. Smaller = "
+                                    "more colour detail on short objects (cars show a gradient too); "
+                                    "taller things saturate at the top colour.")
         dm_mode = "select" if mode.startswith("⬛") else "pan"
         ev = st.plotly_chart(ge.preview_figure(geom_bg, geom, height=620,
                                                fg_points=geom_fg_kept if show_fg else None,
                                                fg_excluded_points=geom_fg_excl if show_fg else None,
                                                gt_objs=geom_gt if show_gt else None,
-                                               dragmode=dm_mode, show_vertex_labels=show_verts),
+                                               dragmode=dm_mode, show_vertex_labels=show_verts,
+                                               color_by_height=color_h, height_span=h_span),
                              use_container_width=True, config={"scrollZoom": True},
                              on_select="rerun", key="geom_preview")
 

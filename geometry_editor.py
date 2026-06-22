@@ -114,19 +114,27 @@ def apply_geometry_crop(fg, geom):
 
 
 def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=None,
-                   dragmode="pan", show_vertex_labels=False, fg_excluded_points=None):
+                   dragmode="pan", show_vertex_labels=False, fg_excluded_points=None,
+                   color_by_height=False, height_span=4.0):
     """BEV: point cloud + research (cyan dotted), road (green), exclusion (magenta).
     `fg_points` (kept foreground) is drawn red; `fg_excluded_points` (foreground that
     the current geometry crops out) is drawn grey. If `gt_objs` is given, overlay GT
-    box footprints + TYPE_id labels, category-coloured like the Visualizer."""
+    box footprints + TYPE_id labels, category-coloured like the Visualizer.
+    `color_by_height` colours the backdrop cloud by z (Turbo) like the dev-kit."""
     import numpy as np
     import plotly.graph_objects as go
     fig = go.Figure()
     if points is not None and len(points):
         if len(points) > 40000:
             points = points[np.random.default_rng(0).choice(len(points), 40000, replace=False)]
+        if color_by_height and points.shape[1] >= 3:
+            z = points[:, 2]; z0 = float(np.percentile(z, 1))
+            mk = dict(size=2, color=z, colorscale="Turbo", cmin=z0, cmax=z0 + float(height_span),
+                      showscale=False)
+        else:
+            mk = dict(size=2, color="#1f77b4")
         fig.add_trace(go.Scattergl(x=points[:, 0], y=points[:, 1], mode="markers",
-                                   marker=dict(size=2, color="#1f77b4"), hoverinfo="skip", showlegend=False))
+                                   marker=mk, hoverinfo="skip", showlegend=False))
     if fg_excluded_points is not None and len(fg_excluded_points):
         fig.add_trace(go.Scattergl(x=fg_excluded_points[:, 0], y=fg_excluded_points[:, 1], mode="markers",
                                    marker=dict(size=3, color="#888888"),

@@ -55,25 +55,48 @@ def discover_gt_index(gt_dir: str):
 
 def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
                            show_road=False, road_dashed=False, show_roi=False,
-                           show_excl=False, gt_objs=None):
+                           show_excl=False, gt_objs=None, color_by_height=False, height_span=4.0,
+                           show_foreground=True, show_original=True, height=560,
+                           azimuth=45.0, elevation=35.0):
     fig = go.Figure()
-    if original_pts.size > 0:
-        fig.add_trace(go.Scatter3d(x=original_pts[:, 0], y=original_pts[:, 1], z=original_pts[:, 2],
-            mode="markers", name="Original", marker=dict(size=1.5, color="#8fa3bd", opacity=0.2)))
-    if foreground_pts.size > 0:
-        fig.add_trace(go.Scatter3d(x=foreground_pts[:, 0], y=foreground_pts[:, 1], z=foreground_pts[:, 2],
-            mode="markers", name="Foreground", marker=dict(size=2.5, color="red", opacity=0.9)))
-    # 3D zoom is the CAMERA distance (eye). No uirevision so the camera below applies
-    # on every render; smaller eye = more zoomed in. The slider persists across frames.
+    # Resolve the road window first so we can lock the view AND clip the plotted points
+    # to it. Clipping is the key: aspectmode="data" sizes the 3D box from the POINT
+    # extent, so the full cloud's ~200 m span would crush z (flatten the view). Points
+    # outside the locked window are off-screen anyway, so clipping is visually lossless
+    # and keeps the SAME camera/zoom feel as the cropped view (back to aspectmode="data").
     poly = None
+    zmin, zmax = -12.0, 1.0
+    xlo = xhi = ylo = yhi = None
     try:
         from geometry_config import get_road_polygon
         poly = get_road_polygon()
         minx, miny, maxx, maxy = poly.bounds
         m = float(margin)
-        xr = dict(range=[minx - m, maxx + m]); yr = dict(range=[miny - m, maxy + m])
+        xlo, xhi, ylo, yhi = minx - m, maxx + m, miny - m, maxy + m
+        xr = dict(range=[xlo, xhi]); yr = dict(range=[ylo, yhi])
     except Exception:
         xr, yr = {}, {}
+
+    def _clip(p):
+        if p is None or not len(p) or xlo is None:
+            return p
+        mask = (p[:, 0] >= xlo) & (p[:, 0] <= xhi) & (p[:, 1] >= ylo) & (p[:, 1] <= yhi)
+        return p[mask]
+    original_pts = _clip(original_pts)
+    foreground_pts = _clip(foreground_pts)
+
+    if show_original and original_pts.size > 0:
+        if color_by_height:
+            z = original_pts[:, 2]; z0 = float(np.percentile(z, 1))
+            omk = dict(size=1.5, color=z, colorscale="Turbo", cmin=z0, cmax=z0 + float(height_span),
+                       opacity=0.5, showscale=False)
+        else:
+            omk = dict(size=1.5, color="#8fa3bd", opacity=0.2)
+        fig.add_trace(go.Scatter3d(x=original_pts[:, 0], y=original_pts[:, 1], z=original_pts[:, 2],
+            mode="markers", name="Original", marker=omk))
+    if show_foreground and foreground_pts.size > 0:
+        fig.add_trace(go.Scatter3d(x=foreground_pts[:, 0], y=foreground_pts[:, 1], z=foreground_pts[:, 2],
+            mode="markers", name="Foreground", marker=dict(size=2.5, color="red", opacity=0.9)))
 
     # Optional geometry overlays (off by default). Each region affects filtering:
     #   road = edge-band removal, ROI = bounds processing, exclusion = always dropped.
@@ -124,11 +147,22 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
         fig.add_trace(go.Scatter3d(x=lx, y=ly, z=lz, mode="text", text=lt,
             textfont=dict(size=11, color=lcol), hoverinfo="skip", showlegend=False))
 
-    eye = float(zoom)
-    fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), showlegend=True,
+    # Camera is driven entirely by the (persistent) sliders: zoom = distance,
+    # azimuth = orbit angle, elevation = tilt. Building eye from these angles is what
+    # makes the view persist across frames/toggles (the slider values live in
+    # session_state). Default az=45, el=35 reproduces the classic (z,z,z) view.
+    r = float(zoom) * np.sqrt(3.0)
+    az, el = np.radians(float(azimuth)), np.radians(float(elevation))
+    eye = dict(x=float(r * np.cos(el) * np.cos(az)),
+               y=float(r * np.cos(el) * np.sin(az)),
+               z=float(r * np.sin(el)))
+    urev = f"bf_{zoom}_{azimuth}_{elevation}"
+    fig.update_layout(height=height, margin=dict(l=0, r=0, b=0, t=0), showlegend=True,
+                      uirevision=urev,
                       scene=dict(aspectmode="data", xaxis=xr, yaxis=yr,
-                                 zaxis=dict(range=[-12.0, 1.0]),
-                                 camera=dict(eye=dict(x=eye, y=eye, z=eye))))
+                                 zaxis=dict(range=[zmin, zmax]),
+                                 camera=dict(eye=eye, up=dict(x=0, y=0, z=1)),
+                                 uirevision=urev))
     return fig
 
 
@@ -280,12 +314,30 @@ if st.session_state.bg_model:
             # Per-source default zoom (lower = more zoomed in). Edit these two numbers
             # to set the zoom each source loads at. Each source has its own slider/key,
             # so cropped and full remember their own zoom independently.
-            ZOOM_DEFAULTS = {"cropped": 0.7, "full": 1.25}
-            zoom = st.slider("3D zoom (lower = closer)", 0.6, 2.0,
-                             ZOOM_DEFAULTS.get(_src, 1.25), 0.05, key=f"bf_zoom_{_src}")
+            ZOOM_DEFAULTS = {"cropped": 0.7, "full": 0.9}
+            # Persistent camera controls on one line (zoom + rotate + tilt). These drive
+            # the camera from session_state, so the view holds across frames & toggles
+            # (mouse drag/scroll is for quick looks only and resets on rerun).
+            cz, _s1, ca, _s2, ce = st.columns([3, 0.4, 3, 0.4, 3])
+            zoom = cz.slider("🔍 Zoom", 0.35, 2.0, ZOOM_DEFAULTS.get(_src, 0.9), 0.05,
+                             key=f"bf_zoom_{_src}", help="Lower = closer.")
+            azimuth = ca.slider("🔄 Rotate", 0, 360, 45, 5, key="bf_az",
+                                help="Orbit angle around the scene (degrees).")
+            elevation = ce.slider("📐 Tilt", 5, 88, 35, 1, key="bf_el",
+                                  help="Camera height angle; 88 ≈ straight-down bird's-eye.")
+
+            # Point-cloud layers (persist across frames, unlike legend clicks).
+            lc = st.columns(2)
+            show_fg_pts = lc[0].toggle("🔴 Foreground points", value=True, key="bf_show_fg",
+                                       help="Show the red moving-foreground points (persists across frames).")
+            show_orig = lc[1].toggle("⚪ Original cloud", value=True, key="bf_show_orig",
+                                     help="Show the faint background/original cloud.")
 
             # Geometry overlays — each region actually affects filtering:
-            geo = st.columns(3)
+            geo = st.columns(4)
+            color_h = geo[3].toggle("🌈 Color by height", value=False, key="bf_height",
+                                    help="Colour the original cloud by z (Turbo) like the dev-kit — "
+                                         "ground vs poles/vehicles separate by hue.")
             road_on = geo[0].toggle("🛣️ Road outline", value=(_src == "cropped"),
                                     key=f"bf_road_{_src}",
                                     help="Road polygon boundary. Solid on cropped (the actual crop); "
@@ -309,6 +361,11 @@ if st.session_state.bg_model:
             min_pts = opt[2].number_input("≥ pts", 1, 200, 10, 1, key="bf_minpts",
                                           help="A GT object counts as 'covered' with at "
                                                "least this many surviving foreground points.")
+            h_span = 4.0
+            if color_h:
+                h_span = opt[3].slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="bf_hspan",
+                                       help="Colour spreads over this many metres above the ground "
+                                            "(smaller = cars show a gradient; tall stuff saturates).")
 
             pts = _load_raw(pcd_files[i])
             fg, _ = filter_points_with_model(pts, st.session_state.bg_model, config)
@@ -318,13 +375,18 @@ if st.session_state.bg_model:
                 gp = gt_index.get(_frame_key(pcd_files[i]))
                 if gp:
                     gt_objs = lp.load_objects(gp)
-            with st.container(height=560):
-                st.plotly_chart(
-                    create_filtered_figure(fg, pts, margin=12.0, zoom=zoom,
-                                           show_road=road_on, road_dashed=(_src != "cropped"),
-                                           show_roi=roi_on, show_excl=excl_on,
-                                           gt_objs=gt_objs if gt_on else None),
-                    use_container_width=True, key="bf_fig")
+            # NOTE: render the chart directly (no fixed-height st.container) — wrapping
+            # it in a container remounts the plot each rerun and wipes the camera, which
+            # defeats uirevision. Height is set on the figure instead.
+            st.plotly_chart(
+                create_filtered_figure(fg, pts, margin=12.0, zoom=zoom,
+                                       show_road=road_on, road_dashed=(_src != "cropped"),
+                                       show_roi=roi_on, show_excl=excl_on,
+                                       gt_objs=gt_objs if gt_on else None,
+                                       color_by_height=color_h, height_span=h_span,
+                                       show_foreground=show_fg_pts, show_original=show_orig,
+                                       height=560, azimuth=azimuth, elevation=elevation),
+                use_container_width=True, key="bf_fig")
             st.caption(f"{os.path.basename(pcd_files[i])} · frame {i+1}/{n_bf} · "
                        f"{len(fg)} foreground / {len(pts)} points")
 
