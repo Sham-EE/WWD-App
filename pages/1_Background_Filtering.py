@@ -40,7 +40,21 @@ def discover_pcd_files(dir_path: str):
     logging.info(f"Discovered {len(files)} PCD files in {dir_path}")
     return files
 
-def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25):
+def _frame_key(path):
+    """Leading <timestamp1>_<timestamp2> token shared by a PCD and its GT label."""
+    return "_".join(os.path.basename(path).split("_")[:2])
+
+@st.cache_data(show_spinner=False)
+def discover_gt_index(gt_dir: str):
+    """Map frame key -> GT label .json so boxes can be matched to each cloud frame."""
+    idx = {}
+    if gt_dir and os.path.isdir(gt_dir):
+        for f in glob.glob(os.path.join(gt_dir, "*.json")):
+            idx[_frame_key(f)] = f
+    return idx
+
+def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
+                           show_road=False, gt_objs=None):
     fig = go.Figure()
     if original_pts.size > 0:
         fig.add_trace(go.Scatter3d(x=original_pts[:, 0], y=original_pts[:, 1], z=original_pts[:, 2],
@@ -50,15 +64,43 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25)
             mode="markers", name="Foreground", marker=dict(size=2.5, color="red", opacity=0.9)))
     # 3D zoom is the CAMERA distance (eye). No uirevision so the camera below applies
     # on every render; smaller eye = more zoomed in. The slider persists across frames.
+    poly = None
     try:
         from geometry_config import get_road_polygon
-        minx, miny, maxx, maxy = get_road_polygon().bounds
+        poly = get_road_polygon()
+        minx, miny, maxx, maxy = poly.bounds
         m = float(margin)
         xr = dict(range=[minx - m, maxx + m]); yr = dict(range=[miny - m, maxy + m])
     except Exception:
         xr, yr = {}, {}
+
+    # Optional overlays (kept off by default so the base view is unchanged):
+    z_floor = float(original_pts[:, 2].min()) if original_pts.size else -8.0
+    if show_road and poly is not None:
+        geoms = [poly] if poly.geom_type == "Polygon" else list(poly.geoms)
+        for j, g in enumerate(geoms):
+            gx, gy = g.exterior.xy
+            fig.add_trace(go.Scatter3d(x=list(gx), y=list(gy), z=[z_floor] * len(gx),
+                mode="lines", line=dict(color="limegreen", width=4), name="Road outline",
+                legendgroup="road", showlegend=(j == 0), hoverinfo="skip"))
+    if gt_objs:
+        import label_projection as lp
+        import lidar_viewer as lv
+        # Category-coloured boxes + TYPE_id text labels, matching the Visualizer's
+        # 3D LiDAR view (same _box_edge_groups / _color_for / _label_text helpers).
+        for col, (xs, ys, zs) in lv._box_edge_groups(gt_objs, "by_category").items():
+            fig.add_trace(go.Scatter3d(x=xs, y=ys, z=zs, mode="lines",
+                line=dict(color=col, width=3), hoverinfo="skip", showlegend=False))
+        lx, ly, lz, lt, lcol = [], [], [], [], []
+        for o in gt_objs:
+            top = lp.cuboid_corners(o["val"])[:4].mean(axis=0)   # top-face centre
+            lx.append(top[0]); ly.append(top[1]); lz.append(top[2] + 0.4)
+            lt.append(lp._label_text(o)); lcol.append(lv._hex(lp._color_for(o, "by_category")))
+        fig.add_trace(go.Scatter3d(x=lx, y=ly, z=lz, mode="text", text=lt,
+            textfont=dict(size=11, color=lcol), hoverinfo="skip", showlegend=False))
+
     eye = float(zoom)
-    fig.update_layout(margin=dict(l=0, r=0, b=0, t=0),
+    fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), showlegend=True,
                       scene=dict(aspectmode="data", xaxis=xr, yaxis=yr,
                                  zaxis=dict(range=[-12.0, 1.0]),
                                  camera=dict(eye=dict(x=eye, y=eye, z=eye))))
@@ -185,6 +227,8 @@ if st.session_state.bg_model:
     st.subheader("Filtered Point Cloud Viewer")
 
     pcd_files = discover_pcd_files(config["pcd_dir"])
+    gt_index = discover_gt_index(config["gt_dir"])
+    has_gt = bool(gt_index)
     if pcd_files:
         n_bf = len(pcd_files)
         st.session_state.setdefault("bf_frame", 0)
@@ -205,14 +249,36 @@ if st.session_state.bg_model:
             play_delay = nav[5].slider("Play delay (s)", 0.0, 1.0, 0.15, 0.05)
             i = st.slider("Frame", 0, max(n_bf - 1, 1), st.session_state.bf_frame)
             st.session_state.bf_frame = i
-            # Lower = more zoomed in. Same value for cropped & full so they match.
-            zoom = st.slider("3D zoom (lower = closer)", 0.6, 2.0, 1.25, 0.05, key="bf_zoom")
+            # Per-source default zoom (lower = more zoomed in). Edit these two numbers
+            # to set the zoom each source loads at. Each source has its own slider/key,
+            # so cropped and full remember their own zoom independently.
+            ZOOM_DEFAULTS = {"cropped": 0.7, "full": 1.25}
+            zoom = st.slider("3D zoom (lower = closer)", 0.6, 2.0,
+                             ZOOM_DEFAULTS.get(_src, 1.25), 0.05, key=f"bf_zoom_{_src}")
+
+            opt = st.columns([1.1, 1.1, 3.8])
+            road_on = opt[0].toggle("🛣️ Road outline", value=(_src == "cropped"),
+                                    disabled=(_src != "cropped"), key=f"bf_road_{_src}",
+                                    help="Draw the road-crop polygon boundary (cropped source).")
+            gt_on = opt[1].toggle("🏷️ GT boxes", value=False, disabled=not has_gt,
+                                  key="bf_gt",
+                                  help="Overlay this frame's ground-truth 3D boxes (cyan)."
+                                       if has_gt else "No ground truth for this dataset.")
 
             pts = _load_raw(pcd_files[i])
             fg, _ = filter_points_with_model(pts, st.session_state.bg_model, config)
+            gt_objs = None
+            if gt_on:
+                import label_projection as lp
+                gp = gt_index.get(_frame_key(pcd_files[i]))
+                if gp:
+                    gt_objs = lp.load_objects(gp)
             with st.container(height=560):
-                st.plotly_chart(create_filtered_figure(fg, pts, margin=12.0, zoom=zoom),
-                                use_container_width=True, key="bf_fig")
+                st.plotly_chart(
+                    create_filtered_figure(fg, pts, margin=12.0, zoom=zoom,
+                                           show_road=road_on and _src == "cropped",
+                                           gt_objs=gt_objs),
+                    use_container_width=True, key="bf_fig")
             st.caption(f"{os.path.basename(pcd_files[i])} · frame {i+1}/{n_bf} · "
                        f"{len(fg)} foreground / {len(pts)} points")
 
