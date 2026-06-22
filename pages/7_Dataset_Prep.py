@@ -690,12 +690,17 @@ with tab_reg:
         f = _fused(sp, npath, Ms.tolist(), Mn.tolist(), refine_l)
 
         big_yaw = abs(inf["yaw_deg"]) > 1.0 or inf["translation_m"] > 0.5
-        verdict = ("⚠️ calibration is off — refinement recommended" if big_yaw
-                   else "✅ calibration already aligns well")
+        # the yaw/shift describe how far OFF the raw calibration is; the verdict
+        # then says whether that error is currently being corrected.
+        if not big_yaw:
+            verdict = "✅ raw calibration already aligns well — correction negligible"
+        elif use_refine:
+            verdict = "✅ corrected (this is how far off the raw calibration was)"
+        else:
+            verdict = "⚠️ raw calibration is off by this much — toggle on to correct"
         st.info(f"ICP correction (north→south): yaw **{inf['yaw_deg']:+.2f}°** · "
-                f"Δt **{inf['translation_m']:.2f} m** · fitness **{inf['fitness']:.2f}** · "
-                f"RMSE **{inf['inlier_rmse']:.3f} m** — {verdict}"
-                + ("  ·  *applied*" if use_refine else "  ·  *not applied (toggle on to correct)*"))
+                f"shift **{inf['translation_m']:.2f} m** · fitness **{inf['fitness']:.2f}** · "
+                f"RMSE **{inf['inlier_rmse']:.3f} m** — {verdict}")
 
         is_raw = view.startswith("Raw")
         if is_raw:
