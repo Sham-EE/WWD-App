@@ -72,12 +72,20 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
     # 3D zoom is the CAMERA distance (eye). No uirevision so the camera below applies
     # on every render; smaller eye = more zoomed in. The slider persists across frames.
     poly = None
+    zmin, zmax = -12.0, 1.0
+    aspect = None
     try:
         from geometry_config import get_road_polygon
         poly = get_road_polygon()
         minx, miny, maxx, maxy = poly.bounds
         m = float(margin)
         xr = dict(range=[minx - m, maxx + m]); yr = dict(range=[miny - m, maxy + m])
+        # Fix the box proportions to the ROAD region (not the data) so the full cloud's
+        # ~200 m extent no longer crushes z. aspectmode="data" flattened the full view;
+        # manual + this ratio makes Full look like Cropped.
+        dxw, dyw, dzw = (maxx - minx) + 2 * m, (maxy - miny) + 2 * m, (zmax - zmin)
+        md = max(dxw, dyw, dzw)
+        aspect = dict(x=dxw / md, y=dyw / md, z=dzw / md)
     except Exception:
         xr, yr = {}, {}
 
@@ -131,10 +139,13 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
             textfont=dict(size=11, color=lcol), hoverinfo="skip", showlegend=False))
 
     eye = float(zoom)
-    fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), showlegend=True,
-                      scene=dict(aspectmode="data", xaxis=xr, yaxis=yr,
-                                 zaxis=dict(range=[-12.0, 1.0]),
-                                 camera=dict(eye=dict(x=eye, y=eye, z=eye))))
+    scene = dict(xaxis=xr, yaxis=yr, zaxis=dict(range=[zmin, zmax]),
+                 camera=dict(eye=dict(x=eye, y=eye, z=eye)))
+    if aspect:
+        scene["aspectmode"] = "manual"; scene["aspectratio"] = aspect
+    else:
+        scene["aspectmode"] = "data"
+    fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), showlegend=True, scene=scene)
     return fig
 
 
