@@ -8,6 +8,7 @@ import streamlit as st
 import dataset_manager as dm
 import dataset_prep as dp
 import geometry_editor as ge
+import registration as reg
 import road_viewer as rv
 
 st.set_page_config(layout="wide", page_title="Dataset Prep")
@@ -101,8 +102,9 @@ def _vertex_editor(poly, label, step=1.0):
     return out
 
 
-tab_crop, tab_gt, tab_geom = st.tabs(
-    ["✂️ Crop to road (ROI)", "🏷️ Scorable GT (visible-only)", "🗺️ Geometry Editor"])
+tab_crop, tab_gt, tab_geom, tab_reg = st.tabs(
+    ["✂️ Crop to road (ROI)", "🏷️ Scorable GT (visible-only)", "🗺️ Geometry Editor",
+     "🧭 Registration (south + north)"])
 
 # ===================== Tab 1: Crop to road =====================
 with tab_crop:
@@ -540,3 +542,225 @@ with tab_geom:
             st.caption("Drag a rectangle on the plot to draw a box.")
 
     st.session_state.geom_edit = geom
+
+
+# ===================== Tab 4: Registration (south + north) =====================
+with tab_reg:
+    st.caption("Fuse the **south** and **north** Ouster LiDARs into one cloud in the shared "
+               "**`s110_base`** frame. The sensor→base extrinsics are read straight from the OpenLABEL "
+               "labels (static rig → constant 4×4), so registration is **deterministic** — no guessing. "
+               "Optional **ICP** then *measures* how well the bundled calibration aligns the clouds.")
+
+    label_dirs = {"south": ds.raw_labels_south_dir, "north": ds.raw_labels_north_dir}
+    pcd_dirs = {"south": ds.raw_lidar_south_dir, "north": ds.raw_lidar_north_dir}
+    reg_out = os.path.join(ds.derived_dir, "registered")
+
+    @st.cache_data(show_spinner=False)
+    def _calib(side, label_dir):
+        M = reg.calibration_for(label_dir, side)
+        dev = reg.calibration_is_constant(label_dir, side)
+        return (M.tolist() if M is not None else None), dev
+
+    Ms_l, dev_s = _calib("south", label_dirs["south"])
+    Mn_l, dev_n = _calib("north", label_dirs["north"])
+    Ms = np.array(Ms_l) if Ms_l else None
+    Mn = np.array(Mn_l) if Mn_l else None
+
+    if Ms is None or Mn is None:
+        st.error("Couldn't read the sensor→base calibration from the labels. "
+                 f"Need OpenLABEL labels with `s110_lidar_ouster_*` poses in "
+                 f"`{label_dirs['south']}` and `{label_dirs['north']}`.")
+        st.stop()
+
+    # --- calibration read-out ---
+    with st.expander("📐 Calibration (sensor → s110_base, read from labels)", expanded=False):
+        for side, M, dev in (("South", Ms, dev_s), ("North", Mn, dev_n)):
+            t = M[:3, 3]
+            st.markdown(f"**{side}** → `s110_base`  ·  translation "
+                        f"(x={t[0]:.2f}, y={t[1]:.2f}, z={t[2]:.2f}) m  ·  "
+                        f"frame-to-frame drift {dev:.1e} "
+                        + ("✅ static" if (dev is not None and dev < 1e-6) else "⚠️ varies"))
+            st.code(np.array2string(M, precision=4, suppress_small=True), language="text")
+
+    # --- frame pairing ---
+    sp_files = rv.list_by_frame(pcd_dirs["south"], [".pcd"])
+    np_files = rv.list_by_frame(pcd_dirs["north"], [".pcd"])
+    if not sp_files or not np_files:
+        st.warning("Need raw point clouds for **both** south and north LiDARs under "
+                   f"`{pcd_dirs['south']}` and `{pcd_dirs['north']}`.")
+        st.stop()
+    pairs = reg.match_frame_pairs(sp_files, np_files)
+    dts = [p[2] for p in pairs]
+    mc1, mc2, mc3 = st.columns(3)
+    mc1.metric("Matched pairs", f"{len(pairs)}")
+    mc2.metric("Mean Δt", f"{np.mean(dts):.0f} ms")
+    mc3.metric("Max Δt", f"{max(dts):.0f} ms")
+    st.caption("Sensors fire asynchronously, so each south frame is paired with its nearest-in-time "
+               "north frame. Small Δt ⇒ negligible motion between the two captures.")
+
+    # --- ICP refine ---
+    st.divider()
+    st.markdown("**🔧 ICP refinement** — the bundled extrinsics align the ground plane but carry a "
+                "relative **yaw + translation** error between the two sensors. Coarse-to-fine "
+                "point-to-plane ICP measures and corrects it; the rig is static, so one correction "
+                "applies to every frame.")
+    ic1, ic2, ic3, ic4 = st.columns([1.4, 1, 1, 1])
+    use_refine = ic1.toggle("Apply ICP correction", value=True, key="reg_use_icp",
+                            help="On = north corrected by ICP on top of the calibration (recommended — "
+                                 "the raw calibration is visibly off). Off = pure calibration only.")
+    icp_dist = ic2.slider("ICP fine dist (m)", 0.2, 2.0, 0.5, 0.1, key="reg_icp_dist",
+                          help="Finest correspondence distance (coarse-to-fine starts at 5 m).")
+    icp_iter = ic3.slider("ICP iters/level", 10, 100, 60, 10, key="reg_icp_iter")
+    icp_voxel = ic4.slider("ICP voxel (m)", 0.0, 1.0, 0.25, 0.05, key="reg_icp_voxel",
+                           help="Downsample before ICP for speed (0 = full resolution).")
+
+    st.session_state.setdefault("reg_frame", 0)
+    st.session_state.setdefault("reg_delta", None)
+
+    st.divider()
+    st.subheader("👁 Preview — Raw vs Registered")
+    st.caption("One viewer, two modes. **Raw** overlays the two clouds in their own sensor frames "
+               "(the 'before' — they won't line up). **Registered** transforms both into `s110_base` "
+               "(the 'after'). Toggle **By sensor** to colour south (blue) / north (orange) — if a "
+               "vehicle shows up as two offset copies in Registered view, that's a registration error.")
+
+    @st.cache_data(show_spinner=False)
+    def _fused(sp, npath, Ms_l, Mn_l, refine_l):
+        s_pts = reg.load_xyz(sp)
+        n_pts = reg.load_xyz(npath)
+        refine = np.array(refine_l) if refine_l else None
+        f = reg.fuse_pair(s_pts, n_pts, np.array(Ms_l), np.array(Mn_l), refine=refine)
+        return {"south": f["south"], "north": f["north"]}
+
+    @st.cache_data(show_spinner="Running ICP…")
+    def _icp_for(sp, npath, Ms_l, Mn_l, dist, iters, voxel):
+        """Coarse-to-fine ICP correction (north→south) for one pair, cached by
+        pair + params. Returns (delta_list, info)."""
+        f = reg.fuse_pair(reg.load_xyz(sp), reg.load_xyz(npath), np.array(Ms_l), np.array(Mn_l))
+        delta, info = reg.icp_refine(f["north"], f["south"], max_dist=dist, max_iter=iters, voxel=voxel)
+        return delta.tolist(), info
+
+    @st.fragment
+    def _reg_preview():
+        st.session_state.reg_frame = max(0, min(st.session_state.reg_frame, len(pairs) - 1))
+        nav = st.columns([1, 1, 1, 1, 1.3, 3])
+        if nav[0].button("⏮ First", use_container_width=True, key="reg_first"):
+            st.session_state.reg_frame = 0
+        if nav[1].button("◀ Prev", use_container_width=True, key="reg_prev"):
+            st.session_state.reg_frame = max(0, st.session_state.reg_frame - 1)
+        if nav[2].button("Next ▶", use_container_width=True, key="reg_next"):
+            st.session_state.reg_frame = min(len(pairs) - 1, st.session_state.reg_frame + 1)
+        if nav[3].button("Last ⏭", use_container_width=True, key="reg_last"):
+            st.session_state.reg_frame = len(pairs) - 1
+        playing = nav[4].toggle("▶ Play", value=False, key="reg_play")
+        delay = nav[5].slider("Play delay (s)", 0.0, 1.0, 0.15, 0.05, key="reg_delay")
+        i = st.slider("Pair", 0, max(len(pairs) - 1, 1), st.session_state.reg_frame, key="reg_slider")
+        st.session_state.reg_frame = i
+        sp, npath, dt_ms = pairs[i]
+
+        # view controls — one cohesive viewer with a Raw <-> Registered toggle
+        tc1, tc2 = st.columns([1, 1])
+        view = tc1.radio("View", ["Raw (unregistered)", "Registered (s110_base)"],
+                         horizontal=True, index=1, key="reg_view",
+                         help="Raw = each cloud in its OWN sensor frame, overlaid (the 'before' — they "
+                              "won't line up). Registered = both transformed into the shared s110_base "
+                              "frame (the 'after').")
+        color_mode = tc2.radio("Color", ["By sensor", "By height"], horizontal=True,
+                               key="reg_color", help="By sensor = south (blue) / north (orange) distinct "
+                                                     "— alignment QA. By height = Turbo z-ramp.")
+        vc1, _s1, vc2, _s2, vc3 = st.columns([3, 0.3, 3, 0.3, 3])
+        zoom = vc1.slider("🔍 Zoom", 0.35, 2.0, 0.9, 0.05, key="reg_zoom")
+        az = vc2.slider("🔄 Rotate", 0, 360, 45, key="reg_az")
+        el = vc3.slider("📐 Tilt", 5, 88, 35, key="reg_el")
+        rc1, rc2, rc3, rc4, rc5, _r = st.columns([1.3, 1.3, 1.3, 1.3, 1.3, 2])
+        show_s = rc1.toggle("🔵 South", value=True, key="reg_show_s")
+        show_n = rc2.toggle("🟠 North", value=True, key="reg_show_n")
+        show_road = rc3.toggle("🟢 Road", value=False, key="reg_road",
+                               help="Road outline (s110_base frame — Registered view only).")
+        show_roi = rc4.toggle("🔵 ROI", value=False, key="reg_roi",
+                              help="Research region (s110_base frame — Registered view only).")
+        show_sensors = rc5.toggle("📍 Sensors", value=True, key="reg_sensors",
+                                  help="Mark the LiDAR positions + a plumb line to each nadir "
+                                       "(blank spot) — Registered view only.")
+        hspan = st.slider("🌈 Height span (m)", 1.0, 12.0, 4.0, 0.5, key="reg_hspan")
+
+        # ICP correction for this pair (auto-computed + cached). Always measured
+        # so the read-out quantifies the calibration error; applied only if the
+        # toggle is on. Stored as reg_delta so the batch writer reuses it.
+        delta_l, inf = _icp_for(sp, npath, Ms.tolist(), Mn.tolist(), icp_dist, icp_iter, icp_voxel)
+        st.session_state.reg_delta = delta_l
+        refine_l = delta_l if use_refine else None
+        f = _fused(sp, npath, Ms.tolist(), Mn.tolist(), refine_l)
+
+        big_yaw = abs(inf["yaw_deg"]) > 1.0 or inf["translation_m"] > 0.5
+        # the yaw/shift describe how far OFF the raw calibration is; the verdict
+        # then says whether that error is currently being corrected.
+        if not big_yaw:
+            verdict = "✅ raw calibration already aligns well — correction negligible"
+        elif use_refine:
+            verdict = "✅ corrected (this is how far off the raw calibration was)"
+        else:
+            verdict = "⚠️ raw calibration is off by this much — toggle on to correct"
+        st.info(f"ICP correction (north→south): yaw **{inf['yaw_deg']:+.2f}°** · "
+                f"shift **{inf['translation_m']:.2f} m** · fitness **{inf['fitness']:.2f}** · "
+                f"RMSE **{inf['inlier_rmse']:.3f} m** — {verdict}")
+
+        is_raw = view.startswith("Raw")
+        if is_raw:
+            # raw clouds in their OWN sensor frames — don't clip to the base-frame
+            # road window and don't draw base-frame overlays (they wouldn't line up)
+            data = {"south": _load_raw(sp)[:, :3], "north": _load_raw(npath)[:, :3]}
+            tag, clip, road_on, roi_on, sensors = "RAW · unregistered", False, False, False, None
+        else:
+            data, tag, clip, road_on, roi_on = f, "REGISTERED · s110_base", True, show_road, show_roi
+            sensors = None
+            if show_sensors:
+                # sensor origin in base = translation column of its calibration; the
+                # north sensor moves with the ICP correction when it's applied.
+                south_pos = Ms[:3, 3]
+                n_pos = Mn[:3, 3]
+                if use_refine:
+                    n_pos = (np.array(delta_l) @ np.append(n_pos, 1.0))[:3]
+                # vivid blue / red — coordinated with the south(blue)/north(orange-red)
+                # clouds, but brighter (+ white outline) so the markers stand out.
+                sensors = [{"name": "South", "pos": [float(v) for v in south_pos], "color": "#1e90ff"},
+                           {"name": "North", "pos": [float(v) for v in n_pos], "color": "#ff1744"}]
+        title = (f"{tag} · pair {i+1}/{len(pairs)} · Δt {dt_ms:.0f} ms · "
+                 f"{len(data['south']):,}+{len(data['north']):,} pts")
+        with st.container(height=680):
+            st.plotly_chart(
+                reg.registration_figure(
+                    data, color_mode=("by_height" if color_mode == "By height" else "by_sensor"),
+                    height_span=hspan, show_south=show_s, show_north=show_n,
+                    show_road=road_on, show_roi=roi_on, clip=clip, sensors=sensors,
+                    height=660, title=title, zoom=zoom, azimuth=float(az), elevation=float(el)),
+                use_container_width=True, key="reg_fig", config={"scrollZoom": True})
+
+        if playing and i < len(pairs) - 1:
+            time.sleep(float(delay))
+            st.session_state.reg_frame = i + 1
+            st.rerun(scope="fragment")
+
+    _reg_preview()
+
+    # --- batch register ---
+    st.divider()
+    st.subheader("💾 Register all frames")
+    st.text_input("Output (registered) folder", value=reg_out, key="reg_out", disabled=True)
+    batch_refine = st.session_state.reg_delta if (use_refine and st.session_state.reg_delta) else None
+    if batch_refine is not None:
+        st.caption("ICP refinement **will** be baked into the written clouds (north corrected by the "
+                   "last-run ICP delta).")
+    else:
+        st.caption("Pure calibration will be written (recommended). Run + apply ICP above to bake a "
+                   "refinement instead.")
+    if st.button("🧭 Register & write fused clouds", type="primary", use_container_width=True,
+                 key="reg_go"):
+        bar = st.progress(0.0, text="Registering…")
+        n, total = reg.register_dataset(
+            pcd_dirs["south"], pcd_dirs["north"], Ms, Mn, reg_out,
+            refine=(np.array(batch_refine) if batch_refine is not None else None),
+            progress=lambda c, t: bar.progress(c / t, text=f"Registering {c}/{t}"))
+        bar.empty()
+        st.success(f"Wrote **{n}** fused clouds → `{reg_out}`  (manifest: `registration.json`). "
+                   "Now crop or score the **Registered (south + north)** source in the other tabs.")
