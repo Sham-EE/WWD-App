@@ -117,12 +117,13 @@ with st.expander("🌳 Expected workspace structure"):
 │   │   ├── labels/{{s110_lidar_ouster_south, _north}}/*.json
 │   │   └── images/<camera>/*.jpg
 │   └── derived/                     # regenerated in-app (Dataset Prep)
-│       ├── cropped_{{south, north}}/*.pcd     # clipped to road (pipeline input)
-│       ├── registered/*.pcd                  # fused south+north (s110_base)
-│       └── labels_visible_{{south, north}}/*.json  # scorable GT
+│       ├── point_clouds/registered/*.pcd            # fused south+north (s110_base)
+│       ├── point_clouds/cropped/<sensor>/*.pcd      # clipped to road (pipeline input)
+│       └── labels/scorable/<sensor>/*.json          # visible-only GT
 └── outputs/                         # generated — gitignored
-    ├── background_model/, background_filtering/, object_detection/
-    └── rendered/, road_videos/""",
+    ├── background/{{background_model, background_filtering}}/<sensor>/<crop>/
+    ├── detection/object_detection/<sensor>/<crop>/   # tracks.csv, animation, eval report
+    └── visualizer/{{rendered, road_videos}}/""",
         language="text")
     st.caption("`config/` is tracked in git; `data/` (raw + derived) and `outputs/` stay local per "
                "dataset. Everything under `derived/` can be regenerated from `raw/` on the Dataset Prep page.")

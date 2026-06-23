@@ -64,7 +64,7 @@ def render_camera_tab():
     variant_label = c3.radio("Visualization", variant_labels, index=(1 if have_labels else 0),
                              horizontal=True,
                              help="Box/point-cloud overlays are generated from the OpenLABEL labels + "
-                                  "calibration and cached under the dataset's outputs/rendered/.")
+                                  "calibration and cached under the dataset's outputs/visualizer/rendered/.")
     mode = modes[variant_label]
     if not have_labels:
         st.info(f"No OpenLABEL label files in `{label_dir}` — only raw images can be shown.")
@@ -81,7 +81,7 @@ def render_camera_tab():
             point_size = oc2.select_slider("Point size", [1, 2, 3], value=2)
         if oc3.button("♻️ Regenerate (clear cache)", help="Delete cached overlays and re-render."):
             import shutil
-            shutil.rmtree(os.path.join(ds.outputs_dir, "rendered"), ignore_errors=True)
+            shutil.rmtree(ds.rendered_dir, ignore_errors=True)
             st.session_state.road_video = None
             st.rerun()
         th1, th2, th3 = st.columns([1.3, 1, 1])
@@ -132,7 +132,7 @@ def render_camera_tab():
         ps = f"_ps{point_size}" if mode == "point_cloud" else ""
         pc = (f"_pc{'full' if pc_full else 'crop'}") if mode == "point_cloud" else ""
         th = f"_th{hist_window}w{trail_width}" if track_hist else ""
-        return os.path.join(ds.outputs_dir, "rendered", cam, f"{mode}_{color_mode}{ps}{pc}{th}_{lp.RENDER_VERSION}")
+        return os.path.join(ds.rendered_dir, cam, f"{mode}_{color_mode}{ps}{pc}{th}_{lp.RENDER_VERSION}")
 
     def _render(i, cam, cam_id, raw):
         if not mode:
@@ -170,7 +170,7 @@ def render_camera_tab():
     v_fps = g1.slider("Video FPS", 1, 30, 10, 1)
     v_height = g2.select_slider("Frame height (px)", [360, 480, 540, 720], value=480)
     v_max = g3.number_input("Max frames (0 = all)", 0, n, 0)
-    video_dir = os.path.join(ds.outputs_dir, "road_videos")
+    video_dir = ds.road_videos_dir
     tag = mode or "raw"
     basename = f"road_{left_cam}_{right_cam}_{tag}_{color_mode if mode else 'plain'}"
     st.session_state.setdefault("road_video", None)
