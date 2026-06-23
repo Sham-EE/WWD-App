@@ -44,8 +44,8 @@ TEMPLATES = [
         "id": "A9_r02_s02",
         "name": "TUMTraf A9 r02_s02 (s110 ouster south) — template",
         "template": True,
-        "pcd_dir": "datasets/A9_r02_s02/data/derived/cropped_south",
-        "gt_dir": "datasets/A9_r02_s02/data/derived/labels_visible_south",
+        "pcd_dir": "datasets/A9_r02_s02/data/derived/point_clouds/cropped/south",
+        "gt_dir": "datasets/A9_r02_s02/data/derived/labels/scorable/south",
         "workspace": "datasets/A9_r02_s02",
     },
 ]
@@ -83,26 +83,21 @@ class Dataset:
     def gt_dir(self):
         return self.d.get("gt_dir", os.path.join(self.workspace, "data", "labels"))
 
+    def _has_json(self, d):
+        try:
+            return os.path.isdir(d) and any(f.endswith(".json") for f in os.listdir(d))
+        except OSError:
+            return False
+
     def _north_gt_dir(self):
         """North GT: prefer the generated scorable set, else the raw north labels."""
-        scorable = os.path.join(self.derived_dir, "labels_visible_north")
-        try:
-            if os.path.isdir(scorable) and any(f.endswith(".json") for f in os.listdir(scorable)):
-                return scorable
-        except OSError:
-            pass
-        return self.raw_labels_north_dir
+        scorable = self.scorable_gt_dir_for("north")
+        return scorable if self._has_json(scorable) else self.raw_labels_north_dir
 
     def _registered_gt_dir(self):
-        """Registered GT: prefer the generated scorable set, else fused labels."""
-        for c in (os.path.join(self.derived_dir, "labels_visible_registered"),
-                  os.path.join(self.derived_dir, "registered_labels")):
-            try:
-                if os.path.isdir(c) and any(f.endswith(".json") for f in os.listdir(c)):
-                    return c
-            except OSError:
-                pass
-        return self.gt_dir
+        """Registered GT: prefer the generated scorable set, else fall back to south."""
+        scorable = self.scorable_gt_dir_for("registered")
+        return scorable if self._has_json(scorable) else self.gt_dir
 
     def gt_dir_for_input(self, input_pcd_dir):
         """Pick the GT folder whose sensor matches the input clouds, so the GT
@@ -133,6 +128,20 @@ class Dataset:
     @property
     def derived_dir(self):
         return os.path.join(self.data_dir, "derived")
+
+    # --- DERIVED data, nested to mirror raw/ (point_clouds/ + labels/) ---
+    #   derived/point_clouds/registered/*.pcd               (fused, s110_base)
+    #   derived/point_clouds/cropped/<sensor>/*.pcd         (road-clipped)
+    #   derived/labels/scorable/<sensor>/*.json             (visible-only GT)
+    @property
+    def registered_dir(self):
+        return os.path.join(self.derived_dir, "point_clouds", "registered")
+
+    def cropped_dir_for(self, sensor):
+        return os.path.join(self.derived_dir, "point_clouds", "cropped", sensor)
+
+    def scorable_gt_dir_for(self, sensor):
+        return os.path.join(self.derived_dir, "labels", "scorable", sensor)
 
     @property
     def raw_lidar_south_dir(self):
@@ -216,15 +225,14 @@ class Dataset:
 
     def input_pcd_for_sensor(self, sensor, source):
         if sensor == "north":
-            return (os.path.join(self.derived_dir, "cropped_north")
+            return (self.cropped_dir_for("north")
                     if source == "cropped" else self.raw_lidar_north_dir)
         if sensor == "registered":
-            crop = os.path.join(self.derived_dir, "cropped_registered")
-            full = os.path.join(self.derived_dir, "registered")
+            crop = self.cropped_dir_for("registered")
             if source == "cropped":
                 # fall back to the full fused cloud if it hasn't been cropped yet
-                return crop if self._dir_has_pcd(crop) else full
-            return full
+                return crop if self._dir_has_pcd(crop) else self.registered_dir
+            return self.registered_dir
         return self.input_pcd_for(source)  # south
 
     # --- per-SENSOR OUTPUT paths, nested so outputs/ stays tidy ---

@@ -114,10 +114,9 @@ with tab_crop:
 
     # Source -> (raw input dir, cropped output dir)
     sources = {
-        "South LiDAR": (ds.raw_lidar_south_dir, ds.pcd_dir),
-        "North LiDAR": (ds.raw_lidar_north_dir, os.path.join(ds.derived_dir, "cropped_north")),
-        "Registered (south + north)": (os.path.join(ds.derived_dir, "registered"),
-                                       os.path.join(ds.derived_dir, "cropped_registered")),
+        "South LiDAR": (ds.raw_lidar_south_dir, ds.cropped_dir_for("south")),
+        "North LiDAR": (ds.raw_lidar_north_dir, ds.cropped_dir_for("north")),
+        "Registered (south + north)": (ds.registered_dir, ds.cropped_dir_for("registered")),
     }
     sc1, sc2 = st.columns([1, 2])
     source = sc1.selectbox("Source LiDAR", list(sources), index=0)
@@ -211,14 +210,15 @@ with tab_gt:
     # Source -> (raw labels dir, scorable-GT output dir, raw cloud dir for preview)
     gt_sources = {
         "South": (ds.raw_labels_south_dir, ds.gt_dir, ds.raw_lidar_south_dir),
-        "North": (ds.raw_labels_north_dir, os.path.join(ds.derived_dir, "labels_visible_north"),
+        "North": (ds.raw_labels_north_dir, ds.scorable_gt_dir_for("north"),
                   ds.raw_lidar_north_dir),
     }
-    if os.path.isdir(os.path.join(ds.derived_dir, "registered_labels")):
+    _reg_raw_labels = os.path.join(ds.derived_dir, "labels", "registered")  # future fused GT
+    if os.path.isdir(_reg_raw_labels):
         gt_sources["Registered (south + north)"] = (
-            os.path.join(ds.derived_dir, "registered_labels"),
-            os.path.join(ds.derived_dir, "labels_visible_registered"),
-            os.path.join(ds.derived_dir, "registered"))
+            _reg_raw_labels,
+            ds.scorable_gt_dir_for("registered"),
+            ds.registered_dir)
 
     gs1, gs2 = st.columns([1.3, 1])
     gt_source = gs1.selectbox("Source LiDAR", list(gt_sources), index=0, key="gt_source")
@@ -556,7 +556,7 @@ with tab_reg:
 
     label_dirs = {"south": ds.raw_labels_south_dir, "north": ds.raw_labels_north_dir}
     pcd_dirs = {"south": ds.raw_lidar_south_dir, "north": ds.raw_lidar_north_dir}
-    reg_out = os.path.join(ds.derived_dir, "registered")
+    reg_out = ds.registered_dir
 
     @st.cache_data(show_spinner=False)
     def _calib(side, label_dir):

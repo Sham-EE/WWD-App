@@ -16,12 +16,13 @@ data/                                ← gitignored (local)
     images/s110_camera_basler_south1_8mm/   camera frames
     images/s110_camera_basler_south2_8mm/
   derived/                           ← regenerated in-app via the Dataset Prep page
-    cropped_south/                   south clouds clipped to the road (pipeline input)
-    cropped_north/                   north clouds clipped to the road
-    registered/                      fused south+north clouds (s110_base frame)
-    labels_visible_south/            scorable GT (in-region + LiDAR-visible objects)
-    labels_visible_north/            scorable GT for the north sensor
-outputs/                             ← gitignored (background model, filtered clouds, detection, videos)
+    point_clouds/registered/         fused south+north clouds (s110_base frame)
+    point_clouds/cropped/<sensor>/   clouds clipped to the road (south/north/registered)
+    labels/scorable/<sensor>/        scorable GT (in-region + LiDAR-visible objects)
+outputs/                             ← gitignored, nested by stage:
+  background/{background_model,background_filtering}/<sensor>/<crop>/
+  detection/object_detection/<sensor>/<crop>/   (tracks.csv, animation, eval report)
+  visualizer/{rendered,road_videos}/
 ```
 
 ## Getting the data

@@ -15,7 +15,7 @@ This module:
   * fuses a pair into ``s110_base`` (tagging each point with its source sensor),
   * optionally ICP-refines north→south as a *check/correction* on the bundled
     calibration (reports fitness + RMSE so you can trust-but-verify),
-  * batch-writes a fused dataset to ``data/derived/registered/`` plus a
+  * batch-writes a fused dataset to ``data/derived/point_clouds/registered/`` plus a
     ``registration.json`` manifest (matrices + ICP result + provenance).
 
 The dev kit bakes the calibration into the labels and trusts it; we follow that
@@ -241,7 +241,7 @@ def icp_refine(north_base, south_base, max_dist=0.5, max_iter=60, voxel=0.25,
 
 
 # --------------------------------------------------------------------------- #
-# Batch registration -> data/derived/registered/
+# Batch registration -> data/derived/point_clouds/registered/
 # --------------------------------------------------------------------------- #
 def register_dataset(south_pcd_dir, north_pcd_dir, M_south, M_north, out_dir,
                      refine=None, max_dt_ms=None, max_frames=0, progress=None,
@@ -378,7 +378,7 @@ def lidar_markers(ds, sensor):
     Mn = calibration_for(ds.raw_labels_north_dir, "north")
     if Mn is not None:
         npos = Mn[:3, 3]
-        man = os.path.join(ds.derived_dir, "registered", "registration.json")
+        man = os.path.join(ds.registered_dir, "registration.json")
         try:
             with open(man, "r", encoding="utf-8") as f:
                 delta = json.load(f).get("icp_refine_delta")
