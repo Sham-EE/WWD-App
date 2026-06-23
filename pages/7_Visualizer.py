@@ -226,7 +226,7 @@ def render_lidar_tab():
 
     @st.fragment
     def _viewer3d():
-        i, playing, delay = vu.nav_row("lidar_frame", n, "lv")
+        i, playing, delay = vu.nav_row("lidar_frame", n, "lv", label="🎞️ Scene frame")
 
         pts = _load_pts(pcds[i], int(max_pts))
         objs = lp.load_objects(labels[i])
