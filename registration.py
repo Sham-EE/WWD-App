@@ -355,7 +355,43 @@ def _apply_scene(go, traces, height, title, zoom, azimuth, elevation, rev):
     return fig
 
 
-def _sensor_marker_traces(go, sensors, z_floor=0.0):
+# Marker colours for the LiDAR position overlays (coordinated with, but brighter
+# than, the south(blue)/north(red) cloud scheme).
+SENSOR_MARKER_COLORS = {"South": "#1e90ff", "North": "#ff1744"}
+
+
+def lidar_markers(ds, sensor):
+    """LiDAR-position markers for a viewer showing `sensor` data, as a list of
+    ``{name, pos, color}``. For **south/north** the data is in that sensor's own
+    frame, so the LiDAR sits at the origin. For **registered** (s110_base) both
+    LiDARs sit at their calibrated positions (north shifted by the ICP delta from
+    the registration manifest, if present). Returns [] if positions can't be read."""
+    if sensor in ("south", "north"):
+        name = sensor.capitalize()
+        return [{"name": name, "pos": [0.0, 0.0, 0.0], "color": SENSOR_MARKER_COLORS[name]}]
+    # registered -> both sensors in s110_base
+    out = []
+    Ms = calibration_for(ds.raw_labels_south_dir, "south")
+    if Ms is not None:
+        out.append({"name": "South", "pos": [float(v) for v in Ms[:3, 3]],
+                    "color": SENSOR_MARKER_COLORS["South"]})
+    Mn = calibration_for(ds.raw_labels_north_dir, "north")
+    if Mn is not None:
+        npos = Mn[:3, 3]
+        man = os.path.join(ds.derived_dir, "registered", "registration.json")
+        try:
+            with open(man, "r", encoding="utf-8") as f:
+                delta = json.load(f).get("icp_refine_delta")
+            if delta:
+                npos = (np.asarray(delta) @ np.append(npos, 1.0))[:3]
+        except Exception:
+            pass
+        out.append({"name": "North", "pos": [float(v) for v in npos],
+                    "color": SENSOR_MARKER_COLORS["North"]})
+    return out
+
+
+def sensor_marker_traces(go, sensors, z_floor=0.0):
     """Diamond at each LiDAR's position + dotted plumb line to its nadir (the
     ground point under it = the blank spot in that sensor's points)."""
     traces = []
@@ -429,6 +465,6 @@ def registration_figure(fused, color_mode="by_sensor", height_span=4.0,
                 marker=dict(size=1.5, color=col, opacity=0.55)))
 
     traces += _geometry_overlay_traces(go, show_road, show_roi)
-    traces += _sensor_marker_traces(go, sensors)
+    traces += sensor_marker_traces(go, sensors)
     rev = f"reg_{zoom}_{azimuth}_{elevation}"
     return _apply_scene(go, traces, height, title, zoom, azimuth, elevation, rev)

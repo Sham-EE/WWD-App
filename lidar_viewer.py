@@ -73,7 +73,8 @@ def _dashed_xyz(coords, z, dash=2.5, gap=1.8, step=0.4):
 
 
 def build_figure(points, objs, color_mode="by_category", view="side",
-                 height=560, line_width=4, show_labels=True, road_poly=None, bounds=None):
+                 height=560, line_width=4, show_labels=True, road_poly=None, bounds=None,
+                 sensors=None):
     """Plotly 3D figure: grey points + category-coloured GT boxes, with a preset
     camera ('bev' = top-down, 'side' = angled). If `road_poly` is given, its
     boundary is drawn as a green dashed outline at ground level. `bounds`
@@ -107,6 +108,12 @@ def build_figure(points, objs, color_mode="by_category", view="side",
             fig.add_trace(go.Scatter3d(x=dx, y=dy, z=dz, mode="lines",
                                        line=dict(color="limegreen", width=5),
                                        hoverinfo="skip", showlegend=False))
+    if sensors:
+        import registration as reg
+        zf = float(np.percentile(points[:, 2], 2)) if (points is not None and len(points)) else -7.5
+        mfloor = 0.0 if any(s["pos"][2] > 2.0 for s in sensors) else zf
+        for tr in reg.sensor_marker_traces(go, sensors, z_floor=mfloor):
+            fig.add_trace(tr)
     xr = dict(visible=False, range=[bounds[0], bounds[1]]) if bounds else dict(visible=False)
     yr = dict(visible=False, range=[bounds[2], bounds[3]]) if bounds else dict(visible=False)
     fig.update_layout(
