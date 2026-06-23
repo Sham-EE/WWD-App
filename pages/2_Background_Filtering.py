@@ -341,15 +341,22 @@ if st.session_state.bg_model:
             # Compact one-line frame navigation.
             i, playing, play_delay = vu.nav_row("bf_frame", n_bf, "bf")
 
-            # Persistent camera (one line): zoom = distance, rotate/tilt = orbit.
+            # Persistent camera (one line): zoom = distance, rotate/tilt = orbit,
+            # view margin = how far past the road the window extends (clips points
+            # AND bounds the axes — raise it to see objects/boxes on the approaches).
             ZOOM_DEFAULTS = {"cropped": 0.7, "full": 0.9}
-            cz, ca, ce = st.columns(3)
+            cz, ca, ce, cv = st.columns(4)
             zoom = cz.slider("🔍 Zoom", 0.35, 2.0, ZOOM_DEFAULTS.get(_src, 0.9), 0.05,
                              key=f"bf_zoom_{_src}", help="Lower = closer.")
             azimuth = ca.slider("🔄 Rotate", 0, 360, 45, 5, key="bf_az",
                                 help="Orbit angle around the scene (degrees).")
             elevation = ce.slider("📐 Tilt", 5, 88, 35, 1, key="bf_el",
                                   help="Camera height angle; 88 ≈ straight-down bird's-eye.")
+            view_margin = cv.slider("🔭 View margin (m)", 12, 100, 12, 4, key="bf_margin",
+                                    help="How far beyond the road the view extends. The default keeps the "
+                                         "height axis readable; raise it to see vehicles / GT boxes out on "
+                                         "the approaches (use a high Tilt for a top-down look — wide "
+                                         "margins flatten the height axis).")
 
             road_key = f"bf_road_{_src}"
             # Seed every toggle so bulk on/off can flip them without value= conflicts.
@@ -406,7 +413,7 @@ if st.session_state.bg_model:
             # it in a container remounts the plot each rerun and wipes the camera, which
             # defeats uirevision. Height is set on the figure instead.
             st.plotly_chart(
-                create_filtered_figure(fg, pts, margin=12.0, zoom=zoom,
+                create_filtered_figure(fg, pts, margin=float(view_margin), zoom=zoom,
                                        show_road=road_on, road_dashed=(_src != "cropped"),
                                        show_roi=roi_on, show_excl=excl_on,
                                        gt_objs=gt_objs if gt_on else None,
