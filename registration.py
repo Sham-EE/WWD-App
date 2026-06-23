@@ -12,11 +12,14 @@ optimisation needed.
 This module:
   * reads those calibration matrices straight from the labels (cached),
   * nearest-timestamp pairs south/north frames (the two sensors fire ~async),
-  * fuses a pair into ``s110_base`` (tagging each point with its source sensor),
+  * fuses a pair via ``s110_base``, then (by default) re-expresses the result in
+    the **south LiDAR frame** so registered is a drop-in superset of the south
+    cloud — the GT boxes, camera calibration, and site-geometry polygons all
+    match it directly (tagging each point with its source sensor),
   * optionally ICP-refines north→south as a *check/correction* on the bundled
     calibration (reports fitness + RMSE so you can trust-but-verify),
   * batch-writes a fused dataset to ``data/derived/point_clouds/registered/`` plus a
-    ``registration.json`` manifest (matrices + ICP result + provenance).
+    ``registration.json`` manifest (matrices + ICP result + output frame + provenance).
 
 The dev kit bakes the calibration into the labels and trusts it; we follow that
 (it is the objective ground truth) and add the ICP read-out on top so the
@@ -160,20 +163,36 @@ def match_frame_pairs(south_files, north_files, max_dt_ms=None):
 # --------------------------------------------------------------------------- #
 # Fusion + ICP
 # --------------------------------------------------------------------------- #
-def fuse_pair(south_pts, north_pts, M_south, M_north, refine=None):
-    """Transform both clouds into ``s110_base`` and stack them.
+def to_south_frame(M_south):
+    """The ``s110_base → s110_lidar_ouster_south`` transform (= inverse of the
+    south sensor→base calibration). Re-expressing the fused cloud with this puts
+    it in the **south LiDAR frame**, where the GT boxes, camera calibration, and
+    site-geometry polygons all live — so registered becomes a drop-in superset of
+    the south cloud (south points come back unchanged; north is aligned onto it)."""
+    return np.linalg.inv(np.asarray(M_south, dtype=float))
+
+
+def fuse_pair(south_pts, north_pts, M_south, M_north, refine=None, to_frame=None):
+    """Transform both clouds into ``s110_base``, optionally re-express the result
+    in another frame, and stack them.
 
     ``refine`` (optional 4x4) is an extra correction applied to the north cloud
-    *after* its calibration transform (e.g. an ICP delta). Returns a dict with
-    the per-sensor base-frame clouds, the stacked cloud, and an int source tag
+    *after* its calibration transform (e.g. an ICP delta), in the base frame.
+    ``to_frame`` (optional 4x4) is applied to BOTH clouds last, to re-express the
+    fused result in a different frame — pass ``to_south_frame(M_south)`` to output
+    in the south LiDAR frame, or leave ``None`` to stay in ``s110_base``. Returns
+    a dict with the per-sensor clouds, the stacked cloud, and an int source tag
     (0 = south, 1 = north)."""
-    s_base = transform_points(south_pts, M_south)
-    n_base = transform_points(north_pts, M_north)
+    s_out = transform_points(south_pts, M_south)
+    n_out = transform_points(north_pts, M_north)
     if refine is not None:
-        n_base = transform_points(n_base, refine)
-    pts = np.vstack([s_base, n_base]) if (len(s_base) or len(n_base)) else np.zeros((0, 3))
-    src = np.concatenate([np.zeros(len(s_base), dtype=int), np.ones(len(n_base), dtype=int)])
-    return {"south": s_base, "north": n_base, "points": pts, "source": src}
+        n_out = transform_points(n_out, refine)
+    if to_frame is not None:
+        s_out = transform_points(s_out, to_frame)
+        n_out = transform_points(n_out, to_frame)
+    pts = np.vstack([s_out, n_out]) if (len(s_out) or len(n_out)) else np.zeros((0, 3))
+    src = np.concatenate([np.zeros(len(s_out), dtype=int), np.ones(len(n_out), dtype=int)])
+    return {"south": s_out, "north": n_out, "points": pts, "source": src}
 
 
 def icp_refine(north_base, south_base, max_dist=0.5, max_iter=60, voxel=0.25,
@@ -245,10 +264,18 @@ def icp_refine(north_base, south_base, max_dist=0.5, max_iter=60, voxel=0.25,
 # --------------------------------------------------------------------------- #
 def register_dataset(south_pcd_dir, north_pcd_dir, M_south, M_north, out_dir,
                      refine=None, max_dt_ms=None, max_frames=0, progress=None,
-                     manifest_extra=None):
-    """Fuse every matched south/north pair into ``s110_base`` and write the
-    combined clouds to ``out_dir`` (named by the south timestamp). Writes a
+                     manifest_extra=None, to_frame=None, output_frame=None):
+    """Fuse every matched south/north pair and write the combined clouds to
+    ``out_dir`` (named by the south timestamp). By default the output is
+    re-expressed in the **south LiDAR frame** (``to_frame`` defaults to
+    ``to_south_frame(M_south)``) so registered is a drop-in superset of the south
+    cloud — the GT, camera calibration, and polygons all match. Pass
+    ``to_frame=np.eye(4)`` to keep the legacy ``s110_base`` output. Writes a
     ``registration.json`` manifest alongside. Returns (n_written, n_pairs)."""
+    if to_frame is None:
+        to_frame = to_south_frame(M_south)
+        output_frame = output_frame or SENSORS["south"]
+    output_frame = output_frame or BASE_FRAME
     south_files = glob.glob(os.path.join(south_pcd_dir, "*.pcd"))
     north_files = glob.glob(os.path.join(north_pcd_dir, "*.pcd"))
     pairs = match_frame_pairs(south_files, north_files, max_dt_ms=max_dt_ms)
@@ -260,7 +287,7 @@ def register_dataset(south_pcd_dir, north_pcd_dir, M_south, M_north, out_dir,
     for sp, npath, dt_ms in pairs:
         s_pts = load_xyz(sp)
         n_pts = load_xyz(npath)
-        fused = fuse_pair(s_pts, n_pts, M_south, M_north, refine=refine)
+        fused = fuse_pair(s_pts, n_pts, M_south, M_north, refine=refine, to_frame=to_frame)
         name = os.path.splitext(os.path.basename(sp))[0]
         name = name.replace("_s110_lidar_ouster_south", "") + "_registered.pcd"
         write_xyz(os.path.join(out_dir, name), fused["points"])
@@ -271,6 +298,8 @@ def register_dataset(south_pcd_dir, north_pcd_dir, M_south, M_north, out_dir,
     manifest = {
         "method": "calibration-first (sensor->s110_base from OpenLABEL labels)",
         "base_frame": BASE_FRAME,
+        "output_frame": output_frame,           # the frame the written clouds are in
+        "frame_transform": np.asarray(to_frame).tolist(),  # base -> output_frame (4x4)
         "M_south_to_base": np.asarray(M_south).tolist(),
         "M_north_to_base": np.asarray(M_north).tolist(),
         "icp_refine_applied": refine is not None,
@@ -285,6 +314,82 @@ def register_dataset(south_pcd_dir, north_pcd_dir, M_south, M_north, out_dir,
     with open(os.path.join(out_dir, "registration.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
     return n, len(pairs)
+
+
+# --------------------------------------------------------------------------- #
+# Fused ground truth (union of south + north boxes, in the south frame)
+# --------------------------------------------------------------------------- #
+def transform_cuboid(val, T):
+    """Transform an OpenLABEL cuboid ``[x,y,z, qx,qy,qz,qw, l,w,h]`` by a rigid
+    4x4 ``T``. The centre and orientation move with ``T``; the dimensions are
+    unchanged. Used to bring north-frame GT boxes into the south frame (same
+    north→south transform applied to the north points)."""
+    from scipy.spatial.transform import Rotation
+    T = np.asarray(T, dtype=float)
+    c = T @ np.array([val[0], val[1], val[2], 1.0])
+    R_new = T[:3, :3] @ Rotation.from_quat([val[3], val[4], val[5], val[6]]).as_matrix()
+    q = Rotation.from_matrix(R_new).as_quat()           # x, y, z, w
+    return [float(c[0]), float(c[1]), float(c[2]),
+            float(q[0]), float(q[1]), float(q[2]), float(q[3]),
+            float(val[7]), float(val[8]), float(val[9])]
+
+
+def fuse_labels(south_label_dir, north_label_dir, M_south, M_north, out_dir,
+                refine=None, match_dist=2.5, max_dt_ms=None, max_frames=0, progress=None):
+    """Build a UNION GT for the registered (south-frame) cloud.
+
+    Each sensor only annotates the objects IT can see, so the south GT alone
+    misses objects only north saw (which still have points in the fused cloud).
+    This takes each south label as the base, transforms the matched north label's
+    boxes into the south frame (``inv(M_south) @ refine @ M_north`` — the same
+    transform applied to the north points), and **appends the north boxes that
+    south didn't annotate** (no south box within ``match_dist`` m). Shared objects
+    keep their south box. Writes OpenLABEL JSONs (south basename, so the frame key
+    matches the registered clouds) to ``out_dir``. Returns
+    ``(n_frames, n_north_added, n_shared)``."""
+    refine = np.eye(4) if refine is None else np.asarray(refine, dtype=float)
+    T = to_south_frame(M_south) @ refine @ np.asarray(M_north, dtype=float)
+    south = sorted(glob.glob(os.path.join(south_label_dir, "*.json")))
+    north = sorted(glob.glob(os.path.join(north_label_dir, "*.json")))
+    pairs = match_frame_pairs(south, north, max_dt_ms=max_dt_ms)
+    if max_frames and max_frames > 0:
+        pairs = pairs[:max_frames]
+    os.makedirs(out_dir, exist_ok=True)
+    n = added = shared = 0
+    for sp, npath, _dt in pairs:
+        with open(sp, "r", encoding="utf-8") as f:
+            sj = json.load(f)
+        frames = sj.get("openlabel", {}).get("frames", {})
+        if not frames:
+            continue
+        fobjs = frames[next(iter(frames))].setdefault("objects", {})
+        s_centers = np.array([o["object_data"]["cuboid"]["val"][:3] for o in fobjs.values()
+                              if o.get("object_data", {}).get("cuboid", {}).get("val")]) \
+            if fobjs else np.zeros((0, 3))
+        with open(npath, "r", encoding="utf-8") as f:
+            nfr = json.load(f).get("openlabel", {}).get("frames", {})
+        if nfr:
+            for oid, o in nfr[next(iter(nfr))].get("objects", {}).items():
+                od = o.get("object_data", {})
+                v = od.get("cuboid", {}).get("val")
+                if not (v and len(v) >= 10):
+                    continue
+                nv = transform_cuboid(v, T)
+                c = np.array(nv[:3])
+                if len(s_centers) and float(np.min(np.linalg.norm(s_centers - c, axis=1))) < match_dist:
+                    shared += 1
+                    continue                            # south already has this object
+                fobjs["north_" + oid] = {"object_data": {
+                    "name": od.get("name", "north_" + oid[:8]),
+                    "type": od.get("type", "OTHER"),
+                    "cuboid": {**od.get("cuboid", {}), "val": nv}}}
+                added += 1
+        with open(os.path.join(out_dir, os.path.basename(sp)), "w", encoding="utf-8") as f:
+            json.dump(sj, f)
+        n += 1
+        if progress:
+            progress(n, len(pairs))
+    return n, added, shared
 
 
 # --------------------------------------------------------------------------- #
@@ -363,30 +468,39 @@ SENSOR_MARKER_COLORS = {"South": "#1e90ff", "North": "#ff1744"}
 def lidar_markers(ds, sensor):
     """LiDAR-position markers for a viewer showing `sensor` data, as a list of
     ``{name, pos, color}``. For **south/north** the data is in that sensor's own
-    frame, so the LiDAR sits at the origin. For **registered** (s110_base) both
-    LiDARs sit at their calibrated positions (north shifted by the ICP delta from
-    the registration manifest, if present). Returns [] if positions can't be read."""
+    frame, so the LiDAR sits at the origin. For **registered** both LiDARs sit at
+    their calibrated positions, re-expressed in the registered cloud's output
+    frame (read from the manifest's ``frame_transform``; identity = legacy
+    s110_base) and with the north ICP delta applied. Returns [] if positions
+    can't be read."""
     if sensor in ("south", "north"):
         name = sensor.capitalize()
         return [{"name": name, "pos": [0.0, 0.0, 0.0], "color": SENSOR_MARKER_COLORS[name]}]
-    # registered -> both sensors in s110_base
+    # registered -> both sensors, in the manifest's output frame
+    delta, Tf = None, np.eye(4)
+    try:
+        with open(os.path.join(ds.registered_dir, "registration.json"), "r", encoding="utf-8") as f:
+            man = json.load(f)
+        delta = man.get("icp_refine_delta")
+        if man.get("frame_transform"):
+            Tf = np.asarray(man["frame_transform"], dtype=float)
+    except Exception:
+        pass
+
+    def _place(pos):
+        return [float(v) for v in transform_points(np.asarray(pos).reshape(1, 3), Tf)[0]]
+
     out = []
     Ms = calibration_for(ds.raw_labels_south_dir, "south")
     if Ms is not None:
-        out.append({"name": "South", "pos": [float(v) for v in Ms[:3, 3]],
+        out.append({"name": "South", "pos": _place(Ms[:3, 3]),
                     "color": SENSOR_MARKER_COLORS["South"]})
     Mn = calibration_for(ds.raw_labels_north_dir, "north")
     if Mn is not None:
         npos = Mn[:3, 3]
-        man = os.path.join(ds.registered_dir, "registration.json")
-        try:
-            with open(man, "r", encoding="utf-8") as f:
-                delta = json.load(f).get("icp_refine_delta")
-            if delta:
-                npos = (np.asarray(delta) @ np.append(npos, 1.0))[:3]
-        except Exception:
-            pass
-        out.append({"name": "North", "pos": [float(v) for v in npos],
+        if delta:
+            npos = (np.asarray(delta) @ np.append(npos, 1.0))[:3]
+        out.append({"name": "North", "pos": _place(npos),
                     "color": SENSOR_MARKER_COLORS["North"]})
     return out
 
@@ -418,7 +532,7 @@ def registration_figure(fused, color_mode="by_sensor", height_span=4.0,
                         show_south=True, show_north=True, show_road=False,
                         show_roi=False, height=640, title="",
                         zoom=0.9, azimuth=45.0, elevation=35.0, margin=12.0,
-                        clip=True, sensors=None):
+                        clip=True, sensors=None, z_floor=None):
     """Plotly 3D figure of a south/north pair.
 
     Works for both the **registered** view (points already in ``s110_base``;
@@ -464,7 +578,14 @@ def registration_figure(fused, color_mode="by_sensor", height_span=4.0,
                 x=p[:, 0], y=p[:, 1], z=p[:, 2], mode="markers", name=name,
                 marker=dict(size=1.5, color=col, opacity=0.55)))
 
-    traces += _geometry_overlay_traces(go, show_road, show_roi)
-    traces += sensor_marker_traces(go, sensors)
+    # Ground level for the road outline + the LiDAR plumb lines: derive from the
+    # visible points (1st percentile of z) so it sits on the ground regardless of
+    # frame (s110_base ground ≈ 0; south-LiDAR-frame ground ≈ −8.6).
+    if z_floor is None:
+        vis = [_clip(p) for p, show in ((s_base, show_south), (n_base, show_north)) if show and len(p)]
+        allz = np.concatenate([p[:, 2] for p in vis]) if vis else np.array([0.0])
+        z_floor = float(np.percentile(allz, 1))
+    traces += _geometry_overlay_traces(go, show_road, show_roi, z_floor=z_floor)
+    traces += sensor_marker_traces(go, sensors, z_floor=z_floor)
     rev = f"reg_{zoom}_{azimuth}_{elevation}"
     return _apply_scene(go, traces, height, title, zoom, azimuth, elevation, rev)

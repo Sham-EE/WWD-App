@@ -117,7 +117,7 @@ with st.expander("🌳 Expected workspace structure"):
 │   │   ├── labels/{{s110_lidar_ouster_south, _north}}/*.json
 │   │   └── images/<camera>/*.jpg
 │   └── derived/                     # regenerated in-app (Dataset Prep)
-│       ├── point_clouds/registered/*.pcd            # fused south+north (s110_base)
+│       ├── point_clouds/registered/*.pcd            # fused south+north (south LiDAR frame)
 │       ├── point_clouds/cropped/<sensor>/*.pcd      # clipped to road (pipeline input)
 │       └── labels/scorable/<sensor>/*.json          # visible-only GT
 └── outputs/                         # generated — gitignored
