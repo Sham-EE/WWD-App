@@ -682,9 +682,13 @@ with tab_reg:
         zoom = vc1.slider("🔍 Zoom", 0.35, 2.0, 0.9, 0.05, key="reg_zoom")
         az = vc2.slider("🔄 Rotate", 0, 360, 45, key="reg_az")
         el = vc3.slider("📐 Tilt", 5, 88, 35, key="reg_el")
-        rc1, rc2, rc3, rc4, rc5, _r = st.columns([1.3, 1.3, 1.3, 1.3, 1.3, 2])
+        rc1, rc2, rc3, rc4, rc5, rc6 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.3])
         show_s = rc1.toggle("🔵 South", value=True, key="reg_show_s")
         show_n = rc2.toggle("🟠 North", value=True, key="reg_show_n")
+        crop_road = rc6.toggle("✂️ Crop", value=True, key="reg_crop",
+                               help="Clip the fused cloud to the road region (same window used to make "
+                                    "the cropped clouds). Off = show the full scene incl. background "
+                                    "structures. Applies in both frames.")
         show_road = rc3.toggle("🟢 Road", value=False, key="reg_road",
                                help="Road outline (defined in the south frame — Registered + South-frame "
                                     "view only).")
@@ -724,16 +728,27 @@ with tab_reg:
             data = {"south": _load_raw(sp)[:, :3], "north": _load_raw(npath)[:, :3]}
             tag, clip, road_on, roi_on, sensors = "RAW · unregistered", False, False, False, None
         else:
-            # `f` is the fused cloud in s110_base; re-express it in the chosen frame.
-            # South-LiDAR frame (= what we WRITE) lines up with the road/ROI polygons
-            # and the road clip window, which are defined in the south frame.
+            # `f` is the fused cloud in s110_base. The road clip window + road/ROI
+            # polygons are defined in the SOUTH frame, so clip there, then re-express
+            # the (clipped) result in whichever frame is being viewed. Crop is now an
+            # independent toggle that works in both frames.
             in_south = frame.startswith("South")
-            Tf = reg.to_south_frame(Ms) if in_south else np.eye(4)
-            data = {"south": reg.transform_points(f["south"], Tf),
-                    "north": reg.transform_points(f["north"], Tf)}
-            clip = in_south
+            Tf_s = reg.to_south_frame(Ms)                         # s110_base -> south
+            s_pts = reg.transform_points(f["south"], Tf_s)
+            n_pts = reg.transform_points(f["north"], Tf_s)
+            if crop_road:
+                win = reg._road_window()
+                s_pts, n_pts = reg._clip_to_window(s_pts, win), reg._clip_to_window(n_pts, win)
+            Tf = Tf_s if in_south else np.eye(4)                  # display frame (from base)
+            if in_south:
+                data = {"south": s_pts, "north": n_pts}
+            else:                                                 # back to s110_base for display
+                data = {"south": reg.transform_points(s_pts, Ms),
+                        "north": reg.transform_points(n_pts, Ms)}
+            clip = False                                          # already clipped above
             road_on, roi_on = (show_road and in_south), (show_roi and in_south)
-            tag = "REGISTERED · south frame" if in_south else "REGISTERED · s110_base"
+            tag = ("REGISTERED · south frame" if in_south else "REGISTERED · s110_base") + \
+                  (" · road-cropped" if crop_road else " · full")
             sensors = None
             if show_sensors:
                 # sensor origin in base = translation column of its calibration; the
