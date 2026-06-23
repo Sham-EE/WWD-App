@@ -73,8 +73,23 @@ roi_only = ec3.checkbox("Restrict to processed region (ROI)", value=True,
                              "region aren't counted as misses — this is the fair number.")
 output_dir = _ds.detection_dir_for_sensor(_sensor, _src)
 
+# Cross-check: the in-memory detection must be for the sensor/source being scored,
+# otherwise we'd match one sensor's frames against another's GT (the cryptic
+# "no frames aligned" error). Surface it clearly instead.
+_r_sensor, _r_source = results.get('sensor'), results.get('source')
+_mismatch = (_r_sensor and _r_sensor != _sensor) or (_r_source and _r_source != _src)
+if _mismatch:
+    _r_src_lbl = 'Cropped' if _r_source == 'cropped' else 'Full'
+    st.warning(f"⚠️ Loaded detection is for **{(_r_sensor or '?').capitalize()} · {_r_src_lbl}**, "
+               f"but you're scoring **{_sensor_label} · {_src_label}**. Re-run **Start Detection** for "
+               f"this selection first (or switch the toggles above to match the loaded run).")
+
 if st.button("📐 Run Evaluation", use_container_width=True, type="primary"):
-    if not os.path.isdir(gt_dir):
+    if _mismatch:
+        st.error(f"Can't evaluate: in-memory detection is for {(_r_sensor or '?').capitalize()} · "
+                 f"{_r_src_lbl}, not {_sensor_label} · {_src_label}. Re-run Detection for this "
+                 "selection, then evaluate.")
+    elif not os.path.isdir(gt_dir):
         st.error(f"GT directory not found: {gt_dir}")
     else:
         classes = {'CAR', 'TRUCK', 'VAN', 'BUS', 'TRAILER', 'MOTORCYCLE'} if veh_only else None

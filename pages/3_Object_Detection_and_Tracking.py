@@ -144,18 +144,29 @@ if st.button("🚀 Start Detection and Tracking", use_container_width=True):
                     # Add the sorted lists of files to the results for the UI
                     results['original_pcd_files'] = original_files
                     results['params'] = params # Pass params to visualization
+                    results['sensor'] = _sensor      # tag which sensor/source these
+                    results['source'] = _src         # results are for (eval cross-checks)
                     st.session_state.detection_results = results
-                    st.success(f"✅ Processing finished! Found {len(results['pcd_files'])} frames. Use the slider below to visualize.")
+                    st.success(f"✅ Processing finished! Found {len(results['pcd_files'])} frames "
+                               f"({_sensor_label} · {_src_label}). Use the slider below to visualize.")
                 progress_bar.empty()
             except Exception as e:
                 st.error(f"An unexpected error occurred: {e}")
                 progress_bar.empty()
 
-# --- Visualization Section --- 
+# --- Visualization Section ---
 if st.session_state.detection_results:
     st.divider()
     st.subheader("🖼️ Interactive Visualization")
     results = st.session_state.detection_results
+    # Warn if the toggles were changed since these results were computed — the
+    # viewer/eval use the in-memory results, so a stale sensor/source is a footgun.
+    _r_sensor, _r_source = results.get('sensor'), results.get('source')
+    if (_r_sensor and _r_sensor != _sensor) or (_r_source and _r_source != _src):
+        st.warning(f"⚠️ Showing results for **{(_r_sensor or '?').capitalize()} · "
+                   f"{'Cropped' if _r_source == 'cropped' else 'Full'}**, but the toggles are now set to "
+                   f"**{_sensor_label} · {_src_label}**. Click **Start Detection** to recompute for the "
+                   "current selection (Evaluation scores whatever is loaded here).")
 
     # Update camera eye in results so visualization uses current UI settings
     results['camera_eye'] = {'x': eye_x, 'y': eye_y, 'z': eye_z}
