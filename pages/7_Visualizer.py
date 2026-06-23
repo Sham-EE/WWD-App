@@ -69,6 +69,36 @@ labels = rv.list_by_frame(label_dir, [".json"])
 pcds = rv.list_by_frame(pcd_dir, [".pcd"])
 
 
+def _fkey(path):
+    """Leading <ts1>_<ts2> token shared by a frame's cloud + its label(s)."""
+    return "_".join(os.path.basename(path).split("_")[:2])
+
+
+@st.cache_data(show_spinner=False)
+def _box_counts(label_dir):
+    """{frame-key: #GT boxes} for a label folder (cached so stepping is instant)."""
+    import glob
+    out = {}
+    if label_dir and os.path.isdir(label_dir):
+        for f in glob.glob(os.path.join(label_dir, "*.json")):
+            try:
+                out[_fkey(f)] = len(lp.load_objects(f))
+            except Exception:
+                out[_fkey(f)] = 0
+    return out
+
+
+# Per-frame raw vs scorable box counts for the active sensor (both shown so you can
+# see, per frame, how many of the annotated boxes survive the scorable filter).
+_raw_counts = _box_counts(ds.labels_dir_for(_sensor, "raw"))
+_scorable_counts = _box_counts(ds.labels_dir_for(_sensor, "scorable"))
+
+
+def _box_count_str(ref_path):
+    k = _fkey(ref_path)
+    return f"🏷️ {_scorable_counts.get(k, 0)} scorable / {_raw_counts.get(k, 0)} raw boxes"
+
+
 @st.cache_data(show_spinner=False)
 def _all_centers(label_paths):
     """Per-frame {object_id: (x,y,z)} for the whole sequence (cached)."""
@@ -195,6 +225,8 @@ def render_camera_tab():
         lc, rc = st.columns(2)
         lc.image(left_img, use_container_width=True, caption=f"{_short_cam(left_cam)} (left) · frame {i+1}/{n}")
         rc.image(right_img, use_container_width=True, caption=f"{_short_cam(right_cam)} (right) · frame {i+1}/{n}")
+        if mode and labels:
+            st.caption(f"Frame {i+1}/{n} · {_box_count_str(labels[i])}")
 
         if playing and i < n - 1:
             time.sleep(float(play_delay))
@@ -284,7 +316,8 @@ def render_lidar_tab():
                 st.plotly_chart(lv.build_figure(pts, objs, color_mode, "side", height=520,
                                                 road_poly=road, sensors=sensors),
                                 use_container_width=True, key="lv_side")
-        st.caption(f"Frame {i+1}/{n} · {len(objs)} labelled objects · {len(pts):,} points shown")
+        st.caption(f"Frame {i+1}/{n} · {len(objs)} shown ({_box_count_str(labels[i])}) · "
+                   f"{len(pts):,} points")
 
         if playing and i < n - 1:
             time.sleep(float(delay))
