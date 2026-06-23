@@ -26,10 +26,39 @@ st.title("🎬 Visualizer")
 ds = dm.get_active()
 st.caption(f"📂 Dataset: **{ds.name}**")
 
-with st.expander("📁 Input folders", expanded=False):
-    images_root = st.text_input("Images folder (one subfolder per camera)", value=ds.images_dir)
-    label_dir = st.text_input("OpenLABEL labels folder", value=ds.gt_dir)
-    pcd_dir = st.text_input("Point-cloud folder", value=ds.pcd_dir)
+# Sensor + input-cloud toggle — drives BOTH the Road Viewer (camera projection)
+# and the LiDAR labels (3D) tabs. Registered is written in the south frame, so it
+# reuses the south GT boxes + south camera calibration; south/north use their own.
+_sc, _ic = st.columns(2)
+_sensor_label = _sc.radio("Sensor", ["Registered", "South", "North"], horizontal=True,
+                          key="pipeline_sensor",
+                          help="Which LiDAR to visualize. Registered = fused south+north (written in the "
+                               "south frame, so the south GT boxes and south camera calibration apply to "
+                               "it directly). South / North use each sensor's own labels + calibration. "
+                               "Shared with the Filtering / Detection / Evaluation pages.")
+_sensor = _sensor_label.lower()
+_src_label = _ic.radio("Input cloud", ["Cropped (road)", "Full (uncropped)"], horizontal=True,
+                       key="pipeline_source",
+                       help="Cropped = road-clipped cloud; Full = the raw/fused cloud. Drives both the "
+                            "3D view and the cloud projected onto the camera.")
+_src = "cropped" if _src_label.startswith("Cropped") else "full"
+
+# Resolve the cloud + GT for the selected sensor/source (same logic the pipeline
+# pages use). gt_dir_for_input maps registered -> the south GT (same frame).
+_pcd_default = ds.input_pcd_for_sensor(_sensor, _src)
+_label_default = ds.gt_dir_for_input(_pcd_default)
+
+with st.expander("📁 Input folders (advanced override)", expanded=False):
+    images_root = st.text_input("Images folder (one subfolder per camera)", value=ds.images_dir,
+                                key="viz_images")
+    # keyed by sensor/source so the fields re-follow the radios when you switch
+    label_dir = st.text_input("OpenLABEL labels folder", value=_label_default,
+                              key=f"viz_label_{_sensor}_{_src}")
+    pcd_dir = st.text_input("Point-cloud folder", value=_pcd_default,
+                            key=f"viz_pcd_{_sensor}_{_src}")
+st.caption(f"🛰️ **{_sensor_label} · {_src_label}** — cloud `{os.path.basename(pcd_dir.rstrip('/'))}` · "
+           f"GT `{os.path.basename(label_dir.rstrip('/'))}`"
+           + ("" if os.path.isdir(label_dir) else "  ·  ⚠️ GT folder not found"))
 
 labels = rv.list_by_frame(label_dir, [".json"])
 pcds = rv.list_by_frame(pcd_dir, [".pcd"])
@@ -80,7 +109,6 @@ def render_camera_tab():
 
     color_mode, point_size = "by_category", 2
     track_hist, hist_window, trail_width = False, 30, 8
-    pc_full = False
     if mode:
         oc1, oc2, oc3 = st.columns([1, 1.4, 1])
         color_mode = oc1.radio("Box colour", ["by_category", "by_track_id"], horizontal=True,
@@ -100,16 +128,12 @@ def render_camera_tab():
         if track_hist:
             hist_window = th2.slider("Trail length (frames)", 5, 80, 30, 5)
             trail_width = th3.slider("Trail thickness (px)", 2, 24, 8, 1)
-        if mode == "point_cloud":
-            pc_full = st.radio("Projected point cloud", ["Cropped (road)", "Full (uncropped)"],
-                               horizontal=True, key="cam_pc",
-                               help="Project the road-cropped cloud or the full raw south cloud "
-                                    "(full reaches distant structures).") == "Full (uncropped)"
-
     raw_left = rv.frames_for(images_root, left_cam, "raw")
     raw_right = rv.frames_for(images_root, right_cam, "raw")
-    # which clouds to project for 'Boxes + point cloud'
-    pc_list = rv.list_by_frame(ds.raw_lidar_south_dir, [".pcd"]) if (mode == "point_cloud" and pc_full) else pcds
+    # Cloud projected for 'Boxes + point cloud' = the sensor/source cloud picked
+    # above (registered is in the south frame, so it projects with the south camera
+    # calibration); for north it uses the north calibration carried in north labels.
+    pc_list = pcds
     counts = [len(raw_left), len(raw_right)]
     if mode:
         counts.append(len(labels))
@@ -139,10 +163,12 @@ def render_camera_tab():
 
     def _cache_dir(cam):
         ps = f"_ps{point_size}" if mode == "point_cloud" else ""
-        pc = (f"_{'full' if pc_full else 'crop'}") if mode == "point_cloud" else ""
+        pc = (f"_{'full' if _src == 'full' else 'crop'}") if mode == "point_cloud" else ""
         th = f"_trail{hist_window}-{trail_width}" if track_hist else ""
         m = _MODE_SHORT.get(mode, mode); col = _COLOR_SHORT.get(color_mode, color_mode)
-        return os.path.join(ds.rendered_dir, _short_cam(cam), f"{m}_{col}{ps}{pc}{th}")
+        # include the sensor so south / north / registered renders don't collide
+        # (same camera + mode, but different boxes + projected cloud).
+        return os.path.join(ds.rendered_dir, _short_cam(cam), _sensor, f"{m}_{col}{ps}{pc}{th}")
 
     def _render(i, cam, cam_id, raw):
         if not mode:
@@ -182,7 +208,7 @@ def render_camera_tab():
     v_max = g3.number_input("Max frames (0 = all)", 0, n, 0)
     video_dir = ds.road_videos_dir
     tag = mode or "raw"
-    basename = (f"road_{_short_cam(left_cam)}_{_short_cam(right_cam)}_"
+    basename = (f"road_{_short_cam(left_cam)}_{_short_cam(right_cam)}_{_sensor}_"
                 f"{_MODE_SHORT.get(tag, tag)}_{_COLOR_SHORT.get(color_mode, color_mode) if mode else 'plain'}")
     st.session_state.setdefault("road_video", None)
     if st.button("🎬 Generate side-by-side video", type="primary", use_container_width=True):
@@ -227,11 +253,9 @@ def render_lidar_tab():
     show_road = o3.checkbox("🛣️ Road outline", value=True, key="lv_road",
                             help="Green road boundary from site_geometry.json.")
     show_sensors = o4.checkbox("📍 LiDAR", value=True, key="lv_sensors",
-                               help="Mark the LiDAR position + nadir (inferred from the point-cloud folder).")
+                               help="Mark the LiDAR position + nadir for the selected sensor.")
     road = dp.road_polygon(0.0) if show_road else None
-    # infer which sensor the point-cloud folder belongs to so markers land right
-    _pl = (pcd_dir or "").lower()
-    _sensor = "registered" if "registered" in _pl else ("north" if "north" in _pl else "south")
+    # markers follow the Sensor toggle (registered = both LiDARs in the south frame)
     sensors = reg.lidar_markers(ds, _sensor) if show_sensors else None
     st.session_state.setdefault("lidar_frame", 0)
 
