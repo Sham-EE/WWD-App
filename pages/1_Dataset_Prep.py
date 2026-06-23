@@ -141,7 +141,10 @@ with tab_crop:
     # ---- side-by-side preview: south | north, cropped/uncropped + road outline ----
     st.divider()
     st.subheader("👁 Preview")
-    pv_sensors = {"South": ds.raw_lidar_south_dir, "North": ds.raw_lidar_north_dir}
+    # Registered is in the south frame, so the road polygon + road-window framing
+    # apply to it exactly as they do to the south cloud.
+    pv_sensors = {"South": ds.raw_lidar_south_dir, "North": ds.raw_lidar_north_dir,
+                  "Registered": ds.registered_dir}
     pc1, pc2, pc3, pc4, pc5 = st.columns([1, 1, 1.3, 1, 1])
     pv_left = pc1.selectbox("Left LiDAR", list(pv_sensors), index=0, key="dp_left")
     pv_right = pc2.selectbox("Right LiDAR", list(pv_sensors), index=1, key="dp_right")
@@ -162,7 +165,8 @@ with tab_crop:
         def _pv_panel(sensor, files, i, key):
             pts = _load_raw(files[i])
             shown = dp.crop_points_to_region(pts, dp.road_polygon(margin)) if cropped else pts
-            st.markdown(f"**{sensor} LiDAR** · {len(shown):,} pts")
+            label = "Registered (fused)" if sensor == "Registered" else f"{sensor} LiDAR"
+            st.markdown(f"**{label}** · {len(shown):,} pts")
             st.plotly_chart(dp.crop_preview_figure(shown, margin=margin, height=520, draw_boundary=show_road,
                                                    color_by_height=color_h),
                             use_container_width=True, key=key, config={"scrollZoom": True})
