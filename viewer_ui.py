@@ -7,14 +7,14 @@ navigation, and helpers for "select all / clear all" over a group of toggles.
 import streamlit as st
 
 
-def nav_row(state_key, n, key_prefix):
-    """One compact row: ⏮ ◀ ▶ ⏭ · Play · delay · frame slider (collapsed labels).
+def nav_row(state_key, n, key_prefix, label="🎞️ Frame"):
+    """One compact row: ⏮ ◀ ▶ ⏭ · Play · delay · frame slider.
 
     `state_key` is a plain session var holding the frame index (NOT a widget key),
     so external play-loops can freely set it then rerun. The frame slider is
-    keyless and driven by `value=`, with a prefix-unique (hidden) label so two
-    viewers on one page don't share a keyless widget id. Returns
-    ``(i, playing, delay)``."""
+    keyless and driven by `value=`; its visible `label` doubles as the widget id,
+    so **two viewers on the same page must pass distinct labels** (Streamlit raises
+    DuplicateElementId otherwise). Returns ``(i, playing, delay)``."""
     st.session_state.setdefault(state_key, 0)
     st.session_state[state_key] = max(0, min(st.session_state[state_key], max(n - 1, 0)))
     c = st.columns([0.6, 0.6, 0.6, 0.6, 0.9, 1.3, 6])
@@ -31,7 +31,7 @@ def nav_row(state_key, n, key_prefix):
     # the tooltip would never show) — the label is the context, help adds detail.
     delay = c[5].slider("⏱️ Delay", 0.0, 1.0, 0.15, 0.05, key=f"{key_prefix}_delay",
                         help="Seconds paused on each frame during auto-play (lower = faster).")
-    i = c[6].slider("🎞️ Frame", min_value=0, max_value=max(n - 1, 1),
+    i = c[6].slider(label, min_value=0, max_value=max(n - 1, 1),
                     value=st.session_state[state_key],
                     help="Drag to scrub to a specific frame in the sequence.")
     st.session_state[state_key] = i

@@ -12,6 +12,15 @@ import registration as reg
 import viewer_ui as vu
 
 st.set_page_config(layout="wide", page_title="Visualizer")
+
+import re as _re
+def _short_cam(cam):
+    """s110_camera_basler_south1_8mm -> 'south1' (for compact folder/file/UI names)."""
+    m = _re.search(r"(south|north|east|west)\d*", cam or "")
+    return m.group(0) if m else (cam or "cam")
+
+_MODE_SHORT = {"box3d": "box", "point_cloud": "pcd"}      # render mode -> short token
+_COLOR_SHORT = {"by_category": "cat", "by_track_id": "track"}
 st.title("🎬 Visualizer")
 
 ds = dm.get_active()
@@ -56,8 +65,8 @@ def render_camera_tab():
 
     left_default = _cam_idx("south2", 0)
     right_default = _cam_idx("south1", 1 if len(cameras) > 1 else 0)
-    left_cam = c1.selectbox("Left camera", cameras, index=left_default)
-    right_cam = c2.selectbox("Right camera", cameras, index=right_default)
+    left_cam = c1.selectbox("Left camera", cameras, index=left_default, format_func=_short_cam)
+    right_cam = c2.selectbox("Right camera", cameras, index=right_default, format_func=_short_cam)
 
     modes = {"Raw camera": None, "Bounding boxes (3D)": "box3d", "Boxes + point cloud": "point_cloud"}
     variant_labels = list(modes) if have_labels else ["Raw camera"]
@@ -110,7 +119,7 @@ def render_camera_tab():
     if n == 0:
         st.warning("Not enough synchronized frames.")
         return
-    st.caption(f"{n} frames · **{left_cam}** (left) ↔ **{right_cam}** (right) · “{variant_label}”")
+    st.caption(f"{n} frames · **{_short_cam(left_cam)}** (left) ↔ **{_short_cam(right_cam)}** (right) · “{variant_label}”")
 
     left_id = lp.camera_id_from_image(raw_left[0])
     right_id = lp.camera_id_from_image(raw_right[0])
@@ -130,9 +139,10 @@ def render_camera_tab():
 
     def _cache_dir(cam):
         ps = f"_ps{point_size}" if mode == "point_cloud" else ""
-        pc = (f"_pc{'full' if pc_full else 'crop'}") if mode == "point_cloud" else ""
-        th = f"_th{hist_window}w{trail_width}" if track_hist else ""
-        return os.path.join(ds.rendered_dir, cam, f"{mode}_{color_mode}{ps}{pc}{th}_{lp.RENDER_VERSION}")
+        pc = (f"_{'full' if pc_full else 'crop'}") if mode == "point_cloud" else ""
+        th = f"_trail{hist_window}-{trail_width}" if track_hist else ""
+        m = _MODE_SHORT.get(mode, mode); col = _COLOR_SHORT.get(color_mode, color_mode)
+        return os.path.join(ds.rendered_dir, _short_cam(cam), f"{m}_{col}{ps}{pc}{th}")
 
     def _render(i, cam, cam_id, raw):
         if not mode:
@@ -151,8 +161,8 @@ def render_camera_tab():
         left_img = _render(i, left_cam, left_id, raw_left)
         right_img = _render(i, right_cam, right_id, raw_right)
         lc, rc = st.columns(2)
-        lc.image(left_img, use_container_width=True, caption=f"{left_cam} (left) · frame {i+1}/{n}")
-        rc.image(right_img, use_container_width=True, caption=f"{right_cam} (right) · frame {i+1}/{n}")
+        lc.image(left_img, use_container_width=True, caption=f"{_short_cam(left_cam)} (left) · frame {i+1}/{n}")
+        rc.image(right_img, use_container_width=True, caption=f"{_short_cam(right_cam)} (right) · frame {i+1}/{n}")
 
         if playing and i < n - 1:
             time.sleep(float(play_delay))
@@ -172,7 +182,8 @@ def render_camera_tab():
     v_max = g3.number_input("Max frames (0 = all)", 0, n, 0)
     video_dir = ds.road_videos_dir
     tag = mode or "raw"
-    basename = f"road_{left_cam}_{right_cam}_{tag}_{color_mode if mode else 'plain'}"
+    basename = (f"road_{_short_cam(left_cam)}_{_short_cam(right_cam)}_"
+                f"{_MODE_SHORT.get(tag, tag)}_{_COLOR_SHORT.get(color_mode, color_mode) if mode else 'plain'}")
     st.session_state.setdefault("road_video", None)
     if st.button("🎬 Generate side-by-side video", type="primary", use_container_width=True):
         bar = st.progress(0.0, text="Preparing frames…")
@@ -226,7 +237,7 @@ def render_lidar_tab():
 
     @st.fragment
     def _viewer3d():
-        i, playing, delay = vu.nav_row("lidar_frame", n, "lv")
+        i, playing, delay = vu.nav_row("lidar_frame", n, "lv", label="🎞️ Scene frame")
 
         pts = _load_pts(pcds[i], int(max_pts))
         objs = lp.load_objects(labels[i])
