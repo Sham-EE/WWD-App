@@ -29,7 +29,7 @@ st.caption(f"📂 Dataset: **{ds.name}**")
 # Sensor + input-cloud toggle — drives BOTH the Road Viewer (camera projection)
 # and the LiDAR labels (3D) tabs. Registered is written in the south frame, so it
 # reuses the south GT boxes + south camera calibration; south/north use their own.
-_sc, _ic = st.columns(2)
+_sc, _ic, _gc = st.columns(3)
 _sensor_label = _sc.radio("Sensor", ["Registered", "South", "North"], horizontal=True,
                           key="pipeline_sensor",
                           help="Which LiDAR to visualize. Registered = fused south+north (written in the "
@@ -42,22 +42,27 @@ _src_label = _ic.radio("Input cloud", ["Cropped (road)", "Full (uncropped)"], ho
                        help="Cropped = road-clipped cloud; Full = the raw/fused cloud. Drives both the "
                             "3D view and the cloud projected onto the camera.")
 _src = "cropped" if _src_label.startswith("Cropped") else "full"
+_gt_label = _gc.radio("GT boxes", ["Scorable", "All (raw)"], horizontal=True, key="viz_gt_kind",
+                      help="Scorable = only the boxes Dataset Prep kept (inside the ROI + enough LiDAR "
+                           "points) — what Evaluation scores against. All (raw) = every annotated box, "
+                           "including ones outside the ROI or with too few points to score.")
+_gt_kind = "raw" if _gt_label.startswith("All") else "scorable"
 
-# Resolve the cloud + GT for the selected sensor/source (same logic the pipeline
-# pages use). gt_dir_for_input maps registered -> the south GT (same frame).
+# Resolve the cloud + labels for the selected sensor/source/GT-kind (same helpers
+# the pipeline pages use). Registered resolves to the fused south∪north union.
 _pcd_default = ds.input_pcd_for_sensor(_sensor, _src)
-_label_default = ds.gt_dir_for_input(_pcd_default)
+_label_default = ds.labels_dir_for(_sensor, _gt_kind)
 
 with st.expander("📁 Input folders (advanced override)", expanded=False):
     images_root = st.text_input("Images folder (one subfolder per camera)", value=ds.images_dir,
                                 key="viz_images")
-    # keyed by sensor/source so the fields re-follow the radios when you switch
+    # keyed by sensor/source/kind so the fields re-follow the radios when you switch
     label_dir = st.text_input("OpenLABEL labels folder", value=_label_default,
-                              key=f"viz_label_{_sensor}_{_src}")
+                              key=f"viz_label_{_sensor}_{_src}_{_gt_kind}")
     pcd_dir = st.text_input("Point-cloud folder", value=_pcd_default,
                             key=f"viz_pcd_{_sensor}_{_src}")
-st.caption(f"🛰️ **{_sensor_label} · {_src_label}** — cloud `{os.path.basename(pcd_dir.rstrip('/'))}` · "
-           f"GT `{os.path.basename(label_dir.rstrip('/'))}`"
+st.caption(f"🛰️ **{_sensor_label} · {_src_label} · {_gt_label} GT** — cloud "
+           f"`{os.path.basename(pcd_dir.rstrip('/'))}` · GT `{os.path.basename(label_dir.rstrip('/'))}`"
            + ("" if os.path.isdir(label_dir) else "  ·  ⚠️ GT folder not found"))
 
 labels = rv.list_by_frame(label_dir, [".json"])
@@ -166,9 +171,10 @@ def render_camera_tab():
         pc = (f"_{'full' if _src == 'full' else 'crop'}") if mode == "point_cloud" else ""
         th = f"_trail{hist_window}-{trail_width}" if track_hist else ""
         m = _MODE_SHORT.get(mode, mode); col = _COLOR_SHORT.get(color_mode, color_mode)
-        # include the sensor so south / north / registered renders don't collide
-        # (same camera + mode, but different boxes + projected cloud).
-        return os.path.join(ds.rendered_dir, _short_cam(cam), _sensor, f"{m}_{col}{ps}{pc}{th}")
+        # include sensor + GT kind so south/north/registered and scorable/raw renders
+        # don't collide (same camera + mode, but different boxes + projected cloud).
+        gt = "" if not mode else f"_{_gt_kind}"
+        return os.path.join(ds.rendered_dir, _short_cam(cam), _sensor, f"{m}_{col}{ps}{pc}{th}{gt}")
 
     def _render(i, cam, cam_id, raw):
         if not mode:
@@ -209,7 +215,8 @@ def render_camera_tab():
     video_dir = ds.road_videos_dir
     tag = mode or "raw"
     basename = (f"road_{_short_cam(left_cam)}_{_short_cam(right_cam)}_{_sensor}_"
-                f"{_MODE_SHORT.get(tag, tag)}_{_COLOR_SHORT.get(color_mode, color_mode) if mode else 'plain'}")
+                f"{_MODE_SHORT.get(tag, tag)}_{_COLOR_SHORT.get(color_mode, color_mode) if mode else 'plain'}"
+                + (f"_{_gt_kind}" if mode else ""))
     st.session_state.setdefault("road_video", None)
     if st.button("🎬 Generate side-by-side video", type="primary", use_container_width=True):
         bar = st.progress(0.0, text="Preparing frames…")

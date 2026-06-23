@@ -120,6 +120,26 @@ class Dataset:
             return self._north_gt_dir()
         return self.gt_dir
 
+    def labels_dir_for(self, sensor, kind="scorable"):
+        """Label folder for a sensor and kind:
+        - ``kind="raw"``     -> EVERY annotated box (pre visibility/region filter);
+          registered = the fused south∪north union (falls back to south raw).
+        - ``kind="scorable"``-> the visibility/region-filtered set used by Evaluation
+          (same fallbacks as ``gt_dir_for_input``).
+        """
+        if kind == "raw":
+            if sensor == "north":
+                return self.raw_labels_north_dir
+            if sensor == "registered":
+                fused = os.path.join(self.derived_dir, "labels", "registered")
+                return fused if self._has_json(fused) else self.raw_labels_south_dir
+            return self.raw_labels_south_dir
+        if sensor == "north":
+            return self._north_gt_dir()
+        if sensor == "registered":
+            return self._registered_gt_dir()
+        return self.gt_dir
+
     @property
     def images_dir(self):
         return self.d.get("images_dir", os.path.join(self.data_dir, "raw", "images"))
