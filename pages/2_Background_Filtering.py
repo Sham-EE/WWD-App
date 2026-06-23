@@ -253,16 +253,30 @@ save_filtered = side.checkbox("Save filtered foreground points (PCD)", value=Tru
 output_dir = side.text_input("Output Directory", DEFAULT_OUT, disabled=not save_filtered)
 
 # ---------------- Load or Build background model ----------------
-if "bg_model" not in st.session_state: st.session_state.bg_model = None
+if "bg_model" not in st.session_state:
+    st.session_state.bg_model = None
+    st.session_state.bg_model_path = None
+
+# The model in session_state is a SINGLE slot, but each sensor/source has its OWN
+# background model (the path encodes <sensor>/<crop>). If the selected path changed
+# — switching the Sensor/Input radios or editing the path — drop the loaded model so
+# we never apply one sensor's model to another's cloud (which would paint bogus
+# foreground everywhere). It then auto-loads the matching saved model below, or, if
+# none exists, the viewer prompts you to build it.
+if st.session_state.get("bg_model_path") != model_save_path:
+    st.session_state.bg_model = None
+    st.session_state.bg_model_path = None
 
 if use_saved_model and st.session_state.bg_model is None and os.path.exists(model_save_path):
     try:
         with open(model_save_path, "rb") as fp:
             st.session_state.bg_model = pickle.load(fp)
+        st.session_state.bg_model_path = model_save_path
         st.success(f"Loaded saved background model from: {model_save_path}")
     except Exception as e:
         st.warning(f"Could not load saved model: {e}")
         st.session_state.bg_model = None
+        st.session_state.bg_model_path = None
 
 if side.button("Build Background Model", use_container_width=True, type="primary"):
     pcd_files = discover_pcd_files(config["pcd_dir"])
@@ -275,8 +289,9 @@ if side.button("Build Background Model", use_container_width=True, type="primary
         with st.spinner("Building background model..."):
             model = build_background_model(config, pcd_files, config['gt_dir'], progress_callback)
             st.session_state.bg_model = model
+            st.session_state.bg_model_path = model_save_path
         progress_bar.empty()
-        
+
         os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
         with open(model_save_path, "wb") as fp:
             pickle.dump(st.session_state.bg_model, fp)
