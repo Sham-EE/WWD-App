@@ -148,7 +148,6 @@ def run_detection_and_tracking(pcd_dir, out_dir, params, progress_callback=None)
     args = Args(**params)
 
     os.makedirs(out_dir, exist_ok=True)
-    vis_dir = os.path.join(out_dir, 'vis'); os.makedirs(vis_dir, exist_ok=True)
 
     pcd_files = sorted_by_frame_index(glob.glob(os.path.join(pcd_dir, '*.pcd')))
     if not pcd_files:
