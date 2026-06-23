@@ -674,10 +674,15 @@ with tab_reg:
                                key="reg_color", help="By sensor = south (blue) / north (orange) distinct "
                                                      "— alignment QA. By height = Turbo z-ramp.")
         frame = tc3.radio("Frame", ["South LiDAR", "s110_base"], horizontal=True, key="reg_frame_sel",
-                          help="Which coordinate frame to view the fused cloud in. **South LiDAR** "
-                               "(what gets written) matches the GT, camera calibration, and road/ROI "
-                               "polygons — so registered drops straight into the rest of the pipeline. "
-                               "**s110_base** is the neutral ground frame (same picture, renumbered).")
+                          help="A 'frame' is just where (0,0,0) sits and which way the axes point — like "
+                               "measuring a room from the ceiling camera vs. the floor corner. The cloud "
+                               "doesn't move, only the numbers do. **South LiDAR**: origin is AT the south "
+                               "sensor (so its marker sits at 0,0,0; ground ≈ −8.6). **s110_base**: origin "
+                               "is on the GROUND (the sensor is up its pole; ground ≈ 0). Same picture, "
+                               "shifted + rotated together. We write in the south frame because the GT, "
+                               "camera calibration, and road/ROI polygons are all measured from the south "
+                               "sensor too — so registered lines up with them for free (south marker at "
+                               "the origin = the cloud now speaks the same numbers as the GT).")
         vc1, _s1, vc2, _s2, vc3 = st.columns([3, 0.3, 3, 0.3, 3])
         zoom = vc1.slider("🔍 Zoom", 0.35, 2.0, 0.9, 0.05, key="reg_zoom")
         az = vc2.slider("🔄 Rotate", 0, 360, 45, key="reg_az")
