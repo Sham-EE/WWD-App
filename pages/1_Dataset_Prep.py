@@ -549,10 +549,12 @@ with tab_geom:
 
 # ===================== Tab 4: Registration (south + north) =====================
 with tab_reg:
-    st.caption("Fuse the **south** and **north** Ouster LiDARs into one cloud in the shared "
-               "**`s110_base`** frame. The sensor→base extrinsics are read straight from the OpenLABEL "
-               "labels (static rig → constant 4×4), so registration is **deterministic** — no guessing. "
-               "Optional **ICP** then *measures* how well the bundled calibration aligns the clouds.")
+    st.caption("Fuse the **south** and **north** Ouster LiDARs into one cloud. The sensor→base "
+               "extrinsics are read straight from the OpenLABEL labels (static rig → constant 4×4), so "
+               "registration is **deterministic** — no guessing. The fused cloud is written in the "
+               "**south LiDAR frame**, so it's a drop-in superset of the south cloud (the GT, camera "
+               "calibration, and road/ROI polygons all match it). Optional **ICP** then *measures* how "
+               "well the bundled calibration aligns the clouds.")
 
     label_dirs = {"south": ds.raw_labels_south_dir, "north": ds.raw_labels_north_dir}
     pcd_dirs = {"south": ds.raw_lidar_south_dir, "north": ds.raw_lidar_north_dir}
@@ -623,8 +625,9 @@ with tab_reg:
     st.divider()
     st.subheader("👁 Preview — Raw vs Registered")
     st.caption("One viewer, two modes. **Raw** overlays the two clouds in their own sensor frames "
-               "(the 'before' — they won't line up). **Registered** transforms both into `s110_base` "
-               "(the 'after'). Toggle **By sensor** to colour south (blue) / north (orange) — if a "
+               "(the 'before' — they won't line up). **Registered** fuses them (the 'after'); use the "
+               "**Frame** toggle to view in the south LiDAR frame (what's written) or the neutral "
+               "`s110_base`. Toggle **By sensor** to colour south (blue) / north (orange) — if a "
                "vehicle shows up as two offset copies in Registered view, that's a registration error.")
 
     @st.cache_data(show_spinner=False)
@@ -662,15 +665,19 @@ with tab_reg:
         sp, npath, dt_ms = pairs[i]
 
         # view controls — one cohesive viewer with a Raw <-> Registered toggle
-        tc1, tc2 = st.columns([1, 1])
-        view = tc1.radio("View", ["Raw (unregistered)", "Registered (s110_base)"],
+        tc1, tc2, tc3 = st.columns([1.2, 1, 1.2])
+        view = tc1.radio("View", ["Raw (unregistered)", "Registered (fused)"],
                          horizontal=True, index=1, key="reg_view",
                          help="Raw = each cloud in its OWN sensor frame, overlaid (the 'before' — they "
-                              "won't line up). Registered = both transformed into the shared s110_base "
-                              "frame (the 'after').")
+                              "won't line up). Registered = both fused together (the 'after').")
         color_mode = tc2.radio("Color", ["By sensor", "By height"], horizontal=True,
                                key="reg_color", help="By sensor = south (blue) / north (orange) distinct "
                                                      "— alignment QA. By height = Turbo z-ramp.")
+        frame = tc3.radio("Frame", ["South LiDAR", "s110_base"], horizontal=True, key="reg_frame_sel",
+                          help="Which coordinate frame to view the fused cloud in. **South LiDAR** "
+                               "(what gets written) matches the GT, camera calibration, and road/ROI "
+                               "polygons — so registered drops straight into the rest of the pipeline. "
+                               "**s110_base** is the neutral ground frame (same picture, renumbered).")
         vc1, _s1, vc2, _s2, vc3 = st.columns([3, 0.3, 3, 0.3, 3])
         zoom = vc1.slider("🔍 Zoom", 0.35, 2.0, 0.9, 0.05, key="reg_zoom")
         az = vc2.slider("🔄 Rotate", 0, 360, 45, key="reg_az")
@@ -679,9 +686,11 @@ with tab_reg:
         show_s = rc1.toggle("🔵 South", value=True, key="reg_show_s")
         show_n = rc2.toggle("🟠 North", value=True, key="reg_show_n")
         show_road = rc3.toggle("🟢 Road", value=False, key="reg_road",
-                               help="Road outline (s110_base frame — Registered view only).")
+                               help="Road outline (defined in the south frame — Registered + South-frame "
+                                    "view only).")
         show_roi = rc4.toggle("🔵 ROI", value=False, key="reg_roi",
-                              help="Research region (s110_base frame — Registered view only).")
+                              help="Research region (defined in the south frame — Registered + South-frame "
+                                   "view only).")
         show_sensors = rc5.toggle("📍 Sensors", value=True, key="reg_sensors",
                                   help="Mark the LiDAR positions + a plumb line to each nadir "
                                        "(blank spot) — Registered view only.")
@@ -715,15 +724,27 @@ with tab_reg:
             data = {"south": _load_raw(sp)[:, :3], "north": _load_raw(npath)[:, :3]}
             tag, clip, road_on, roi_on, sensors = "RAW · unregistered", False, False, False, None
         else:
-            data, tag, clip, road_on, roi_on = f, "REGISTERED · s110_base", True, show_road, show_roi
+            # `f` is the fused cloud in s110_base; re-express it in the chosen frame.
+            # South-LiDAR frame (= what we WRITE) lines up with the road/ROI polygons
+            # and the road clip window, which are defined in the south frame.
+            in_south = frame.startswith("South")
+            Tf = reg.to_south_frame(Ms) if in_south else np.eye(4)
+            data = {"south": reg.transform_points(f["south"], Tf),
+                    "north": reg.transform_points(f["north"], Tf)}
+            clip = in_south
+            road_on, roi_on = (show_road and in_south), (show_roi and in_south)
+            tag = "REGISTERED · south frame" if in_south else "REGISTERED · s110_base"
             sensors = None
             if show_sensors:
                 # sensor origin in base = translation column of its calibration; the
-                # north sensor moves with the ICP correction when it's applied.
+                # north sensor moves with the ICP correction when it's applied. Re-
+                # express both in the chosen view frame (in south frame, South → origin).
                 south_pos = Ms[:3, 3]
                 n_pos = Mn[:3, 3]
                 if use_refine:
                     n_pos = (np.array(delta_l) @ np.append(n_pos, 1.0))[:3]
+                south_pos = reg.transform_points(np.asarray(south_pos).reshape(1, 3), Tf)[0]
+                n_pos = reg.transform_points(np.asarray(n_pos).reshape(1, 3), Tf)[0]
                 # vivid blue / red — coordinated with the south(blue)/north(orange-red)
                 # clouds, but brighter (+ white outline) so the markers stand out.
                 sensors = [{"name": "South", "pos": [float(v) for v in south_pos], "color": "#1e90ff"},
@@ -765,5 +786,6 @@ with tab_reg:
             refine=(np.array(batch_refine) if batch_refine is not None else None),
             progress=lambda c, t: bar.progress(c / t, text=f"Registering {c}/{t}"))
         bar.empty()
-        st.success(f"Wrote **{n}** fused clouds → `{reg_out}`  (manifest: `registration.json`). "
-                   "Now crop or score the **Registered (south + north)** source in the other tabs.")
+        st.success(f"Wrote **{n}** fused clouds (south LiDAR frame) → `{reg_out}`  "
+                   "(manifest: `registration.json`). Now crop or score the **Registered (south + north)** "
+                   "source in the other tabs — it reuses the south GT, calibration, and polygons.")

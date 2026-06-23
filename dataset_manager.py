@@ -95,7 +95,9 @@ class Dataset:
         return scorable if self._has_json(scorable) else self.raw_labels_north_dir
 
     def _registered_gt_dir(self):
-        """Registered GT: prefer the generated scorable set, else fall back to south."""
+        """Registered GT: the fused cloud is written in the **south LiDAR frame**,
+        so the south scorable GT applies to it directly. Prefer an explicit
+        registered scorable set if one was generated, else use the south GT."""
         scorable = self.scorable_gt_dir_for("registered")
         return scorable if self._has_json(scorable) else self.gt_dir
 
@@ -130,7 +132,7 @@ class Dataset:
         return os.path.join(self.data_dir, "derived")
 
     # --- DERIVED data, nested to mirror raw/ (point_clouds/ + labels/) ---
-    #   derived/point_clouds/registered/*.pcd               (fused, s110_base)
+    #   derived/point_clouds/registered/*.pcd               (fused, south LiDAR frame)
     #   derived/point_clouds/cropped/<sensor>/*.pcd         (road-clipped)
     #   derived/labels/scorable/<sensor>/*.json             (visible-only GT)
     @property
