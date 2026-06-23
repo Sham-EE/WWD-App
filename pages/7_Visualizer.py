@@ -8,6 +8,8 @@ import road_viewer as rv
 import label_projection as lp
 import lidar_viewer as lv
 import dataset_prep as dp
+import registration as reg
+import viewer_ui as vu
 
 st.set_page_config(layout="wide", page_title="Visualizer")
 st.title("🎬 Visualizer")
@@ -144,20 +146,7 @@ def render_camera_tab():
 
     @st.fragment
     def _viewer():
-        st.session_state.road_frame = max(0, min(st.session_state.road_frame, n - 1))
-        nav = st.columns([1, 1, 1, 1, 1.3, 3])
-        if nav[0].button("⏮ First", use_container_width=True):
-            st.session_state.road_frame = 0
-        if nav[1].button("◀ Prev", use_container_width=True):
-            st.session_state.road_frame = max(0, st.session_state.road_frame - 1)
-        if nav[2].button("Next ▶", use_container_width=True):
-            st.session_state.road_frame = min(n - 1, st.session_state.road_frame + 1)
-        if nav[3].button("Last ⏭", use_container_width=True):
-            st.session_state.road_frame = n - 1
-        playing = nav[4].toggle("▶ Play", value=False)
-        play_delay = nav[5].slider("Play delay (s)", 0.0, 1.0, 0.15, 0.05)
-        i = st.slider("Frame", 0, max(n - 1, 1), st.session_state.road_frame)
-        st.session_state.road_frame = i
+        i, playing, play_delay = vu.nav_row("road_frame", n, "road")
 
         left_img = _render(i, left_cam, left_id, raw_left)
         right_img = _render(i, right_cam, right_id, raw_right)
@@ -221,30 +210,23 @@ def render_lidar_tab():
     if n == 0:
         st.warning("Need both OpenLABEL labels and point clouds (set them in **Input folders** above).")
         return
-    o1, o2, o3 = st.columns(3)
+    o1, o2, o3, o4 = st.columns(4)
     color_mode = o1.radio("Box colour", ["by_category", "by_track_id"], horizontal=True, key="lv_color")
     max_pts = o2.select_slider("Points shown", [10000, 20000, 30000, 50000], value=20000, key="lv_pts")
     show_road = o3.checkbox("🛣️ Road outline", value=True, key="lv_road",
                             help="Green road boundary from site_geometry.json.")
+    show_sensors = o4.checkbox("📍 LiDAR", value=True, key="lv_sensors",
+                               help="Mark the LiDAR position + nadir (inferred from the point-cloud folder).")
     road = dp.road_polygon(0.0) if show_road else None
+    # infer which sensor the point-cloud folder belongs to so markers land right
+    _pl = (pcd_dir or "").lower()
+    _sensor = "registered" if "registered" in _pl else ("north" if "north" in _pl else "south")
+    sensors = reg.lidar_markers(ds, _sensor) if show_sensors else None
     st.session_state.setdefault("lidar_frame", 0)
 
     @st.fragment
     def _viewer3d():
-        st.session_state.lidar_frame = max(0, min(st.session_state.lidar_frame, n - 1))
-        nav = st.columns([1, 1, 1, 1, 1.3, 3])
-        if nav[0].button("⏮ First", use_container_width=True, key="lv_first"):
-            st.session_state.lidar_frame = 0
-        if nav[1].button("◀ Prev", use_container_width=True, key="lv_prev"):
-            st.session_state.lidar_frame = max(0, st.session_state.lidar_frame - 1)
-        if nav[2].button("Next ▶", use_container_width=True, key="lv_next"):
-            st.session_state.lidar_frame = min(n - 1, st.session_state.lidar_frame + 1)
-        if nav[3].button("Last ⏭", use_container_width=True, key="lv_last"):
-            st.session_state.lidar_frame = n - 1
-        playing = nav[4].toggle("▶ Play", value=False, key="lv_play")
-        delay = nav[5].slider("Play delay (s)", 0.0, 1.0, 0.25, 0.05, key="lv_delay")
-        i = st.slider("Scene frame", 0, max(n - 1, 1), st.session_state.lidar_frame)
-        st.session_state.lidar_frame = i
+        i, playing, delay = vu.nav_row("lidar_frame", n, "lv")
 
         pts = _load_pts(pcds[i], int(max_pts))
         objs = lp.load_objects(labels[i])
@@ -252,11 +234,13 @@ def render_lidar_tab():
             cbev, cside = st.columns(2)
             with cbev:
                 st.markdown("**Bird's Eye View**")
-                st.plotly_chart(lv.build_figure(pts, objs, color_mode, "bev", height=520, road_poly=road),
+                st.plotly_chart(lv.build_figure(pts, objs, color_mode, "bev", height=520,
+                                                road_poly=road, sensors=sensors),
                                 use_container_width=True, key="lv_bev")
             with cside:
                 st.markdown("**Side View**")
-                st.plotly_chart(lv.build_figure(pts, objs, color_mode, "side", height=520, road_poly=road),
+                st.plotly_chart(lv.build_figure(pts, objs, color_mode, "side", height=520,
+                                                road_poly=road, sensors=sensors),
                                 use_container_width=True, key="lv_side")
         st.caption(f"Frame {i+1}/{n} · {len(objs)} labelled objects · {len(pts):,} points shown")
 

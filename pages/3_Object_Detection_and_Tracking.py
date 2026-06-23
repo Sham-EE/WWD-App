@@ -5,6 +5,8 @@ import glob
 from detection_logic import run_detection_and_tracking, sorted_by_frame_index
 from visualization import create_3d_figure, generate_tracking_animation
 from wwd_detection import load_lane_config, lanes_calibrated, detect_wrong_way, summarize_wrong_way
+import registration as reg
+import viewer_ui as vu
 
 st.set_page_config(layout="wide", page_title="Object Detection and Tracking")
 
@@ -207,47 +209,45 @@ if st.session_state.detection_results:
             st.error(f"⚠ {n_ww} wrong-way vehicle(s) detected.")
             st.dataframe(rows, use_container_width=True)
 
-    # --- View toggles (lane overlay + bird's-eye + height colouring) ---
-    vc1, vc2, vc3 = st.columns(3)
-    if lanes:
-        results['lanes'] = lanes
-        results['show_lanes'] = vc1.checkbox(
-            "🛣️ Show lane directions", value=True,
-            help="Overlay the calibrated lane polygons and their expected travel-direction arrows.")
-    else:
-        results['show_lanes'] = False
-    results['top_down'] = vc2.checkbox(
-        "⬇️ Top-down (bird's-eye) view", value=False,
-        help="Snap the camera straight down to verify lane alignment against the road.")
-    color_h = vc3.checkbox(
-        "🌈 Color by height", value=False,
-        help="Colour the point cloud by z (Turbo) like the dev-kit — ground vs vehicles separate by hue.")
-    h_span = 4.0
-    if color_h:
-        h_span = st.slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="odt_hspan",
-                           help="Colour spreads over this many metres above the ground "
-                                "(smaller = cars show a gradient; tall stuff saturates).")
-
-    # --- Frame playback controls (steps the live viewer; no animation render) ---
+    # --- Compact one-line frame navigation ---
     n_frames = len(results['pcd_files'])
-    if 'odt_frame' not in st.session_state:
-        st.session_state.odt_frame = 0
-    st.session_state.odt_frame = max(0, min(st.session_state.odt_frame, n_frames - 1))
+    frame_idx, playing, play_delay = vu.nav_row("odt_frame", n_frames, "odt")
 
-    pc = st.columns([1, 1, 1, 1, 1.4, 3])
-    if pc[0].button("⏮ First", use_container_width=True):
-        st.session_state.odt_frame = 0; st.rerun()
-    if pc[1].button("◀ Prev", use_container_width=True):
-        st.session_state.odt_frame = max(0, st.session_state.odt_frame - 1); st.rerun()
-    if pc[2].button("Next ▶", use_container_width=True):
-        st.session_state.odt_frame = min(n_frames - 1, st.session_state.odt_frame + 1); st.rerun()
-    if pc[3].button("Last ⏭", use_container_width=True):
-        st.session_state.odt_frame = n_frames - 1; st.rerun()
-    playing = pc[4].toggle("▶ Play", value=False, help="Auto-advance frames in the live viewer.")
-    play_delay = pc[5].slider("Play delay (s/frame)", 0.0, 1.0, 0.2, 0.05)
+    # --- Collapsible layers & overlays (bulk on/off; matches Background Filtering) ---
+    have_lanes = bool(lanes)
+    toggle_defaults = {
+        "odt_orig": True, "odt_objects": True, "odt_lanes": have_lanes,
+        "odt_road": True, "odt_roi": False, "odt_excl": False,
+        "odt_sensors": True, "odt_height": False, "odt_topdown": False,
+    }
+    vu.ensure_toggle_defaults(toggle_defaults)
+    overlay_keys = ["odt_orig", "odt_objects", "odt_lanes", "odt_road",
+                    "odt_roi", "odt_excl", "odt_sensors"]
+    with st.expander("🎛️ Layers & overlays", expanded=True):
+        vu.bulk_toggle_buttons(overlay_keys, "odt_bulk", rerun_scope="app")
+        r1 = st.columns(4)
+        show_orig = r1[0].toggle("⚪ Point cloud", key="odt_orig", help="The original cloud (grey/Turbo).")
+        show_objects = r1[1].toggle("🔴 Objects/tracks", key="odt_objects",
+                                    help="Detection markers, wrong-way diamonds, heading arrows, trails.")
+        show_lanes = r1[2].toggle("🟦 Lanes", key="odt_lanes", disabled=not have_lanes,
+                                  help="Lane polygons + expected-direction arrows."
+                                       if have_lanes else "No calibrated lanes for this dataset.")
+        sensors_on = r1[3].toggle("📍 LiDAR", key="odt_sensors", help="Mark the LiDAR position(s).")
+        r2 = st.columns(4)
+        show_road = r2[0].toggle("🛣️ Road", key="odt_road", help="Road polygon outline.")
+        show_roi = r2[1].toggle("🔵 ROI", key="odt_roi", help="Research region boundary.")
+        show_excl = r2[2].toggle("🟣 Exclusion", key="odt_excl", help="Foreground-exclusion rects.")
+        color_h = r2[3].toggle("🌈 Height", key="odt_height", help="Colour the cloud by z (Turbo).")
+        r3 = st.columns([1.3, 2.7])
+        top_down = r3[0].toggle("⬇️ Top-down", key="odt_topdown",
+                                help="Snap the camera straight down (bird's-eye).")
+        h_span = r3[1].slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="odt_hspan",
+                              help="Colour spreads over this many metres above ground.") if color_h else 4.0
 
-    frame_idx = st.slider("Select Frame", 0, max(n_frames - 1, 1), st.session_state.odt_frame)
-    st.session_state.odt_frame = frame_idx
+    results['lanes'] = lanes
+    results['show_lanes'] = bool(show_lanes and have_lanes)
+    results['top_down'] = top_down
+    sensors = reg.lidar_markers(_ds, _sensor) if sensors_on else None
 
     st.subheader("3D Point Cloud View")
     original_pcd_path = results['original_pcd_files'][frame_idx]
@@ -255,7 +255,10 @@ if st.session_state.detection_results:
         st.error(f"Original PCD file not found for this frame: {original_pcd_path}")
     else:
         fig = create_3d_figure(results, frame_idx, original_pcd_path,
-                               color_by_height=color_h, height_span=h_span)
+                               color_by_height=color_h, height_span=h_span,
+                               show_original=show_orig, show_road=show_road,
+                               show_roi=show_roi, show_excl=show_excl,
+                               show_objects=show_objects, sensors=sensors)
         st.plotly_chart(fig, use_container_width=True, height=800)
 
     # Auto-play: advance one frame and rerun until the end or until paused.

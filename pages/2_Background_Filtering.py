@@ -12,6 +12,8 @@ from bg_filter_core import (
     filter_points_with_model,
     sorted_by_frame_index,
 )
+import registration as reg
+import viewer_ui as vu
 
 # --- Page Configuration ---
 st.set_page_config(layout="wide", page_title="Background Filtering")
@@ -68,7 +70,7 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
                            show_road=False, road_dashed=False, show_roi=False,
                            show_excl=False, gt_objs=None, color_by_height=False, height_span=4.0,
                            show_foreground=True, show_original=True, height=560,
-                           azimuth=45.0, elevation=35.0):
+                           azimuth=45.0, elevation=35.0, sensors=None):
     fig = go.Figure()
     # Resolve the road window first so we can lock the view AND clip the plotted points
     # to it. Clipping is the key: aspectmode="data" sizes the 3D box from the POINT
@@ -157,6 +159,11 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
             lt.append(lp._label_text(o)); lcol.append(lv._hex(lp._color_for(o, "by_category")))
         fig.add_trace(go.Scatter3d(x=lx, y=ly, z=lz, mode="text", text=lt,
             textfont=dict(size=11, color=lcol), hoverinfo="skip", showlegend=False))
+
+    if sensors:
+        import registration as reg
+        for tr in reg.sensor_marker_traces(go, sensors, z_floor=z_floor):
+            fig.add_trace(tr)
 
     # Camera is driven entirely by the (persistent) sliders: zoom = distance,
     # azimuth = orbit angle, elevation = tilt. Building eye from these angles is what
@@ -316,28 +323,12 @@ if st.session_state.bg_model:
 
         @st.fragment
         def _bf_viewer():
-            st.session_state.bf_frame = max(0, min(st.session_state.bf_frame, n_bf - 1))
-            nav = st.columns([1, 1, 1, 1, 1.3, 3])
-            if nav[0].button("⏮ First", use_container_width=True):
-                st.session_state.bf_frame = 0
-            if nav[1].button("◀ Prev", use_container_width=True):
-                st.session_state.bf_frame = max(0, st.session_state.bf_frame - 1)
-            if nav[2].button("Next ▶", use_container_width=True):
-                st.session_state.bf_frame = min(n_bf - 1, st.session_state.bf_frame + 1)
-            if nav[3].button("Last ⏭", use_container_width=True):
-                st.session_state.bf_frame = n_bf - 1
-            playing = nav[4].toggle("▶ Play", value=False)
-            play_delay = nav[5].slider("Play delay (s)", 0.0, 1.0, 0.15, 0.05)
-            i = st.slider("Frame", 0, max(n_bf - 1, 1), st.session_state.bf_frame)
-            st.session_state.bf_frame = i
-            # Per-source default zoom (lower = more zoomed in). Edit these two numbers
-            # to set the zoom each source loads at. Each source has its own slider/key,
-            # so cropped and full remember their own zoom independently.
+            # Compact one-line frame navigation.
+            i, playing, play_delay = vu.nav_row("bf_frame", n_bf, "bf")
+
+            # Persistent camera (one line): zoom = distance, rotate/tilt = orbit.
             ZOOM_DEFAULTS = {"cropped": 0.7, "full": 0.9}
-            # Persistent camera controls on one line (zoom + rotate + tilt). These drive
-            # the camera from session_state, so the view holds across frames & toggles
-            # (mouse drag/scroll is for quick looks only and resets on rerun).
-            cz, _s1, ca, _s2, ce = st.columns([3, 0.4, 3, 0.4, 3])
+            cz, ca, ce = st.columns(3)
             zoom = cz.slider("🔍 Zoom", 0.35, 2.0, ZOOM_DEFAULTS.get(_src, 0.9), 0.05,
                              key=f"bf_zoom_{_src}", help="Lower = closer.")
             azimuth = ca.slider("🔄 Rotate", 0, 360, 45, 5, key="bf_az",
@@ -345,47 +336,49 @@ if st.session_state.bg_model:
             elevation = ce.slider("📐 Tilt", 5, 88, 35, 1, key="bf_el",
                                   help="Camera height angle; 88 ≈ straight-down bird's-eye.")
 
-            # Point-cloud layers (persist across frames, unlike legend clicks).
-            lc = st.columns(2)
-            show_fg_pts = lc[0].toggle("🔴 Foreground points", value=True, key="bf_show_fg",
-                                       help="Show the red moving-foreground points (persists across frames).")
-            show_orig = lc[1].toggle("⚪ Original cloud", value=True, key="bf_show_orig",
-                                     help="Show the faint background/original cloud.")
+            road_key = f"bf_road_{_src}"
+            # Seed every toggle so bulk on/off can flip them without value= conflicts.
+            toggle_defaults = {
+                "bf_show_fg": True, "bf_show_orig": True, road_key: (_src == "cropped"),
+                "bf_roi": False, "bf_excl": False, "bf_gt": False, "bf_sensors": True,
+                "bf_height": False, "bf_metric": False,
+            }
+            vu.ensure_toggle_defaults(toggle_defaults)
+            overlay_keys = ["bf_show_fg", "bf_show_orig", road_key, "bf_roi",
+                            "bf_excl", "bf_gt", "bf_sensors"]
 
-            # Geometry overlays — each region actually affects filtering:
-            geo = st.columns(4)
-            color_h = geo[3].toggle("🌈 Color by height", value=False, key="bf_height",
-                                    help="Colour the original cloud by z (Turbo) like the dev-kit — "
-                                         "ground vs poles/vehicles separate by hue.")
-            road_on = geo[0].toggle("🛣️ Road outline", value=(_src == "cropped"),
-                                    key=f"bf_road_{_src}",
-                                    help="Road polygon boundary. Solid on cropped (the actual crop); "
-                                         "dashed on full (reference only — shows what's outside it).")
-            roi_on = geo[1].toggle("🔵 ROI (research region)", value=False, key="bf_roi",
-                                   help="Bounds what the filter processes — points outside are never kept.")
-            excl_on = geo[2].toggle("🟣 Exclusion zones", value=False, key="bf_excl",
-                                    help="Foreground-exclusion rects — points inside are always dropped "
-                                         "as background.")
-            # GT overlays / metric:
-            opt = st.columns([1.1, 1.2, 1.0, 2.7])
-            gt_on = opt[0].toggle("🏷️ GT boxes", value=False, disabled=not has_gt,
-                                  key="bf_gt",
-                                  help="Overlay this frame's ground-truth 3D boxes."
-                                       if has_gt else "No ground truth for this dataset.")
-            metric_on = opt[1].toggle("📊 FG quality", value=False, disabled=not has_gt,
-                                      key="bf_metric",
-                                      help="Live foreground-vs-GT quality for this frame "
-                                           "(a tuning proxy, not the detection F1)."
-                                           if has_gt else "No ground truth for this dataset.")
-            min_pts = opt[2].number_input("≥ pts", 1, 200, 10, 1, key="bf_minpts",
-                                          help="A GT object counts as 'covered' with at "
-                                               "least this many surviving foreground points.")
-            h_span = 4.0
-            if color_h:
-                h_span = opt[3].slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="bf_hspan",
-                                       help="Colour spreads over this many metres above the ground "
-                                            "(smaller = cars show a gradient; tall stuff saturates).")
+            with st.expander("🎛️ Layers & overlays", expanded=True):
+                vu.bulk_toggle_buttons(overlay_keys, "bf_bulk")
+                r1 = st.columns(4)
+                show_fg_pts = r1[0].toggle("🔴 Foreground", key="bf_show_fg",
+                                           help="The red moving-foreground points.")
+                show_orig = r1[1].toggle("⚪ Original", key="bf_show_orig",
+                                         help="The faint background/original cloud.")
+                color_h = r1[2].toggle("🌈 Height", key="bf_height",
+                                       help="Colour the original cloud by z (Turbo).")
+                sensors_on = r1[3].toggle("📍 LiDAR", key="bf_sensors",
+                                          help="Mark the LiDAR position(s) + nadir.")
+                r2 = st.columns(4)
+                road_on = r2[0].toggle("🛣️ Road", key=road_key,
+                                       help="Road polygon. Solid on cropped (the crop); dashed on full.")
+                roi_on = r2[1].toggle("🔵 ROI", key="bf_roi",
+                                      help="Bounds what the filter processes.")
+                excl_on = r2[2].toggle("🟣 Exclusion", key="bf_excl",
+                                       help="Foreground-exclusion rects — always dropped.")
+                gt_on = r2[3].toggle("🏷️ GT", key="bf_gt", disabled=not has_gt,
+                                     help="Overlay this frame's GT boxes."
+                                          if has_gt else "No ground truth for this dataset.")
+                r3 = st.columns([1.3, 1, 2.7])
+                metric_on = r3[0].toggle("📊 FG quality", key="bf_metric", disabled=not has_gt,
+                                         help="Live foreground-vs-GT quality (a tuning proxy)."
+                                              if has_gt else "No ground truth for this dataset.")
+                min_pts = r3[1].number_input("≥ pts", 1, 200, 10, 1, key="bf_minpts",
+                                             help="Pts for a GT object to count as 'covered'.")
+                h_span = r3[2].slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="bf_hspan",
+                                      help="Colour spreads over this many metres above ground.") \
+                    if color_h else 4.0
 
+            sensors = reg.lidar_markers(_ds, _sensor) if sensors_on else None
             pts = _load_raw(pcd_files[i])
             fg, _ = filter_points_with_model(pts, st.session_state.bg_model, config)
             gt_objs = None
@@ -404,7 +397,8 @@ if st.session_state.bg_model:
                                        gt_objs=gt_objs if gt_on else None,
                                        color_by_height=color_h, height_span=h_span,
                                        show_foreground=show_fg_pts, show_original=show_orig,
-                                       height=560, azimuth=azimuth, elevation=elevation),
+                                       height=560, azimuth=azimuth, elevation=elevation,
+                                       sensors=sensors),
                 use_container_width=True, key="bf_fig")
             st.caption(f"{os.path.basename(pcd_files[i])} · frame {i+1}/{n_bf} · "
                        f"{len(fg)} foreground / {len(pts)} points")

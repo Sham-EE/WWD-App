@@ -58,39 +58,63 @@ def _arrow_segments(cx, cy, hdg, z, length=4.0, head=1.6, head_ang=np.radians(30
 
 
 def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_dict=None,
-                     color_by_height=False, height_span=4.0):
+                     color_by_height=False, height_span=4.0,
+                     show_original=True, show_road=True, show_roi=False, show_excl=False,
+                     show_objects=True, sensors=None):
     """
     Creates an interactive 3D Plotly figure for a given frame.
     (Keep this for interactive UI display as it doesn't need Kaleido)
     """
     fig = go.Figure()
+    z_floor = -7.5  # sensor-frame ground; markers/overlays drawn here
 
     # 1. Add Original Point Cloud
     points = load_points_from_pcd(original_pcd_path)
-    if color_by_height and points.shape[1] >= 3:
-        z = points[:, 2]; z0 = float(np.percentile(z, 1))
-        pc_marker = dict(size=1, color=z, colorscale='Turbo',
-                         cmin=z0, cmax=z0 + float(height_span), opacity=0.6, showscale=False)
-    else:
-        pc_marker = dict(size=1, color='grey', opacity=0.5)
-    fig.add_trace(go.Scatter3d(
-        x=points[:, 0], y=points[:, 1], z=points[:, 2],
-        mode='markers', name='Original Point Cloud', marker=pc_marker
-    ))
+    if show_original:
+        if color_by_height and points.shape[1] >= 3:
+            z = points[:, 2]; z0 = float(np.percentile(z, 1))
+            pc_marker = dict(size=1, color=z, colorscale='Turbo',
+                             cmin=z0, cmax=z0 + float(height_span), opacity=0.6, showscale=False)
+        else:
+            pc_marker = dict(size=1, color='grey', opacity=0.5)
+        fig.add_trace(go.Scatter3d(
+            x=points[:, 0], y=points[:, 1], z=points[:, 2],
+            mode='markers', name='Original Point Cloud', marker=pc_marker
+        ))
 
     # 2. Add Road Polygon
     road_poly = results['road_poly']
     if road_poly.geom_type == 'Polygon': polys = [road_poly]
     else: polys = road_poly.geoms
-    for poly in polys:
-        x, y = poly.exterior.xy
-        x_np = np.array(x)
-        y_np = np.array(y)
-        fig.add_trace(go.Scatter3d(
-            x=x_np, y=y_np, z=np.full_like(x_np, -7.5),
-            mode='lines', name='Road',
-            line=dict(color='green', width=4)
-        ))
+    if show_road:
+        for poly in polys:
+            x, y = poly.exterior.xy
+            x_np = np.array(x)
+            y_np = np.array(y)
+            fig.add_trace(go.Scatter3d(
+                x=x_np, y=y_np, z=np.full_like(x_np, z_floor),
+                mode='lines', name='Road',
+                line=dict(color='green', width=4)
+            ))
+
+    # 2a. Optional ROI / exclusion overlays (from the active site geometry)
+    def _outline3d(geom, color, dash, name):
+        gs = [geom] if geom.geom_type == 'Polygon' else list(geom.geoms)
+        for j, g in enumerate(gs):
+            gx, gy = g.exterior.xy
+            fig.add_trace(go.Scatter3d(x=list(gx), y=list(gy), z=[z_floor] * len(gx),
+                mode='lines', line=dict(color=color, width=3, dash=dash), name=name,
+                legendgroup=name, showlegend=(j == 0), hoverinfo='skip'))
+    if show_roi or show_excl:
+        try:
+            from geometry_config import get_research_polygon, get_fg_exclusion_rects
+            if show_roi:
+                _outline3d(get_research_polygon(), '#17becf', 'dot', 'ROI')
+            if show_excl:
+                for r in (get_fg_exclusion_rects() or []):
+                    _outline3d(r, '#ff5fec', 'dash', 'Exclusion')
+        except Exception:
+            pass
 
     # 2b. Optional lane-direction overlay (for WWD calibration / sanity check)
     if results.get('show_lanes') and results.get('lanes'):
@@ -131,9 +155,9 @@ def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_d
                 showlegend=False, hoverinfo='none'
             ))
 
-    # 3. Add Detections
+    # 3. Add Detections (suppressed when objects layer is off)
     det_frames = results['det_frames']
-    current_dets = det_frames[frame_index_to_render]
+    current_dets = det_frames[frame_index_to_render] if show_objects else []
     params = results.get('params', {})
     speed_threshold = params.get('moving_speed_thresh', 3.0)
 
@@ -216,10 +240,18 @@ def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_d
                 showlegend=False
             ))
 
+    # 5. Optional LiDAR position markers (frame-aware: sensor at origin for
+    #    south/north; at base position for registered).
+    if sensors:
+        import registration as reg
+        mfloor = 0.0 if any(s["pos"][2] > 2.0 for s in sensors) else z_floor
+        for tr in reg.sensor_marker_traces(go, sensors, z_floor=mfloor):
+            fig.add_trace(tr)
+
     road_poly = results['road_poly']
     minx, miny, maxx, maxy = road_poly.bounds
     buffer_x, buffer_y = 5.0, 10.0
-    
+
     layout_dict = dict(
         margin=dict(l=0, r=0, b=0, t=40),
         title=f"Frame {frame_index_to_render}",
