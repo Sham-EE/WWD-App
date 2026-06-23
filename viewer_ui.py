@@ -27,13 +27,13 @@ def nav_row(state_key, n, key_prefix):
     if c[3].button("⏭", key=f"{key_prefix}_last", help="Last frame", use_container_width=True):
         st.session_state[state_key] = n - 1
     playing = c[4].toggle("▶", key=f"{key_prefix}_play", help="Auto-play through the frames")
-    delay = c[5].slider("delay", 0.0, 1.0, 0.15, 0.05, key=f"{key_prefix}_delay",
-                        label_visibility="collapsed",
-                        help="⏱️ Play delay — seconds paused on each frame during auto-play "
-                             "(lower = faster).")
-    i = c[6].slider(f"frame_{key_prefix}", min_value=0, max_value=max(n - 1, 1),
-                    value=st.session_state[state_key], label_visibility="collapsed",
-                    help="🎞️ Frame — drag to scrub to a specific frame in the sequence.")
+    # short VISIBLE labels (collapsed labels also hide Streamlit's help "?" icon, so
+    # the tooltip would never show) — the label is the context, help adds detail.
+    delay = c[5].slider("⏱️ Delay", 0.0, 1.0, 0.15, 0.05, key=f"{key_prefix}_delay",
+                        help="Seconds paused on each frame during auto-play (lower = faster).")
+    i = c[6].slider("🎞️ Frame", min_value=0, max_value=max(n - 1, 1),
+                    value=st.session_state[state_key],
+                    help="Drag to scrub to a specific frame in the sequence.")
     st.session_state[state_key] = i
     return i, playing, delay
 
