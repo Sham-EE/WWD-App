@@ -142,7 +142,7 @@ def render_camera_tab():
         pc = (f"_{'full' if pc_full else 'crop'}") if mode == "point_cloud" else ""
         th = f"_trail{hist_window}-{trail_width}" if track_hist else ""
         m = _MODE_SHORT.get(mode, mode); col = _COLOR_SHORT.get(color_mode, color_mode)
-        return os.path.join(ds.rendered_dir, _short_cam(cam), f"{m}_{col}{ps}{pc}{th}_{lp.RENDER_VERSION}")
+        return os.path.join(ds.rendered_dir, _short_cam(cam), f"{m}_{col}{ps}{pc}{th}")
 
     def _render(i, cam, cam_id, raw):
         if not mode:

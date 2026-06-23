@@ -13,10 +13,6 @@ import os
 
 import numpy as np
 
-# Bump when the rendering/palette changes so cached overlays auto-invalidate
-# (the Road Viewer includes this in the cache folder name).
-RENDER_VERSION = "v6"
-
 # Per-category colours (RGB) — EXACTLY the TUM Traffic dev-kit values
 # (id_to_class_name_mapping[...]["color_rgb"] in src/utils/utils.py).
 CATEGORY_COLORS = {
