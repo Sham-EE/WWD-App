@@ -10,7 +10,8 @@ A dataset has *input* dirs (raw PCDs + optional GT, which may live anywhere on
 disk) and a *workspace* root that holds everything the app generates/edits:
 
     <workspace>/config/   lanes.geojson, site_geometry.json
-    <workspace>/outputs/  background_model/, background_filtering/, object_detection/
+    <workspace>/outputs/  background/{background_model,background_filtering}/<sensor>/<crop>/,
+                          detection/object_detection/<sensor>/<crop>/, visualizer/{rendered,road_videos}/
     <workspace>/settings.json
 
 The built-in **TUMTraf** template maps to the project's existing top-level
@@ -184,48 +185,34 @@ class Dataset:
         return os.path.join(self.defaults_dir, "lanes.geojson")
 
     @property
-    def model_path(self):
-        return os.path.join(self.outputs_dir, "background_model", "background_model.pkl")
-
-    @property
-    def filtered_dir(self):
-        return os.path.join(self.outputs_dir, "background_filtering")
-
-    @property
-    def detection_dir(self):
-        return os.path.join(self.outputs_dir, "object_detection")
-
-    @property
     def settings_path(self):
         return os.path.join(self.workspace, "settings.json")
 
-    # --- pipeline input source (cropped road vs full/uncropped) for A/B eval ---
-    # Each source writes to its own model/filtered/detection folders so the two
-    # don't clash and their eval metrics can be compared.
-    def _sfx(self, source):
-        return "" if source == "cropped" else "_full"
+    # --- visualizer outputs (camera-overlay cache + road videos) ---
+    @property
+    def visualizer_dir(self):
+        return os.path.join(self.outputs_dir, "visualizer")
 
-    def input_pcd_for(self, source):
-        return self.pcd_dir if source == "cropped" else self.raw_lidar_south_dir
+    @property
+    def rendered_dir(self):
+        return os.path.join(self.visualizer_dir, "rendered")
 
-    def model_path_for(self, source):
-        return os.path.join(self.outputs_dir, "background_model" + self._sfx(source), "background_model.pkl")
+    @property
+    def road_videos_dir(self):
+        return os.path.join(self.visualizer_dir, "road_videos")
 
-    def filtered_dir_for(self, source):
-        return self.filtered_dir + self._sfx(source)
+    # --- pipeline INPUT source (cropped road vs full/uncropped), per sensor ---
+    def _crop(self, source):
+        return "cropped" if source == "cropped" else "full"
 
-    def detection_dir_for(self, source):
-        return self.detection_dir + self._sfx(source)
-
-    # --- per-SENSOR A/B (south / north / registered) × cropped/full ---
-    # South keeps the original suffix scheme (back-compat with existing folders);
-    # north/registered get their own model/filtered/detection folders so all
-    # three sensors' results coexist and can be compared.
     def _dir_has_pcd(self, d):
         try:
             return os.path.isdir(d) and any(f.endswith(".pcd") for f in os.listdir(d))
         except OSError:
             return False
+
+    def input_pcd_for(self, source):
+        return self.pcd_dir if source == "cropped" else self.raw_lidar_south_dir
 
     def input_pcd_for_sensor(self, sensor, source):
         if sensor == "north":
@@ -240,25 +227,51 @@ class Dataset:
             return full
         return self.input_pcd_for(source)  # south
 
-    def _sensor_sfx(self, sensor, source):
-        base = self._sfx(source)
-        return base if sensor == "south" else f"_{sensor}{base}"
-
+    # --- per-SENSOR OUTPUT paths, nested so outputs/ stays tidy ---
+    #   outputs/background/background_model/<sensor>/<crop>/background_model.pkl
+    #   outputs/background/background_filtering/<sensor>/<crop>/*.pcd
+    #   outputs/detection/object_detection/<sensor>/<crop>/  (tracks.csv, gif, eval report)
+    # <sensor> is south|north|registered, <crop> is cropped|full — so every
+    # combination has its own folder and all results coexist for comparison.
     def model_path_for_sensor(self, sensor, source):
-        return os.path.join(self.outputs_dir,
-                            "background_model" + self._sensor_sfx(sensor, source),
-                            "background_model.pkl")
+        return os.path.join(self.outputs_dir, "background", "background_model",
+                            sensor, self._crop(source), "background_model.pkl")
 
     def filtered_dir_for_sensor(self, sensor, source):
-        return self.filtered_dir + self._sensor_sfx(sensor, source)
+        return os.path.join(self.outputs_dir, "background", "background_filtering",
+                            sensor, self._crop(source))
 
     def detection_dir_for_sensor(self, sensor, source):
-        return self.detection_dir + self._sensor_sfx(sensor, source)
+        return os.path.join(self.outputs_dir, "detection", "object_detection",
+                            sensor, self._crop(source))
+
+    # back-compat bare helpers/properties default to the SOUTH sensor.
+    def model_path_for(self, source):
+        return self.model_path_for_sensor("south", source)
+
+    def filtered_dir_for(self, source):
+        return self.filtered_dir_for_sensor("south", source)
+
+    def detection_dir_for(self, source):
+        return self.detection_dir_for_sensor("south", source)
+
+    @property
+    def model_path(self):
+        return self.model_path_for_sensor("south", "cropped")
+
+    @property
+    def filtered_dir(self):
+        return self.filtered_dir_for_sensor("south", "cropped")
+
+    @property
+    def detection_dir(self):
+        return self.detection_dir_for_sensor("south", "cropped")
 
     def ensure_workspace(self):
         """Create the workspace folders (config/outputs) for a user dataset."""
-        for p in (self.config_dir, os.path.join(self.outputs_dir, "background_model"),
-                  self.filtered_dir, self.detection_dir):
+        for p in (self.config_dir, os.path.dirname(self.model_path),
+                  self.filtered_dir, self.detection_dir,
+                  self.rendered_dir, self.road_videos_dir):
             os.makedirs(p, exist_ok=True)
 
     def status(self):
