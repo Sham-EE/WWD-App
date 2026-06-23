@@ -45,16 +45,22 @@ results = st.session_state.detection_results
 import dataset_manager as dm
 _ds = dm.get_active()
 st.caption(f"📂 Dataset: **{_ds.name}**")
-_src_label = st.radio("Input cloud (which run to score)", ["Cropped (road)", "Full (uncropped)"],
-                      key="pipeline_source", horizontal=True,
-                      help="Scores the detection results in memory; pick the source you just ran so the "
-                           "report saves to the matching folder. Run the pipeline once per source, then "
-                           "compare these metrics.")
+_sc, _ic = st.columns(2)
+_sensor_label = _sc.radio("Sensor", ["Registered", "South", "North"],
+                          key="pipeline_sensor", horizontal=True,
+                          help="Which LiDAR's run to score. Must match what you detected; GT auto-resolves "
+                               "to this sensor. Shared across pages.")
+_sensor = _sensor_label.lower()
+_src_label = _ic.radio("Input cloud (which run to score)", ["Cropped (road)", "Full (uncropped)"],
+                       key="pipeline_source", horizontal=True,
+                       help="Scores the detection results in memory; pick the source you just ran so the "
+                            "report saves to the matching folder. Run the pipeline once per source, then "
+                            "compare these metrics.")
 _src = "cropped" if _src_label.startswith("Cropped") else "full"
 
 gt_dir = st.text_input(
     "Ground-truth directory (OpenLABEL .json files)",
-    value=_ds.gt_dir,
+    value=_ds.gt_dir_for_input(_ds.input_pcd_for_sensor(_sensor, _src)),
 )
 ec1, ec2, ec3 = st.columns(3)
 match_dist = ec1.slider("BEV match distance gate (m)", 0.5, 5.0, 2.0, 0.5,
@@ -65,7 +71,7 @@ roi_only = ec3.checkbox("Restrict to processed region (ROI)", value=True,
                         help="Only score GT inside the area the detector actually processes "
                              "(research polygon ∩ |y|≤ROI). Objects outside the sensor's operational "
                              "region aren't counted as misses — this is the fair number.")
-output_dir = _ds.detection_dir_for(_src)
+output_dir = _ds.detection_dir_for_sensor(_sensor, _src)
 
 if st.button("📐 Run Evaluation", use_container_width=True, type="primary"):
     if not os.path.isdir(gt_dir):
