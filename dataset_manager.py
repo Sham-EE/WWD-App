@@ -95,11 +95,17 @@ class Dataset:
         return scorable if self._has_json(scorable) else self.raw_labels_north_dir
 
     def _registered_gt_dir(self):
-        """Registered GT: the fused cloud is written in the **south LiDAR frame**,
-        so the south scorable GT applies to it directly. Prefer an explicit
-        registered scorable set if one was generated, else use the south GT."""
+        """Registered GT, best available, in order:
+        1. the scorable registered set (fused south∪north, visibility-filtered),
+        2. the fused raw registered labels (south∪north union, before filtering),
+        3. the south GT (registered is in the south frame, so south boxes apply —
+           but this MISSES objects only north saw; build the fused GT to fix that).
+        """
         scorable = self.scorable_gt_dir_for("registered")
-        return scorable if self._has_json(scorable) else self.gt_dir
+        if self._has_json(scorable):
+            return scorable
+        fused = os.path.join(self.derived_dir, "labels", "registered")
+        return fused if self._has_json(fused) else self.gt_dir
 
     def gt_dir_for_input(self, input_pcd_dir):
         """Pick the GT folder whose sensor matches the input clouds, so the GT

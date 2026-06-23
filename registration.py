@@ -317,6 +317,82 @@ def register_dataset(south_pcd_dir, north_pcd_dir, M_south, M_north, out_dir,
 
 
 # --------------------------------------------------------------------------- #
+# Fused ground truth (union of south + north boxes, in the south frame)
+# --------------------------------------------------------------------------- #
+def transform_cuboid(val, T):
+    """Transform an OpenLABEL cuboid ``[x,y,z, qx,qy,qz,qw, l,w,h]`` by a rigid
+    4x4 ``T``. The centre and orientation move with ``T``; the dimensions are
+    unchanged. Used to bring north-frame GT boxes into the south frame (same
+    north→south transform applied to the north points)."""
+    from scipy.spatial.transform import Rotation
+    T = np.asarray(T, dtype=float)
+    c = T @ np.array([val[0], val[1], val[2], 1.0])
+    R_new = T[:3, :3] @ Rotation.from_quat([val[3], val[4], val[5], val[6]]).as_matrix()
+    q = Rotation.from_matrix(R_new).as_quat()           # x, y, z, w
+    return [float(c[0]), float(c[1]), float(c[2]),
+            float(q[0]), float(q[1]), float(q[2]), float(q[3]),
+            float(val[7]), float(val[8]), float(val[9])]
+
+
+def fuse_labels(south_label_dir, north_label_dir, M_south, M_north, out_dir,
+                refine=None, match_dist=2.5, max_dt_ms=None, max_frames=0, progress=None):
+    """Build a UNION GT for the registered (south-frame) cloud.
+
+    Each sensor only annotates the objects IT can see, so the south GT alone
+    misses objects only north saw (which still have points in the fused cloud).
+    This takes each south label as the base, transforms the matched north label's
+    boxes into the south frame (``inv(M_south) @ refine @ M_north`` — the same
+    transform applied to the north points), and **appends the north boxes that
+    south didn't annotate** (no south box within ``match_dist`` m). Shared objects
+    keep their south box. Writes OpenLABEL JSONs (south basename, so the frame key
+    matches the registered clouds) to ``out_dir``. Returns
+    ``(n_frames, n_north_added, n_shared)``."""
+    refine = np.eye(4) if refine is None else np.asarray(refine, dtype=float)
+    T = to_south_frame(M_south) @ refine @ np.asarray(M_north, dtype=float)
+    south = sorted(glob.glob(os.path.join(south_label_dir, "*.json")))
+    north = sorted(glob.glob(os.path.join(north_label_dir, "*.json")))
+    pairs = match_frame_pairs(south, north, max_dt_ms=max_dt_ms)
+    if max_frames and max_frames > 0:
+        pairs = pairs[:max_frames]
+    os.makedirs(out_dir, exist_ok=True)
+    n = added = shared = 0
+    for sp, npath, _dt in pairs:
+        with open(sp, "r", encoding="utf-8") as f:
+            sj = json.load(f)
+        frames = sj.get("openlabel", {}).get("frames", {})
+        if not frames:
+            continue
+        fobjs = frames[next(iter(frames))].setdefault("objects", {})
+        s_centers = np.array([o["object_data"]["cuboid"]["val"][:3] for o in fobjs.values()
+                              if o.get("object_data", {}).get("cuboid", {}).get("val")]) \
+            if fobjs else np.zeros((0, 3))
+        with open(npath, "r", encoding="utf-8") as f:
+            nfr = json.load(f).get("openlabel", {}).get("frames", {})
+        if nfr:
+            for oid, o in nfr[next(iter(nfr))].get("objects", {}).items():
+                od = o.get("object_data", {})
+                v = od.get("cuboid", {}).get("val")
+                if not (v and len(v) >= 10):
+                    continue
+                nv = transform_cuboid(v, T)
+                c = np.array(nv[:3])
+                if len(s_centers) and float(np.min(np.linalg.norm(s_centers - c, axis=1))) < match_dist:
+                    shared += 1
+                    continue                            # south already has this object
+                fobjs["north_" + oid] = {"object_data": {
+                    "name": od.get("name", "north_" + oid[:8]),
+                    "type": od.get("type", "OTHER"),
+                    "cuboid": {**od.get("cuboid", {}), "val": nv}}}
+                added += 1
+        with open(os.path.join(out_dir, os.path.basename(sp)), "w", encoding="utf-8") as f:
+            json.dump(sj, f)
+        n += 1
+        if progress:
+            progress(n, len(pairs))
+    return n, added, shared
+
+
+# --------------------------------------------------------------------------- #
 # Preview figures (south vs north overlay / height colour + geometry overlays)
 # --------------------------------------------------------------------------- #
 def _road_window(margin=12.0):

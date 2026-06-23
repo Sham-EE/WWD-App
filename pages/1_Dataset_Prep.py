@@ -813,3 +813,29 @@ with tab_reg:
         st.success(f"Wrote **{n}** fused clouds (south LiDAR frame) → `{reg_out}`  "
                    "(manifest: `registration.json`). Now crop or score the **Registered (south + north)** "
                    "source in the other tabs — it reuses the south GT, calibration, and polygons.")
+
+    # --- fused GT labels (union of south + north boxes) ---
+    st.divider()
+    st.subheader("🏷️ Build fused GT labels (south ∪ north)")
+    reg_label_out = os.path.join(ds.derived_dir, "labels", "registered")
+    st.caption("Each sensor only annotates the objects **it** can see, so the registered cloud — which "
+               "borrows the **south** GT — is missing the objects only **north** saw (they have points in "
+               "the fused cloud but no box). This builds a **union** GT: north boxes are transformed into "
+               "the south frame and the ones south didn't annotate are added (shared objects keep their "
+               "south box). Afterwards, build the **Registered** scorable set in the 🏷️ Scorable GT tab.")
+    fc1, fc2 = st.columns([1.4, 2])
+    fuse_dist = fc1.slider("Duplicate-merge distance (m)", 0.5, 5.0, 2.5, 0.5,
+                           help="A north box within this distance of a south box is treated as the SAME "
+                                "object and kept once. Larger = more aggressive de-duplication.")
+    fc2.text_input("Output (fused labels) folder", value=reg_label_out, key="reg_lbl_out", disabled=True)
+    if st.button("🏷️ Build fused GT labels", use_container_width=True, key="reg_fuse_lbl"):
+        bar = st.progress(0.0, text="Fusing labels…")
+        nfr, added, shared = reg.fuse_labels(
+            label_dirs["south"], label_dirs["north"], Ms, Mn, reg_label_out,
+            refine=(np.array(batch_refine) if batch_refine is not None else None),
+            match_dist=float(fuse_dist),
+            progress=lambda c, t: bar.progress(c / t, text=f"Fusing {c}/{t}"))
+        bar.empty()
+        st.success(f"Wrote **{nfr}** fused label files → `{reg_label_out}`  "
+                   f"(**+{added}** north-only boxes added · {shared} shared de-duplicated). "
+                   "Now build the **Registered (south + north)** scorable GT in the 🏷️ Scorable GT tab.")
