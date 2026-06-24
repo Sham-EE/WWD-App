@@ -34,17 +34,17 @@ _src_label = _ic.radio("Input cloud", ["Cropped (road)", "Full (uncropped)"],
                             "filtered/detection folders so you can compare eval metrics.")
 _src = "cropped" if _src_label.startswith("Cropped") else "full"
 
-filtered_pcd_dir = st.text_input(
-    "Enter the path to the FILTERED PCD files (for detection):",
-    value=_ds.filtered_dir_for_sensor(_sensor, _src)
-)
-
-original_pcd_dir = st.text_input(
-    "Enter the path to the ORIGINAL PCD files (for visualization):",
-    value=_ds.input_pcd_for_sensor(_sensor, _src)
-)
-
 output_dir = _ds.detection_dir_for_sensor(_sensor, _src)
+# Folder paths default from the Sensor/Input toggles; tuck them into a collapsible
+# section (keyed by sensor/source so they re-follow the toggles when you switch).
+with st.expander("📁 Folder paths (advanced override)", expanded=False):
+    filtered_pcd_dir = st.text_input(
+        "FILTERED PCD files (for detection):",
+        value=_ds.filtered_dir_for_sensor(_sensor, _src), key=f"odt_filt_{_sensor}_{_src}")
+    original_pcd_dir = st.text_input(
+        "ORIGINAL PCD files (for visualization):",
+        value=_ds.input_pcd_for_sensor(_sensor, _src), key=f"odt_orig_{_sensor}_{_src}")
+    st.caption(f"Detection output → `{output_dir}`")
 
 # --- Parameters (each group collapses into its own section) ---
 st.subheader("⚙️ Algorithm Parameters")
