@@ -46,12 +46,10 @@ original_pcd_dir = st.text_input(
 
 output_dir = _ds.detection_dir_for_sensor(_sensor, _src)
 
-# --- Parameters ---
+# --- Parameters (each group collapses into its own section) ---
 st.subheader("⚙️ Algorithm Parameters")
-col1, col2 = st.columns(2)
 
-with col1:
-    st.markdown("#### Clustering and Detection")
+with st.expander("🔧 Clustering & Detection", expanded=False):
     adaptive_eps = st.checkbox("Range-adaptive eps", value=True,
         help="Grow the clustering radius with distance (eps = eps0 + eps_k·range, clipped). Near, dense "
              "objects use a small eps (kept separate → precision); far, sparse objects use a larger eps "
@@ -68,11 +66,13 @@ with col1:
     else:
         dbscan_eps = st.slider("DBSCAN Epsilon (eps)", 0.1, 5.0, 2.0, 0.1, help="Fixed cluster radius (m).")
         aeps0, aeps_k, aeps_min, aeps_max = 0.8, 0.04, 1.0, 3.0
-    min_cluster_pts = st.slider("Min Cluster Points", 1, 50, 1, 1, help="Minimum points to form a cluster.")
-    min_hits = st.slider("Min Temporal Hits", 1, 10, 2, 1,
+    cc1, cc2 = st.columns(2)
+    min_cluster_pts = cc1.slider("Min Cluster Points", 1, 50, 1, 1, help="Minimum points to form a cluster.")
+    min_hits = cc2.slider("Min Temporal Hits", 1, 10, 2, 1,
         help="Frames a candidate must exist to be confirmed. Higher = fewer spurious tracks and fewer "
              "ID switches, but lower recall (e.g. 3 cut ID switches ~half but dropped recall).")
-    st.markdown("##### Vehicle class gate")
+
+with st.expander("🚗 Vehicle class gate", expanded=False):
     vehicle_gate = st.checkbox("Drop non-vehicles (peds/bikes)", value=False,
         help="OFF (default) = detect everything, including pedestrians & bicycles (each detection is "
              "still tagged is_vehicle). ON = drop clusters below BOTH size thresholds. NOTE: on the "
@@ -86,23 +86,21 @@ with col1:
     vehicle_min_points = vg2.number_input("Veh. min points", 1, 500, 40, 1,
         help="A track counts as a vehicle if it has at least this many points OR is long enough.")
 
-with col2:
-    st.markdown("#### Tracking and Association")
-    fps = st.slider("Frames Per Second (FPS)", 1.0, 30.0, 10.0, 0.5, help="Data frame rate for velocity calculation.")
-    max_missed = st.slider("Max Missed Frames", 0, 20, 5, 1, help="Frames to keep a track alive without detection.")
-    moving_speed_thresh = st.slider("Moving Speed Threshold (m/s)", 0.0, 10.0, 3.0, 0.1, help="Speed above which an object is 'moving'.")
-    roi_abs_y = st.slider("ROI Absolute Y (m)", 5.0, 100.0, 40.0, 1.0, help="Y-coordinate processing range.")
+with st.expander("🛰️ Tracking & Association", expanded=False):
+    tc1, tc2 = st.columns(2)
+    fps = tc1.slider("Frames Per Second (FPS)", 1.0, 30.0, 10.0, 0.5, help="Data frame rate for velocity calculation.")
+    max_missed = tc2.slider("Max Missed Frames", 0, 20, 5, 1, help="Frames to keep a track alive without detection.")
+    tc3, tc4 = st.columns(2)
+    moving_speed_thresh = tc3.slider("Moving Speed Threshold (m/s)", 0.0, 10.0, 3.0, 0.1, help="Speed above which an object is 'moving'.")
+    roi_abs_y = tc4.slider("ROI Absolute Y (m)", 5.0, 100.0, 40.0, 1.0, help="Y-coordinate processing range.")
 
-st.markdown("#### Visualization")
-col_v1, col_v2, col_v3 = st.columns(3)
-with col_v1:
-    eye_x = st.number_input("Camera Eye X", value=0.8, step=0.05)
-with col_v2:
-    eye_y = st.number_input("Camera Eye Y", value=0.8, step=0.05)
-with col_v3:
-    eye_z = st.number_input("Camera Eye Z", value=0.8, step=0.05)
-
-max_frames_to_animate = st.number_input("Max Frames to Animate (0 for all)", min_value=0, max_value=2000, value=0, help="Limit the number of frames to process for the animation to save time.")
+with st.expander("🎥 Visualization", expanded=False):
+    col_v1, col_v2, col_v3 = st.columns(3)
+    eye_x = col_v1.number_input("Camera Eye X", value=0.8, step=0.05)
+    eye_y = col_v2.number_input("Camera Eye Y", value=0.8, step=0.05)
+    eye_z = col_v3.number_input("Camera Eye Z", value=0.8, step=0.05)
+    max_frames_to_animate = st.number_input("Max Frames to Animate (0 for all)", min_value=0, max_value=2000,
+        value=0, help="Limit the number of frames to process for the animation to save time.")
 
 st.divider()
 
@@ -173,7 +171,6 @@ if st.session_state.detection_results:
 
     # --- Wrong-Way Driving (WWD) analysis ---
     st.divider()
-    st.subheader("🚨 Wrong-Way Driving Detection")
     lanes = load_lane_config()
     if not lanes:
         st.warning("No lane configuration found (config/lanes.geojson). WWD is disabled.")
@@ -184,30 +181,25 @@ if st.session_state.detection_results:
                 "headings). WWD will run, but results are not trustworthy until you set "
                 "the real per-lane headings — see README → 'Calibrating lane geometry'."
             )
-        wc1, wc2, wc3, wc4 = st.columns(4)
-        with wc1:
-            ww_angle = st.slider("Angle vs. flow (deg)", 90.0, 180.0, 120.0, 5.0,
-                                 help="How far against the expected lane direction counts as wrong-way.")
-        with wc2:
-            ww_speed = st.slider("Min speed (m/s)", 0.5, 10.0, 2.0, 0.5,
-                                 help="Below this, heading is unreliable.")
-        with wc3:
-            ww_frames = st.slider("Sustained frames", 1, 30, 5, 1,
-                                  help="Consecutive flagged frames required.")
-        with wc4:
-            ww_disp = st.slider("Min displacement (m)", 0.0, 20.0, 3.0, 0.5,
-                                help="Net travel over the flagged span.")
-        wc5, wc6 = st.columns(2)
-        with wc5:
-            ww_exempt = st.checkbox("Exempt junction turns", value=True,
-                                    help="Ignore wrong-way inside the intersection (where lane boxes "
-                                         "overlap and turning is legal). Fixes turning vehicles being "
-                                         "misflagged.")
-        with wc6:
-            ww_consist = st.slider("Min heading steadiness", 0.0, 1.0, 0.85, 0.05,
-                                   help="A real wrong-way vehicle holds a steady heading; a turn sweeps "
-                                        "through headings. Higher = reject turns more aggressively (1.0 = "
-                                        "perfectly steady).")
+        with st.expander("🚨 Wrong-Way Driving Detection", expanded=False):
+            wc1, wc2, wc3, wc4 = st.columns(4)
+            ww_angle = wc1.slider("Angle vs. flow (deg)", 90.0, 180.0, 120.0, 5.0,
+                                  help="How far against the expected lane direction counts as wrong-way.")
+            ww_speed = wc2.slider("Min speed (m/s)", 0.5, 10.0, 2.0, 0.5,
+                                  help="Below this, heading is unreliable.")
+            ww_frames = wc3.slider("Sustained frames", 1, 30, 5, 1,
+                                   help="Consecutive flagged frames required.")
+            ww_disp = wc4.slider("Min displacement (m)", 0.0, 20.0, 3.0, 0.5,
+                                 help="Net travel over the flagged span.")
+            wc5, wc6 = st.columns(2)
+            ww_exempt = wc5.checkbox("Exempt junction turns", value=True,
+                                     help="Ignore wrong-way inside the intersection (where lane boxes "
+                                          "overlap and turning is legal). Fixes turning vehicles being "
+                                          "misflagged.")
+            ww_consist = wc6.slider("Min heading steadiness", 0.0, 1.0, 0.85, 0.05,
+                                    help="A real wrong-way vehicle holds a steady heading; a turn sweeps "
+                                         "through headings. Higher = reject turns more aggressively (1.0 = "
+                                         "perfectly steady).")
         ww_params = {"angle_thresh_deg": ww_angle, "min_speed": ww_speed,
                      "min_frames": ww_frames, "min_displacement_m": ww_disp,
                      "exempt_junction": ww_exempt, "min_heading_consistency": ww_consist}
