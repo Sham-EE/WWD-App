@@ -60,7 +60,7 @@ def _arrow_segments(cx, cy, hdg, z, length=4.0, head=1.6, head_ang=np.radians(30
 def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_dict=None,
                      color_by_height=False, height_span=4.0,
                      show_original=True, show_road=True, show_roi=False, show_excl=False,
-                     show_objects=True, sensors=None, gt_objs=None):
+                     show_objects=True, sensors=None, gt_objs=None, foreground_path=None):
     """
     Creates an interactive 3D Plotly figure for a given frame.
     (Keep this for interactive UI display as it doesn't need Kaleido)
@@ -81,6 +81,15 @@ def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_d
             x=points[:, 0], y=points[:, 1], z=points[:, 2],
             mode='markers', name='Original Point Cloud', marker=pc_marker
         ))
+
+    # 1b. Optional filtered-foreground overlay (the points the detector actually
+    #     ran on). Cyan, so it doesn't clash with the red object markers.
+    if foreground_path and os.path.exists(foreground_path):
+        fpts = load_points_from_pcd(foreground_path)
+        if fpts.size:
+            fig.add_trace(go.Scatter3d(
+                x=fpts[:, 0], y=fpts[:, 1], z=fpts[:, 2], mode='markers',
+                name='Foreground', marker=dict(size=2.2, color='#00e5ff', opacity=0.9)))
 
     # 2. Add Road Polygon
     road_poly = results['road_poly']
