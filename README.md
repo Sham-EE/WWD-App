@@ -330,6 +330,25 @@ i.e. `atan2(vy,vx)` in the sensor frame). The file is **currently calibrated**
   (right) in identical axes; toggle separate/overlay views, point-cloud backdrop,
   and "show missed (red)" to see false negatives.
 
+### Registered vs South — A/B benchmark (Evaluation → 2nd tab)
+A controlled measurement of whether fusion actually helps: runs the **same** detection
+on the **south** and **registered** filtered clouds and scores both, reporting overall
+P/R/F1/MOTA **and per-distance-bin recall** (`evaluation.recall_by_distance`) — the
+direct test of the "fusion fills occlusion shadows → better far recall" hypothesis.
+- **Shared objective GT (recommended).** Grade BOTH pipelines against the *same*
+  registered-union GT (which includes the north-only vehicles south's GT lacks) so south
+  is fairly penalised for objects it physically can't see, and recall shares one
+  denominator. (The alternative, "each sensor's own GT", flatters south — its GT is
+  missing those objects entirely.) A **Scorable / All-raw** toggle picks the GT kind;
+  scorable (num_points recomputed on the fused cloud) is the fair bar.
+- **First result (cropped, ROI, shared scorable GT, default detector):** fusion is a
+  clear win **near/mid-field** — recall **0.18 → 0.44** at 0–20 m and **0.63 → 0.70** at
+  20–40 m — but **regresses far** (**0.52 → 0.36** at 40–60 m). Because the far bin holds
+  ~43% of objects, that one regression outweighs the near/mid gains, so *overall* recall
+  is a wash (south 0.543 vs registered 0.531) **with the south-tuned detector**. The
+  takeaway isn't "registration doesn't help" — it's "the detector needs retuning for the
+  denser fused far-field" (likely `eps` / merge distances).
+
 ### Current baseline (defaults, ROI on, all classes)
 | match gate | Precision | Recall | F1 | MOTA | MOTP |
 |---|---|---|---|---|---|
@@ -412,6 +431,9 @@ i.e. `atan2(vy,vx)` in the sensor frame). The file is **currently calibrated**
 - **Frame-aware scorable-GT ROI** — the south-frame research polygon is transformed into
   the selected source's frame (identity for south/registered, rotated for north) so the
   kept/dropped classification lines up with that sensor's cloud.
+- **Registered-vs-South A/B benchmark** (Evaluation → 2nd tab): same detection on both
+  clouds, overall metrics + **per-distance-bin recall**, with a **shared objective GT**
+  (registered union) so south is fairly graded on the objects it can't see.
 - **South / North / Registered sensor toggle** shared across Background Filtering /
   Detection / Evaluation, each combination writing to its own folder, with **auto-
   resolved GT** per sensor. Detection/Eval **tag results with sensor/source** and warn
