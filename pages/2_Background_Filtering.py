@@ -70,7 +70,8 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
                            show_road=False, road_dashed=False, show_roi=False,
                            show_excl=False, gt_objs=None, color_by_height=False, height_span=4.0,
                            show_foreground=True, show_original=True, height=560,
-                           azimuth=45.0, elevation=35.0, sensors=None):
+                           azimuth=45.0, elevation=35.0, sensors=None,
+                           uncovered_objs=None, off_object_pts=None):
     fig = go.Figure()
     # Resolve the road window first so we can lock the view AND clip the plotted points
     # to it. Clipping is the key: aspectmode="data" sizes the 3D box from the POINT
@@ -97,6 +98,7 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
         return p[mask]
     original_pts = _clip(original_pts)
     foreground_pts = _clip(foreground_pts)
+    off_object_pts = _clip(off_object_pts)
 
     if show_original and original_pts.size > 0:
         if color_by_height:
@@ -110,6 +112,11 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
     if show_foreground and foreground_pts.size > 0:
         fig.add_trace(go.Scatter3d(x=foreground_pts[:, 0], y=foreground_pts[:, 1], z=foreground_pts[:, 2],
             mode="markers", name="Foreground", marker=dict(size=2.5, color="red", opacity=0.9)))
+    # Off-object foreground (clutter / false-foreground): the foreground points that
+    # fall outside every GT box — yellow, on top of the red foreground.
+    if off_object_pts is not None and off_object_pts.size > 0:
+        fig.add_trace(go.Scatter3d(x=off_object_pts[:, 0], y=off_object_pts[:, 1], z=off_object_pts[:, 2],
+            mode="markers", name="Off-object FG", marker=dict(size=2.8, color="#ffd400", opacity=0.95)))
 
     # Optional geometry overlays (off by default). Each region affects filtering:
     #   road = edge-band removal, ROI = bounds processing, exclusion = always dropped.
@@ -159,6 +166,20 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
             lt.append(lp._label_text(o)); lcol.append(lv._hex(lp._color_for(o, "by_category")))
         fig.add_trace(go.Scatter3d(x=lx, y=ly, z=lz, mode="text", text=lt,
             textfont=dict(size=11, color=lcol), hoverinfo="skip", showlegend=False))
+
+    # Uncovered objects (hit by the LiDAR but too little foreground kept) — bright
+    # red wireframes, so the objects the filter under-preserved stand out.
+    if uncovered_objs:
+        import label_projection as lp
+        ux, uy, uz = [], [], []
+        for o in uncovered_objs:
+            c = lp.cuboid_corners(o["val"])
+            for a, b in lp._EDGES:
+                ux += [c[a, 0], c[b, 0], None]
+                uy += [c[a, 1], c[b, 1], None]
+                uz += [c[a, 2], c[b, 2], None]
+        fig.add_trace(go.Scatter3d(x=ux, y=uy, z=uz, mode="lines",
+            line=dict(color="#ff2b2b", width=6), name="Uncovered obj", hoverinfo="skip"))
 
     if sensors:
         import registration as reg
@@ -363,12 +384,12 @@ if st.session_state.bg_model:
             toggle_defaults = {
                 "bf_show_fg": True, "bf_show_orig": True, road_key: (_src == "cropped"),
                 "bf_roi": False, "bf_excl": False, "bf_gt": False, "bf_sensors": True,
-                "bf_height": False, "bf_metric": False,
+                "bf_height": False, "bf_metric": False, "bf_uncov": False, "bf_offfg": False,
             }
             vu.ensure_toggle_defaults(toggle_defaults)
             # "All" also turns Height on (per request).
-            overlay_keys = ["bf_show_fg", "bf_show_orig", road_key, "bf_roi",
-                            "bf_excl", "bf_gt", "bf_sensors", "bf_height"]
+            overlay_keys = ["bf_show_fg", "bf_show_orig", road_key, "bf_roi", "bf_excl",
+                            "bf_gt", "bf_uncov", "bf_offfg", "bf_sensors", "bf_height"]
 
             with st.expander("🎛️ Layers & overlays", expanded=True):
                 vu.bulk_toggle_buttons(overlay_keys, "bf_bulk")
@@ -391,25 +412,40 @@ if st.session_state.bg_model:
                 gt_on = r2[3].toggle("🏷️ GT", key="bf_gt", disabled=not has_gt,
                                      help="Overlay this frame's GT boxes."
                                           if has_gt else "No ground truth for this dataset.")
-                r3 = st.columns([1.3, 1, 2.7])
-                metric_on = r3[0].toggle("📊 FG quality", key="bf_metric", disabled=not has_gt,
-                                         help="Live foreground-vs-GT quality (a tuning proxy)."
+                r3 = st.columns(4)
+                uncov_on = r3[0].toggle("❌ Uncovered obj", key="bf_uncov", disabled=not has_gt,
+                                        help="Red-outline GT objects the LiDAR hit but the filter kept "
+                                             "< '≥ pts' foreground for — the objects you're losing."
+                                             if has_gt else "No ground truth for this dataset.")
+                offfg_on = r3[1].toggle("🟡 Off-object FG", key="bf_offfg", disabled=not has_gt,
+                                        help="Recolour (yellow) the foreground points that fall OUTSIDE "
+                                             "every GT box — clutter / false-foreground."
+                                             if has_gt else "No ground truth for this dataset.")
+                metric_on = r3[2].toggle("📊 FG quality", key="bf_metric", disabled=not has_gt,
+                                         help="Live foreground-vs-GT quality numbers (a tuning proxy)."
                                               if has_gt else "No ground truth for this dataset.")
-                min_pts = r3[1].number_input("≥ pts", 1, 200, 10, 1, key="bf_minpts",
-                                             help="Pts for a GT object to count as 'covered'.")
-                h_span = r3[2].slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="bf_hspan",
-                                      help="Colour spreads over this many metres above ground.") \
+                min_pts = r3[3].number_input("≥ pts", 1, 200, 10, 1, key="bf_minpts",
+                                             help="Foreground pts for a GT object to count as 'covered'.")
+                h_span = st.slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="bf_hspan",
+                                   help="Colour spreads over this many metres above ground.") \
                     if color_h else 4.0
 
             sensors = reg.lidar_markers(_ds, _sensor) if sensors_on else None
             pts = _load_raw(pcd_files[i])
             fg, _ = filter_points_with_model(pts, st.session_state.bg_model, config)
             gt_objs = None
-            if (gt_on or metric_on) and has_gt:
+            if (gt_on or metric_on or uncov_on or offfg_on) and has_gt:
                 import label_projection as lp
                 gp = gt_index.get(_frame_key(pcd_files[i]))
                 if gp:
                     gt_objs = lp.load_objects(gp)
+            # Foreground-quality analysis, computed ONCE and shared by the metric
+            # readout and the two overlays (uncovered objects + off-object foreground).
+            q = None
+            if gt_objs is not None and (metric_on or uncov_on or offfg_on):
+                q = foreground_quality(fg, pts, gt_objs, min_pts=int(min_pts))
+            uncovered_objs = q["uncovered"] if (q and uncov_on) else None
+            off_object_pts = fg[~q["fg_on_mask"]] if (q and offfg_on and len(fg)) else None
             # NOTE: render the chart directly (no fixed-height st.container) — wrapping
             # it in a container remounts the plot each rerun and wipes the camera, which
             # defeats uirevision. Height is set on the figure instead.
@@ -421,13 +457,17 @@ if st.session_state.bg_model:
                                        color_by_height=color_h, height_span=h_span,
                                        show_foreground=show_fg_pts, show_original=show_orig,
                                        height=560, azimuth=azimuth, elevation=elevation,
-                                       sensors=sensors),
+                                       sensors=sensors, uncovered_objs=uncovered_objs,
+                                       off_object_pts=off_object_pts),
                 use_container_width=True, key="bf_fig")
-            st.caption(f"{os.path.basename(pcd_files[i])} · frame {i+1}/{n_bf} · "
-                       f"{len(fg)} foreground / {len(pts)} points")
+            cap = (f"{os.path.basename(pcd_files[i])} · frame {i+1}/{n_bf} · "
+                   f"{len(fg)} foreground / {len(pts)} points")
+            if q is not None:
+                cap += (f"  ·  ✅ {q['covered']}/{q['scanned']} objects covered  ·  "
+                        f"🟡 {q['off_object']:,} off-object FG")
+            st.caption(cap)
 
-            if metric_on and gt_objs is not None:
-                q = foreground_quality(fg, pts, gt_objs, min_pts=int(min_pts))
+            if metric_on and q is not None:
                 m = st.columns(3)
                 m[0].metric(f"Objects covered (≥{q['min_pts']} pts)",
                             f"{q['covered']} / {q['scanned']}",
