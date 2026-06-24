@@ -436,7 +436,11 @@ direct test of the "fusion fills occlusion shadows → better far recall" hypoth
   kept/dropped classification lines up with that sensor's cloud.
 - **Registered-vs-South A/B benchmark** (Evaluation → 2nd tab): same detection on both
   clouds, overall metrics + **per-distance-bin recall**, with a **shared objective GT**
-  (registered union) so south is fairly graded on the objects it can't see.
+  (registered union) so south is fairly graded on the objects it can't see. Surfaced the
+  far-field over-merge (`truck_merge_dist` 10→5), after which registered beats south.
+- **Centralized detection defaults** — `detection_logic.DEFAULT_DETECTION_PARAMS` is the
+  single source of truth; the Detection page overlays its UI values on it (and now exposes
+  a **Truck merge distance** slider), the A/B uses it directly, so the two can't drift.
 - **South / North / Registered sensor toggle** shared across Background Filtering /
   Detection / Evaluation, each combination writing to its own folder, with **auto-
   resolved GT** per sensor. Detection/Eval **tag results with sensor/source** and warn
