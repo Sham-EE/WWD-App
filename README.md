@@ -198,22 +198,42 @@ shared (via `viewer_ui.py`) across **every** preview with a play/next control �
 **Object Detection & Tracking**, the **Visualizer**, and the **Dataset Prep**,
 **Evaluation** and **WWD Simulator** viewers.
 
-### Filter quality / tuning knobs
+### Filter quality / tuning knobs (with a measured ablation)
 
 - **Density-adaptive clustering** (🔗 Clustering → *Clusterer* = Density-adaptive, default).
   The legacy "adaptive" DBSCAN built a per-point range-scaled eps then collapsed it to a
   single median, so `eps0`/`eps_k` only nudged one number — and the range→eps law is
   *inverted* for the fused cloud (far-from-south is dense-near-north). The density path
   splits the cloud into range tiers and sets `eps = eps_scale × measured k-NN spacing`
-  **per tier**, easing `min_samples` for sparse tiers. On registered it yields far fewer,
-  cleaner clusters (≈62 vs 170, ≈2% vs 12% noise) and lifts the on-object recall proxy a
-  couple of points with no coverage regression. Global mode is retained for A/B.
-- **Statistical outlier removal** (🧽 Denoise, default on). A post-subtraction SOR pass
-  drops isolated points whose mean k-NN distance is an outlier — cuts off-object
-  foreground clutter ≈15% (e.g. 212→180 avg/frame on registered) at negligible recall
-  cost, which helps downstream precision (`enable_sor`, `sor_k`, `sor_std`).
+  **per tier**, easing `min_samples` for sparse tiers. It yields far fewer, cleaner
+  clusters (≈62 vs 170, ≈2% vs 12% noise) — but on the **detection ablation it is
+  metrically neutral** (F1 within noise of global; see table). Kept as the default because
+  it's better-principled and cleaner for the detection-stage work to come; global is
+  retained for A/B.
+- **Statistical outlier removal** (🧽 Denoise, default **off**). A post-subtraction SOR
+  pass drops isolated points whose mean k-NN distance is an outlier (`sor_k`, `sor_std`).
+  The point-level proxy made it look like a free precision win, but the **detection
+  ablation shows it is a pure precision↔recall dial** — it raises precision by removing
+  real on-object points, costing mid-field (20-40 m) recall. Default off because wrong-way
+  detection is recall-critical.
 - **5×5 coarse stage toggle** (⚙️ Misc). The blunt macro-grid background stage can now be
   disabled to A/B whether it adds anything over the fine voxel mask.
+
+**Ablation (registered/full, shared scorable GT, ROI on, all classes, identical detector):**
+
+| BG-filter variant | Precision | Recall | F1 | R@0-20 | R@20-40 | R@40-60 |
+|---|---|---|---|---|---|---|
+| Global clusterer (baseline) | 28.3 | **65.2** | 39.5 | 52.3 | 80.8 | 50.5 |
+| Density clusterer | 27.0 | 65.9 | 38.3 | 53.0 | 81.7 | 50.9 |
+| Global + SOR (std 2.0) | 35.6 | 49.2 | 41.3 | 47.0 | 52.2 | 46.3 |
+| Density + SOR (std 2.0) | **36.3** | 51.9 | **42.7** | 49.1 | 54.2 | 49.9 |
+| Global + SOR (std 3.0) | 30.2 | 58.5 | 39.9 | 50.2 | 70.0 | 47.4 |
+
+Findings: (1) the **clusterer choice is metrically neutral** — cleaner clusters don't move
+detection F1; (2) **SOR trades recall for precision monotonically** (F1 stays ≈39-43 across
+the range) rather than adding net quality. The real bottleneck is the very low precision
+(~28%, FP-dominated), which is a **detection-stage** problem, not a denoising one — the next
+optimization target. A negative/ablation result, but a useful one for the paper.
 - **📈 Run tracker — "is it getting better?"** Scores the *current* model+config over a
   frame sample with the foreground-quality proxy and **logs each run** to
   `outputs/run_history/<sensor>_<source>.jsonl`. The panel shows current-vs-previous

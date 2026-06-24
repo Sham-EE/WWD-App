@@ -296,9 +296,12 @@ with st.expander("⚙️ Misc filters", expanded=False):
              "over the fine voxel mask (it can nuke whole approach lanes).")
 
 with st.expander("🧽 Denoise (statistical outlier removal)", expanded=False):
-    config["enable_sor"] = st.checkbox("Enable SOR on foreground output", value=True,
-        help="Drop scattered isolated points after subtraction — cuts false-foreground "
-             "clutter that hurts detection precision.")
+    config["enable_sor"] = st.checkbox("Enable SOR on foreground output", value=False,
+        help="Drop scattered isolated points after subtraction. NOTE (measured on the "
+             "detection ablation): SOR is a pure precision↔recall DIAL, not a net win — it "
+             "raises precision but removes real on-object points, costing mid-field recall "
+             "(20-40 m). Default OFF because wrong-way detection is recall-critical. Turn on "
+             "(with a gentle std ≥ 3) only if you specifically need fewer false positives.")
     so1, so2 = st.columns(2)
     config["sor_k"] = int(so1.number_input("SOR neighbours (k)", min_value=4, max_value=64,
         value=12, step=1, help="Mean distance is computed over k nearest neighbours."))
