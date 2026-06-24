@@ -304,9 +304,23 @@ if st.session_state.detection_results:
                                foreground_path=fg_path)
         st.plotly_chart(fig, use_container_width=True, height=800)
         if show_gt:
-            st.caption(f"🏷️ GT: {len(gt_objs) if gt_objs else 0} boxes "
-                       f"(`{os.path.basename(_gt_dir.rstrip('/'))}`)" if has_gt
-                       else "🏷️ No GT found for this sensor.")
+            if not has_gt:
+                st.caption("🏷️ No GT found for this sensor.")
+            elif gt_objs is None:
+                st.caption("🏷️ No GT for this frame.")
+            else:
+                # Per-frame coverage: GT boxes with a detection centre within 2 m
+                # (a quick recall proxy — full metrics are on the Evaluation page).
+                from evaluation import _match_frame
+                det_xy = [{"cx": d["cx"], "cy": d["cy"]} for d in results["det_frames"][frame_idx]]
+                gt_xy = [{"cx": o["val"][0], "cy": o["val"][1]} for o in gt_objs]
+                matches, _, _, _ = _match_frame(det_xy, gt_xy, 2.0)
+                covered = len({j for _, j, _ in matches})
+                ng = len(gt_objs)
+                pct = (100.0 * covered / ng) if ng else 0.0
+                st.caption(f"🏷️ GT: {ng} boxes · **{covered}/{ng} detected** ({pct:.0f}%) — a GT box "
+                           f"counts as detected if a track centre is within 2 m  ·  "
+                           f"`{os.path.basename(_gt_dir.rstrip('/'))}`")
 
     # Auto-play: advance one frame and rerun until the end or until paused.
     if playing and frame_idx < n_frames - 1:
