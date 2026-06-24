@@ -198,6 +198,30 @@ shared (via `viewer_ui.py`) across **every** preview with a play/next control �
 **Object Detection & Tracking**, the **Visualizer**, and the **Dataset Prep**,
 **Evaluation** and **WWD Simulator** viewers.
 
+### Filter quality / tuning knobs
+
+- **Density-adaptive clustering** (🔗 Clustering → *Clusterer* = Density-adaptive, default).
+  The legacy "adaptive" DBSCAN built a per-point range-scaled eps then collapsed it to a
+  single median, so `eps0`/`eps_k` only nudged one number — and the range→eps law is
+  *inverted* for the fused cloud (far-from-south is dense-near-north). The density path
+  splits the cloud into range tiers and sets `eps = eps_scale × measured k-NN spacing`
+  **per tier**, easing `min_samples` for sparse tiers. On registered it yields far fewer,
+  cleaner clusters (≈62 vs 170, ≈2% vs 12% noise) and lifts the on-object recall proxy a
+  couple of points with no coverage regression. Global mode is retained for A/B.
+- **Statistical outlier removal** (🧽 Denoise, default on). A post-subtraction SOR pass
+  drops isolated points whose mean k-NN distance is an outlier — cuts off-object
+  foreground clutter ≈15% (e.g. 212→180 avg/frame on registered) at negligible recall
+  cost, which helps downstream precision (`enable_sor`, `sor_k`, `sor_std`).
+- **5×5 coarse stage toggle** (⚙️ Misc). The blunt macro-grid background stage can now be
+  disabled to A/B whether it adds anything over the fine voxel mask.
+- **📈 Run tracker — "is it getting better?"** Scores the *current* model+config over a
+  frame sample with the foreground-quality proxy and **logs each run** to
+  `outputs/run_history/<sensor>_<source>.jsonl`. The panel shows current-vs-previous
+  **deltas** (covered %, on-object recall, off-object FG — with green/red arrows), a
+  **trend line** across runs, and a **"changed since last run"** parameter diff — so you
+  can see immediately whether a tuning change actually helped instead of trying to
+  remember last run's numbers (`run_history.py`).
+
 ## Running
 
 ```bash

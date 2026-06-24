@@ -14,6 +14,7 @@ from bg_filter_core import (
 )
 import registration as reg
 import viewer_ui as vu
+import run_history as rh
 
 # --- Page Configuration ---
 st.set_page_config(layout="wide", page_title="Background Filtering")
@@ -241,16 +242,38 @@ with st.expander("🧱 Background model (occupancy + persistence)", expanded=Fal
     config["cell_ratio"] = b4.slider("Cluster Presence Ratio", 0.5, 1.0, 0.9, 0.01)
 
 with st.expander("🔗 Clustering (DBSCAN)", expanded=False):
+    cluster_mode = st.radio(
+        "Clusterer", ["Density-adaptive (recommended)", "Global (legacy)"],
+        key="bf_cluster_mode", horizontal=True,
+        help="Density-adaptive measures the local point spacing per range tier and sets "
+             "eps/min_samples from it — fixes the fused cloud where 'far' is actually dense. "
+             "Global is the original single-median-eps clusterer (eps0/eps_k below).")
+    _mode = "density" if cluster_mode.startswith("Density") else "global"
     dc1, dc2, dc3 = st.columns(3)
     ds_voxel = dc1.slider("Downsample Voxel (Build)", 0.05, 0.5, 0.15, 0.01)
-    eps0 = dc2.number_input("eps0", value=0.35)
-    eps_k = dc3.number_input("eps_k", value=0.008, format="%.4f")
-    dc4, dc5, dc6 = st.columns(3)
-    eps_min = dc4.number_input("eps_min", value=0.35)
-    eps_max = dc5.number_input("eps_max", value=2.0)
-    min_samples = dc6.number_input("min_samples", value=16)
-    config["cluster"] = {"ds_voxel": ds_voxel, "eps0": eps0, "eps_k": eps_k,
-                         "eps_min": eps_min, "eps_max": eps_max, "min_samples": min_samples}
+    eps_min = dc2.number_input("eps_min", value=0.35)
+    eps_max = dc3.number_input("eps_max", value=2.0)
+    if _mode == "density":
+        dd1, dd2, dd3 = st.columns(3)
+        eps_scale = dd1.number_input("eps_scale (× spacing)", value=2.5, step=0.1,
+            help="eps = eps_scale × measured k-NN spacing of the tier, clamped to [eps_min, eps_max].")
+        n_tiers = int(dd2.number_input("Range tiers", min_value=1, max_value=6, value=3, step=1,
+            help="Split the cloud into this many range bands; eps/min_samples adapt per band."))
+        dd4, dd5 = st.columns(2)
+        min_samples = dd4.number_input("min_samples (dense)", value=16)
+        min_samples_far = dd5.number_input("min_samples (sparse tier)", value=8,
+            help="Eased point count for the sparsest tier so distant/thin objects still cluster.")
+        eps0 = eps_k = 0.0  # unused in density mode
+    else:
+        dc4, dc5, dc6 = st.columns(3)
+        eps0 = dc4.number_input("eps0", value=0.35)
+        eps_k = dc5.number_input("eps_k", value=0.008, format="%.4f")
+        min_samples = dc6.number_input("min_samples", value=16)
+        eps_scale, n_tiers, min_samples_far = 2.5, 3, 8
+    config["cluster"] = {"mode": _mode, "ds_voxel": ds_voxel, "eps0": eps0, "eps_k": eps_k,
+                         "eps_min": eps_min, "eps_max": eps_max, "min_samples": min_samples,
+                         "eps_scale": eps_scale, "n_tiers": n_tiers,
+                         "min_samples_far": min_samples_far}
 
 with st.expander("📍 Pole-like geometry filter", expanded=False):
     config["enable_pole_filter"] = st.checkbox("Enable Pole Filter", value=True)
@@ -268,6 +291,19 @@ with st.expander("📍 Pole-like geometry filter", expanded=False):
 
 with st.expander("⚙️ Misc filters", expanded=False):
     config["inward_buffer_m"] = st.number_input("Road Edge Inward Buffer (m)", value=2.0)
+    config["enable_5x5"] = st.checkbox("Enable 5×5 coarse background stage", value=True,
+        help="Blunt macro-grid background removal. Disable to A/B whether it adds anything "
+             "over the fine voxel mask (it can nuke whole approach lanes).")
+
+with st.expander("🧽 Denoise (statistical outlier removal)", expanded=False):
+    config["enable_sor"] = st.checkbox("Enable SOR on foreground output", value=True,
+        help="Drop scattered isolated points after subtraction — cuts false-foreground "
+             "clutter that hurts detection precision.")
+    so1, so2 = st.columns(2)
+    config["sor_k"] = int(so1.number_input("SOR neighbours (k)", min_value=4, max_value=64,
+        value=12, step=1, help="Mean distance is computed over k nearest neighbours."))
+    config["sor_std"] = so2.number_input("SOR std ratio", min_value=0.5, max_value=5.0,
+        value=2.0, step=0.1, help="Lower = more aggressive (drops more points).")
 config["coarse_5x5"] = {"NX": 5, "NY": 5}  # hard-coded
 
 # ---------------- Load or Build background model ----------------
@@ -350,6 +386,90 @@ if st.session_state.bg_model:
     pcd_files = discover_pcd_files(config["pcd_dir"])
     gt_index = discover_gt_index(config["gt_dir"])
     has_gt = bool(gt_index)
+
+    # ---------------- Run tracker: "is it getting better?" ----------------
+    # Scores the CURRENT model+config over a sample of frames with the foreground-
+    # quality proxy and logs it, so each tuning change shows an explicit delta vs the
+    # last run + a trend line. (A fast stand-in for the full detection eval.)
+    if has_gt and pcd_files:
+        _tag = f"{_sensor}_{_src}"
+
+        def _aggregate_quality(_pcd_files, _gt_index, _bg_model, _cfg, min_pts, stride):
+            import label_projection as lp
+            cov = scan = nframes = 0
+            recalls, offs = [], []
+            for f in _pcd_files[::max(1, stride)]:
+                gp = _gt_index.get(_frame_key(f))
+                if not gp:
+                    continue
+                pts = _load_raw(f)
+                fg, _ = filter_points_with_model(pts, _bg_model, _cfg)
+                q = foreground_quality(fg, pts, lp.load_objects(gp), min_pts=min_pts)
+                cov += q["covered"]; scan += q["scanned"]; offs.append(q["off_object"])
+                if q["recall"] is not None:
+                    recalls.append(q["recall"])
+                nframes += 1
+            return dict(
+                covered=int(cov), scanned=int(scan),
+                covered_pct=(100.0 * cov / scan if scan else 0.0),
+                recall=(100.0 * float(np.mean(recalls)) if recalls else 0.0),
+                off_object=(float(np.mean(offs)) if offs else 0.0),
+                frames=int(nframes))
+
+        with st.expander("📈 Run tracker — is it getting better?", expanded=True):
+            tc = st.columns(3)
+            track_stride = int(tc[0].number_input("Sample every Nth frame", 1, 50, 10,
+                key="bf_track_stride", help="Higher = faster, coarser estimate."))
+            track_minpts = int(tc[1].number_input("≥ pts for 'covered'", 1, 200, 10,
+                key="bf_track_minpts"))
+            note = tc[2].text_input("Note (optional)", key="bf_track_note",
+                placeholder="e.g. density eps + SOR")
+            bcol = st.columns([3, 1])
+            if bcol[0].button("📊 Evaluate current settings & log", use_container_width=True,
+                              type="primary", key="bf_track_eval"):
+                with st.spinner("Scoring foreground quality over sampled frames..."):
+                    metrics = _aggregate_quality(pcd_files, gt_index, st.session_state.bg_model,
+                                                 config, track_minpts, track_stride)
+                    rh.log_run(_ds, _tag, metrics, rh.summarize_params(config), note=note)
+                st.success(f"Logged: {metrics['covered']}/{metrics['scanned']} objects covered "
+                           f"over {metrics['frames']} sampled frames.")
+            if bcol[1].button("🗑️ Clear", use_container_width=True, key="bf_track_clear"):
+                rh.clear_history(_ds, _tag)
+                st.rerun()
+
+            hist = rh.load_history(_ds, _tag)
+            if hist:
+                cur = hist[-1]["metrics"]
+                prev = hist[-2]["metrics"] if len(hist) > 1 else None
+                mc = st.columns(3)
+                mc[0].metric("Objects covered", f"{cur['covered_pct']:.1f}%",
+                             f"{cur['covered_pct']-prev['covered_pct']:+.1f}%" if prev else None,
+                             help="GT objects with ≥ min pts foreground, over a frame sample.")
+                mc[1].metric("On-object point recall", f"{cur['recall']:.1f}%",
+                             f"{cur['recall']-prev['recall']:+.1f}%" if prev else None)
+                mc[2].metric("Off-object FG (avg/frame)", f"{cur['off_object']:.0f}",
+                             f"{cur['off_object']-prev['off_object']:+.0f}" if prev else None,
+                             delta_color="inverse",
+                             help="Lower is better — scattered false-foreground (green = improved).")
+                import pandas as pd
+                df = pd.DataFrame([{"run": i + 1,
+                                    "covered %": h["metrics"]["covered_pct"],
+                                    "recall %": h["metrics"]["recall"]}
+                                   for i, h in enumerate(hist)]).set_index("run")
+                st.line_chart(df)
+                if prev:
+                    diff = rh.param_diff(hist[-2]["params"], hist[-1]["params"])
+                    st.caption("🔧 Changed since previous run: "
+                               + (", ".join(f"`{k}` {a}→{b}" for k, (a, b) in diff.items())
+                                  if diff else "nothing tracked changed."))
+                with st.expander("Full run log", expanded=False):
+                    st.dataframe(pd.DataFrame([{"time": h["time"], "note": h.get("note", ""),
+                                                **h["metrics"]} for h in hist]),
+                                 use_container_width=True)
+            else:
+                st.caption("No runs logged yet — build/adjust, then click "
+                           "**Evaluate current settings & log** to start the trend.")
+
     if pcd_files:
         n_bf = len(pcd_files)
         st.session_state.setdefault("bf_frame", 0)
