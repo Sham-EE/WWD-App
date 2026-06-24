@@ -404,6 +404,33 @@ direct test of the "fusion fills occlusion shadows → better far recall" hypoth
 
 (Detection is deterministic: identical settings → identical results.)
 
+### Static-phantom suppression (detection FP analysis)
+
+A false-positive breakdown on registered/cropped found that **~70 % of FPs come from
+tracks that persist ≥ 20 frames** — the worst offenders appear in *every one* of the 282
+frames. These are the static-leak phantoms (barriers/poles/vegetation the occupancy
+background model can't remove because they're geometrically identical to parked cars —
+but they never move). Two things follow:
+
+- **Detection on CROPPED clouds ≫ FULL.** The full research-region cloud's off-road
+  clutter dominates FPs; clipping to the road lifts F1 from ≈0.36 to ≈0.52 (veh-only).
+  Use cropped clouds for detection.
+- **Track motion gate** (`suppress_static`, default on): drop tracks that **both** persist
+  ≥ `static_min_frames` (30) **and** never exceed `static_max_speed` (0.5 m/s, lifetime
+  max). Real vehicles always break the floor, so recall is barely touched; a never-moving
+  object is never a wrong-way driver anyway. Measured (real pipeline, veh-only, ROI):
+
+  | input | suppress | P | R | F1 |
+  |---|---|---|---|---|
+  | registered/cropped | off | 43.8 | 61.5 | 51.1 |
+  | registered/cropped | **on** | **52.3** | 60.6 | **56.2** |
+  | south/cropped | off | 73.2 | 51.2 | 60.2 |
+  | south/cropped | on | 75.6 | 49.3 | 59.7 |
+
+  Big win on the fused/registered pipeline (+5 F1, −30 % FP); near-neutral on the
+  already-clean single south sensor (it has few phantoms) — consistent with the leak being
+  a fusion artifact. Same gate applied to both, so the A/B stays fair.
+
 ---
 
 ## Changelog (highlights since the pipeline came together)
