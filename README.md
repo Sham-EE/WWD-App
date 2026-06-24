@@ -77,6 +77,11 @@ so no dev-kit, no calibration files, and no extra dependencies.
   **Generate** a side-by-side MP4 (GIF fallback) of any variant.
 - **3D LiDAR tab** — the point cloud + ground-truth 3D boxes in the sensor frame,
   shown as **Bird's-Eye** and **Side** views (rotate/zoom), coloured by category.
+- **Sensor / Input / GT toggles** drive **both** tabs: **Sensor** (Registered / South /
+  North — registered reuses the south GT + camera calibration, since it's in the south
+  frame), **Input cloud** (Cropped / Full), and **GT boxes** (**Scorable** = what
+  Evaluation scores, vs **All (raw)** = every annotated box). Each frame shows its
+  **scorable / raw box counts** underneath so you can see what the scorable filter dropped.
 
 Frame stepping is isolated with `st.fragment` + cached loads so playback is smooth
 (no full-page refresh). The same playback control is on **Background Filtering**,
@@ -117,11 +122,13 @@ by file mtime, so a save updates the whole app with no restart).
     unsaved* geometry — points your exclusion rects / road crop would remove turn
     **grey** and drop out of the metric, so you can tune exclusions and watch the
     numbers move **before** saving or rebuilding the model.
-- **🧭 Registration** — fuse the **south + north** LiDARs into one cloud in the shared
-  `s110_base` frame (calibration-init + ICP refinement). One cohesive 3D viewer with a
-  **Raw ↔ Registered** toggle, **by-sensor / by-height** colouring, road/ROI overlays
-  and **LiDAR-position markers**. Batch-writes `data/derived/registered/`. Full details
-  in the **Point-cloud registration** section below.
+- **🧭 Registration** — fuse the **south + north** LiDARs into one cloud (calibration-init
+  + ICP refinement), written in the **south LiDAR frame** so it reuses the south GT /
+  calibration / polygons. One cohesive 3D viewer with a **Raw ↔ Registered** toggle,
+  **by-sensor / by-height** colouring, **Frame (south / s110_base)** + **Crop** toggles,
+  road/ROI overlays and **LiDAR-position markers**; also builds a **fused (union) GT**.
+  Batch-writes `data/derived/point_clouds/registered/`. Full details in the
+  **Point-cloud registration** section below.
 
 ### Sensor + cropped/full A/B pipeline
 
@@ -159,22 +166,30 @@ source; the active input + GT folders are shown in the sidebar):
   cropped = the real crop; dashed on full = reference), 🔵 ROI, 🟣 exclusion zones.
 - **📍 LiDAR markers** — mark the sensor position(s) with a diamond + dotted plumb line
   to the nadir (the blank-spot under each LiDAR). Frame-aware: sensor at the origin for
-  south/north, at the calibrated `s110_base` position (north + ICP delta) for registered.
+  south/north; for registered (south frame) the south LiDAR sits at the origin and the
+  north LiDAR at its calibrated offset (with the ICP delta applied).
 - **🏷️ GT boxes** (category-coloured + `TYPE_id` labels, matched per frame) and a
   **📊 FG quality** metric (objects covered ≥N pts / on-object recall / off-object
   foreground) — a fast *proxy* for detectability so you can tune filter params without
   running the whole Detection→Evaluation loop.
+- **Filter-quality overlays** that *show* what the metric counts: **❌ Uncovered obj**
+  red-outlines the GT objects the LiDAR hit but the filter kept too little foreground
+  for (< `≥ pts`), and **🟡 Off-object FG** recolours (yellow) the foreground points
+  outside every GT box (clutter / false-foreground). The frame caption summarises both
+  inline (`✅ covered/scanned · 🟡 off-object FG`).
 - **🌈 Color by height** (Turbo) with a **Height span** slider that compresses the
   colormap to the lowest few metres so even cars show a bottom→top gradient.
 - **Persistent camera:** 🔍 zoom / 🔄 rotate / 📐 tilt sliders drive the 3D camera
   from Streamlit state, so the view holds across frame steps **and** toggles (Streamlit
   does not preserve the Plotly 3D camera via `uirevision`, so sliders are the reliable
   way; mouse drag still works for quick looks). The full/uncropped view is clipped to
-  the road window so it isn't flattened by the raw ~200 m extent.
+  the road window so it isn't flattened by the raw ~200 m extent; a **🔭 View margin**
+  slider widens that window when you want to see vehicles/boxes out on the approaches.
 
 The same **compact controls, bulk toggles, height colouring and LiDAR markers** are
-shared (via `viewer_ui.py`) across the **Object Detection & Tracking** and **Visualizer**
-3D viewers; height colouring is also on the Dataset-Prep 2D previews.
+shared (via `viewer_ui.py`) across **every** preview with a play/next control —
+**Object Detection & Tracking**, the **Visualizer**, and the **Dataset Prep**,
+**Evaluation** and **WWD Simulator** viewers.
 
 ## Running
 
@@ -195,6 +210,10 @@ streamlit run Home.py
    filter setting.
 2. **Object Detection and Tracking** → *Start Detection* (keep the same Sensor/Input).
    Reads the filtered clouds, writes tracks → `outputs/detection/object_detection/<sensor>/<crop>/tracks.csv`, runs WWD.
+   The 3D view has toggleable overlays — ⚪ point cloud, 🟠 foreground (the filtered cloud
+   the detector ran on), 🔴 objects/tracks, 🏷️ GT boxes, **❌ Missed GT** (undetected
+   objects, red) — and a per-frame coverage caption (`GT: N · X/N detected · ❌ missed`).
+   Parameter groups and the folder paths collapse into expanders to keep the page tidy.
 3. **Evaluation** → *Run Evaluation* (keep **Restrict to ROI** on for the fair number).
    Re-run Detection after switching sensor — eval scores the in-memory run and warns on
    a mismatch. Use the **Visual Evaluation** panel to step through frames.
@@ -375,10 +394,12 @@ i.e. `atan2(vy,vx)` in the sensor frame). The file is **currently calibrated**
 
 **Multi-sensor & registration**
 - **Point-cloud registration** (`registration.py` + Dataset Prep **🧭 Registration**
-  tab): fuse south + north into the shared `s110_base` frame, **calibration-init +
-  coarse-to-fine point-to-plane ICP** (recovers the ~8° relative yaw the bundled
-  extrinsics miss). One viewer with **Raw ↔ Registered** + **by-sensor / by-height**
-  + LiDAR-position markers; batch write + `registration.json` manifest.
+  tab): fuse south + north, **calibration-init + coarse-to-fine point-to-plane ICP**
+  (recovers the ~8° relative yaw the bundled extrinsics miss), written in the **south
+  LiDAR frame** so it reuses the south GT / camera calibration / polygons. One viewer with
+  **Raw ↔ Registered** + **by-sensor / by-height** + **Frame (south / s110_base)** + **Crop**
+  + LiDAR markers; batch write + `registration.json` manifest; plus a **fused (union) GT**
+  (`fuse_labels`) that adds the north-only boxes the south GT misses.
 - **South / North / Registered sensor toggle** shared across Background Filtering /
   Detection / Evaluation, each combination writing to its own folder, with **auto-
   resolved GT** per sensor. Detection/Eval **tag results with sensor/source** and warn
@@ -390,10 +411,18 @@ i.e. `atan2(vy,vx)` in the sensor frame). The file is **currently calibrated**
   `outputs/` nests by stage (`background/…`, `detection/…`, `visualizer/…`), each by
   `<sensor>/<crop>`. Resolved through centralized `dataset_manager` helpers.
 - **Compact, consistent viewers** (`viewer_ui.py`): one-line frame nav + collapsible
-  **🎛️ Layers & overlays** panel with **✅ All / ⬜ None**, shared by the Background-
-  Filtering, Detection and Visualizer 3D viewers.
+  **🎛️ Layers & overlays** panel with **✅ All / ⬜ None**, shared by **every** preview
+  with a play/next control — Background Filtering, Detection, Visualizer, and the Dataset
+  Prep / Evaluation / WWD Simulator viewers. Detection's parameter groups and folder
+  paths also collapse into expanders.
+- **Detection ↔ GT diagnostics:** Detection gains a **🏷️ GT-box overlay**, a **🟠
+  foreground overlay** (the filtered cloud it ran on), a **❌ Missed-GT overlay** (red,
+  undetected objects) and a per-frame coverage caption; Background Filtering gains the
+  matching **❌ uncovered-object** and **🟡 off-object-foreground** overlays. The
+  Visualizer adds a **Scorable vs All-raw GT** toggle with per-frame box counts.
 - **LiDAR position markers** (diamond + nadir plumb line) available on every 3D viewer,
-  frame-aware (sensor origin for south/north, calibrated base position for registered).
+  frame-aware (sensor origin for south/north, calibrated position for registered).
+- Fixed the exclusion-zone legend (one dotted entry, not four fat-dashed keys).
 - **Visualizer tidy-ups:** simplified render cache/video names
   (`rendered/south1/pcd_cat_ps2_full`, `road_south2_south1_pcd_cat.mp4`); short camera
   names in the UI; fixed a duplicate-slider-id crash.
@@ -406,7 +435,12 @@ i.e. `atan2(vy,vx)` in the sensor frame). The file is **currently calibrated**
 
 The s110 site has **two** roadside LiDARs (ouster *south* and *north*), each cloud in
 its own sensor frame. The Dataset Prep **🧭 Registration** tab fuses them into one
-denser cloud in the shared `s110_base` frame, covering the full intersection.
+denser cloud covering the full intersection. Fusion happens via the shared `s110_base`
+frame, but the result is **written in the south LiDAR frame** — so registered is a
+drop-in superset of the south cloud: the **south GT boxes, south camera calibration,
+and road/ROI polygons all apply to it directly**. (A **Frame** toggle in the preview
+lets you view it in either the south or the neutral `s110_base` frame — same cloud,
+just renumbered.)
 
 **Key fact:** the dataset ships **per-sensor extrinsics**. Every OpenLABEL label JSON
 (south *and* north) carries the sensor→`s110_base` transform in `coordinate_systems`
@@ -425,24 +459,32 @@ tab):
 2. **Nearest-timestamp pairing** (`match_frame_pairs`) — the sensors fire async, so each
    south frame pairs with its nearest north frame (mean Δt ≈ 12 ms, max ≈ 89 ms over the
    282-frame clip).
-3. **Fuse** both clouds into `s110_base` (`fuse_pair`), tagging each point by source so
+3. **Fuse** both clouds via `s110_base`, then re-express in the **south LiDAR frame**
+   (`fuse_pair(..., to_frame=to_south_frame(M_south))`), tagging each point by source so
    the preview can colour **south vs north distinctly** — the "do they line up?" QA view.
-   One cohesive viewer toggles **Raw ↔ Registered** and **by-sensor / by-height** (Turbo),
-   with road/ROI overlays + persistent zoom/rotate/tilt camera.
+   One cohesive viewer toggles **Raw ↔ Registered**, **by-sensor / by-height** (Turbo),
+   **Frame** (south / `s110_base`) and **Crop**, with road/ROI overlays + persistent camera.
 4. **ICP correction** (`icp_refine`, Open3D) — **coarse-to-fine** (5 → 2 → 1 → 0.5 m)
    **point-to-plane** ICP recovers the yaw the calibration misses (a single tight pass
    gets stuck in a local minimum). It reports **yaw / Δt / fitness / inlier RMSE**; the
    correction is consistent frame-to-frame (yaw −7.85° to −7.90°), confirming it's a
    static systematic error, so one correction applies to every frame. **On by default.**
-5. **Batch register** writes fused clouds → `data/derived/registered/` plus a
-   `registration.json` manifest (matrices + ICP delta + pairing stats).
-6. **Propagates** through the existing **Registered (south + north)** source in the
-   Crop-to-road and Scorable-GT tabs end-to-end.
+5. **Batch register** writes fused clouds → `data/derived/point_clouds/registered/` plus a
+   `registration.json` manifest (matrices + ICP delta + **output frame / frame transform**
+   + pairing stats).
+6. **Fused GT** (`fuse_labels`) — each sensor only annotates what *it* sees, so the south
+   GT alone misses the objects only north saw (~2.3 boxes/frame here). The Registration tab
+   builds a **union GT**: north boxes are transformed into the south frame and the ones
+   south didn't annotate are appended (shared objects de-duplicated by centre distance).
+   Registered detection/eval then resolve to this fused GT.
+7. **Propagates** through the **Registered (south + north)** source in the Crop-to-road
+   and Scorable-GT tabs (and the per-sensor toggles on Filtering / Detection / Evaluation /
+   Visualizer) end-to-end.
 
-**Why it matters.** A registered cloud roughly doubles intersection coverage (fills
-each sensor's occlusion shadows), which should improve recall on far/occluded objects
-and make WWD at the junction more reliable. Note `num_points` in the scorable GT is
-currently south-only — recompute it on the fused cloud once registered.
+**Why it matters.** A registered cloud roughly doubles intersection coverage (fills each
+sensor's occlusion shadows), improving recall on far/occluded objects and making WWD at
+the junction more reliable — and because it's in the south frame with a union GT, it slots
+straight into the existing scorable-GT + evaluation flow.
 
 ## Other open follow-ups
 - Reduce **ID switches** further (association / `max_missed` tuning).
