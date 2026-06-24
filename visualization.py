@@ -83,13 +83,14 @@ def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_d
         ))
 
     # 1b. Optional filtered-foreground overlay (the points the detector actually
-    #     ran on). Cyan, so it doesn't clash with the red object markers.
+    #     ran on). Orange, so it stands apart from the red object markers and the
+    #     cyan CAR ground-truth boxes.
     if foreground_path and os.path.exists(foreground_path):
         fpts = load_points_from_pcd(foreground_path)
         if fpts.size:
             fig.add_trace(go.Scatter3d(
                 x=fpts[:, 0], y=fpts[:, 1], z=fpts[:, 2], mode='markers',
-                name='Foreground', marker=dict(size=2.2, color='#00e5ff', opacity=0.9)))
+                name='Foreground', marker=dict(size=2.2, color='#ff8c00', opacity=0.9)))
 
     # 2. Add Road Polygon
     road_poly = results['road_poly']

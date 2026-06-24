@@ -252,9 +252,10 @@ if st.session_state.detection_results:
         vu.bulk_toggle_buttons(overlay_keys, "odt_bulk", rerun_scope="app")
         r1 = st.columns(4)
         show_orig = r1[0].toggle("⚪ Point cloud", key="odt_orig", help="The original cloud (grey/Turbo).")
-        show_fg = r1[1].toggle("💠 Foreground", key="odt_fg",
+        show_fg = r1[1].toggle("🟠 Foreground", key="odt_fg",
                                help="The filtered foreground points the detector actually ran on "
-                                    "(cyan — kept distinct from the red object markers).")
+                                    "(orange — distinct from the red object markers and the cyan CAR "
+                                    "GT boxes).")
         show_objects = r1[2].toggle("🔴 Objects/tracks", key="odt_objects",
                                     help="Detection markers, wrong-way diamonds, heading arrows, trails.")
         show_gt = r1[3].toggle("🏷️ GT boxes", key="odt_gt", disabled=not has_gt,
