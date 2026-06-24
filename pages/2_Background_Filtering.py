@@ -23,18 +23,19 @@ logging.info("--- Background Filter Page Loaded ---")
 # ---------------- Active-dataset paths -----------------
 import dataset_manager as dm
 _ds = dm.get_active()
-st.sidebar.caption(f"📂 Dataset: **{_ds.name}**")
-_sensor_label = st.sidebar.radio("Sensor", ["Registered", "South", "North"],
-                                 key="pipeline_sensor", horizontal=True,
-                                 help="Which LiDAR to filter. Registered = the fused south+north cloud "
-                                      "(default). Each sensor writes to its own model/filtered/detection "
-                                      "folders so their metrics can be compared.")
+st.caption(f"📂 Dataset: **{_ds.name}**")
+_sc, _ic = st.columns(2)
+_sensor_label = _sc.radio("Sensor", ["Registered", "South", "North"],
+                          key="pipeline_sensor", horizontal=True,
+                          help="Which LiDAR to filter. Registered = the fused south+north cloud "
+                               "(default). Each sensor writes to its own model/filtered/detection "
+                               "folders so their metrics can be compared.")
 _sensor = _sensor_label.lower()
-_src_label = st.sidebar.radio("Input cloud", ["Cropped (road)", "Full (uncropped)"],
-                              key="pipeline_source", horizontal=True,
-                              help="Cropped = road-clipped clouds; Full = raw/fused clouds (research region). "
-                                   "Each writes to its own model/filtered/detection folders so you can "
-                                   "compare eval metrics. The choice is shared across Filtering / Detection / Evaluation.")
+_src_label = _ic.radio("Input cloud", ["Cropped (road)", "Full (uncropped)"],
+                       key="pipeline_source", horizontal=True,
+                       help="Cropped = road-clipped clouds; Full = raw/fused clouds (research region). "
+                            "Each writes to its own model/filtered/detection folders so you can "
+                            "compare eval metrics. The choice is shared across Filtering / Detection / Evaluation.")
 _src = "cropped" if _src_label.startswith("Cropped") else "full"
 DEFAULT_MODEL_PATH = _ds.model_path_for_sensor(_sensor, _src)
 DEFAULT_PCD = _ds.input_pcd_for_sensor(_sensor, _src)
@@ -42,9 +43,9 @@ DEFAULT_PCD = _ds.input_pcd_for_sensor(_sensor, _src)
 # line up across south / north / registered.
 DEFAULT_GT = _ds.gt_dir_for_input(DEFAULT_PCD)
 DEFAULT_OUT = _ds.filtered_dir_for_sensor(_sensor, _src)
-st.sidebar.caption(f"🛰️ Input: `{os.path.basename(DEFAULT_PCD.rstrip('/'))}`"
-                   + (f"  ·  🏷️ GT: `{os.path.basename(DEFAULT_GT.rstrip('/'))}`"
-                      if os.path.isdir(DEFAULT_GT) else "  ·  🏷️ GT: none found"))
+st.caption(f"🛰️ Input: `{os.path.basename(DEFAULT_PCD.rstrip('/'))}`"
+           + (f"  ·  🏷️ GT: `{os.path.basename(DEFAULT_GT.rstrip('/'))}`"
+              if os.path.isdir(DEFAULT_GT) else "  ·  🏷️ GT: none found"))
 
 @st.cache_data(show_spinner="Discovering PCD files...")
 def discover_pcd_files(dir_path: str):
@@ -207,71 +208,67 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
 
 from dataset_prep import foreground_quality  # shared with the Geometry Editor
 
-# ---------------- Sidebar parameters ----------------
-side = st.sidebar
-side.header("Input and Model")
-model_save_path = side.text_input("Background Model Path", DEFAULT_MODEL_PATH)
-use_saved_model = side.checkbox("Load saved model if available", value=True)
+# ---------------- Model & filter parameters (collapsible, on the page) ----------------
+st.subheader("⚙️ Model & Filter Parameters")
 
-config = {
-    "pcd_dir": side.text_input("PCD Directory", DEFAULT_PCD),
-    # "gt_dir": side.text_input("Ground Truth Directory (for Z-ranges)", DEFAULT_GT), # Hidden per user request
-    "build_frames": side.number_input('Build Frames (0=all)', min_value=0, value=0),
-}
-config['gt_dir'] = DEFAULT_GT # Assign default value without showing UI element
+with st.expander("📁 Folder paths & model (advanced override)", expanded=False):
+    # keyed by sensor/source so the fields re-follow the toggles when you switch
+    fp1, fp2 = st.columns(2)
+    model_save_path = fp1.text_input("Background Model Path", DEFAULT_MODEL_PATH,
+                                     key=f"bf_model_{_sensor}_{_src}")
+    pcd_dir_in = fp2.text_input("PCD Directory", DEFAULT_PCD, key=f"bf_pcd_{_sensor}_{_src}")
+    fp3, fp4 = st.columns(2)
+    output_dir = fp3.text_input("Output Directory (filtered PCDs)", DEFAULT_OUT,
+                                key=f"bf_out_{_sensor}_{_src}")
+    build_frames = fp4.number_input("Build Frames (0 = all)", min_value=0, value=0, key="bf_buildN")
+    fp5, fp6 = st.columns(2)
+    use_saved_model = fp5.checkbox("Load saved model if available", value=True, key="bf_loadsaved")
+    save_filtered = fp6.checkbox("Save filtered foreground points (PCD)", value=True, key="bf_savefilt")
 
-side.header("Ground Removal")
-config.update({
-    "ground_grid": side.number_input("Ground Grid Size (m)", 0.1, 2.0, 0.5, 0.1),
-    "dz_thresh": side.number_input("Ground Z Threshold (m)", 0.1, 1.0, 0.3, 0.05),
-})
+config = {"pcd_dir": pcd_dir_in, "build_frames": build_frames, "gt_dir": DEFAULT_GT}
 
-side.header("Background Model: Voxel Occupancy")
-config.update({
-    "bg_voxel": side.slider("BG Voxel Size (m)", 0.5, 2.0, 1.0, 0.1),
-    "bg_ratio": side.slider("BG Presence Ratio", 0.5, 1.0, 0.98, 0.01),
-})
+with st.expander("🧹 Ground removal", expanded=False):
+    g1, g2 = st.columns(2)
+    config["ground_grid"] = g1.number_input("Ground Grid Size (m)", 0.1, 2.0, 0.5, 0.1)
+    config["dz_thresh"] = g2.number_input("Ground Z Threshold (m)", 0.1, 1.0, 0.3, 0.05)
 
-side.header("Background Model: Cluster Persistence")
-config.update({
-    "cell_size": side.slider('Grid Cell Size (m)', 0.5, 5.0, 1.0, 0.1),
-    "cell_ratio": side.slider('Presence Ratio', 0.5, 1.0, 0.9, 0.01),
-})
+with st.expander("🧱 Background model (occupancy + persistence)", expanded=False):
+    b1, b2 = st.columns(2)
+    config["bg_voxel"] = b1.slider("BG Voxel Size (m)", 0.5, 2.0, 1.0, 0.1)
+    config["bg_ratio"] = b2.slider("BG Presence Ratio", 0.5, 1.0, 0.98, 0.01)
+    b3, b4 = st.columns(2)
+    config["cell_size"] = b3.slider("Grid Cell Size (m)", 0.5, 5.0, 1.0, 0.1)
+    config["cell_ratio"] = b4.slider("Cluster Presence Ratio", 0.5, 1.0, 0.9, 0.01)
 
-side.header("Clustering (DBSCAN)")
-cluster_params = {
-    "ds_voxel": side.slider('Downsample Voxel (Build)', 0.05, 0.5, 0.15, 0.01),
-    "eps0": side.number_input('eps0', value=0.35),
-    "eps_k": side.number_input('eps_k', value=0.008, format="%.4f"),
-    "eps_min": side.number_input('eps_min', value=0.35),
-    "eps_max": side.number_input('eps_max', value=2.0),
-    "min_samples": side.number_input('min_samples', value=16),
-}
-config['cluster'] = cluster_params
+with st.expander("🔗 Clustering (DBSCAN)", expanded=False):
+    dc1, dc2, dc3 = st.columns(3)
+    ds_voxel = dc1.slider("Downsample Voxel (Build)", 0.05, 0.5, 0.15, 0.01)
+    eps0 = dc2.number_input("eps0", value=0.35)
+    eps_k = dc3.number_input("eps_k", value=0.008, format="%.4f")
+    dc4, dc5, dc6 = st.columns(3)
+    eps_min = dc4.number_input("eps_min", value=0.35)
+    eps_max = dc5.number_input("eps_max", value=2.0)
+    min_samples = dc6.number_input("min_samples", value=16)
+    config["cluster"] = {"ds_voxel": ds_voxel, "eps0": eps0, "eps_k": eps_k,
+                         "eps_min": eps_min, "eps_max": eps_max, "min_samples": min_samples}
 
-side.header("Pole-like Geometry Filter")
-config.update({
-    'enable_pole_filter': side.checkbox('Enable Pole Filter', value=True),
-    'pole_min_height': side.number_input('Min Height', value=1.5),
-    'pole_min_aspect_xy': side.number_input('Min Aspect XY', value=6.0),
-    'pole_max_xy_area': side.number_input('Max XY Area', value=1.0),
-    'pole_min_linearity': side.number_input('Min Linearity', value=0.75),
-    'pole_min_points': side.number_input('Min Points', value=8),
-    'pole_max_points': side.number_input('Max Points (pole)', value=80,
+with st.expander("📍 Pole-like geometry filter", expanded=False):
+    config["enable_pole_filter"] = st.checkbox("Enable Pole Filter", value=True)
+    p1, p2, p3 = st.columns(3)
+    config["pole_min_height"] = p1.number_input("Min Height", value=1.5)
+    config["pole_min_aspect_xy"] = p2.number_input("Min Aspect XY", value=6.0)
+    config["pole_max_xy_area"] = p3.number_input("Max XY Area", value=1.0)
+    p4, p5, p6 = st.columns(3)
+    config["pole_min_linearity"] = p4.number_input("Min Linearity", value=0.75)
+    config["pole_min_points"] = p5.number_input("Min Points", value=8)
+    config["pole_max_points"] = p6.number_input("Max Points (pole)", value=80,
         help="A tall, small-footprint cluster is only treated as a pole if it has at most this many "
              "points. Dense objects (trucks/vans) exceed it and are kept. Raise to delete more; "
-             "lower to protect more vehicles."),
-})
+             "lower to protect more vehicles.")
 
-side.header("Misc Filters")
-config.update({
-    'inward_buffer_m': side.number_input('Road Edge Inward Buffer (m)', value=2.0),
-    'coarse_5x5': {'NX': 5, 'NY': 5}, # Hard-coded
-})
-
-side.header("Output")
-save_filtered = side.checkbox("Save filtered foreground points (PCD)", value=True)
-output_dir = side.text_input("Output Directory", DEFAULT_OUT, disabled=not save_filtered)
+with st.expander("⚙️ Misc filters", expanded=False):
+    config["inward_buffer_m"] = st.number_input("Road Edge Inward Buffer (m)", value=2.0)
+config["coarse_5x5"] = {"NX": 5, "NY": 5}  # hard-coded
 
 # ---------------- Load or Build background model ----------------
 if "bg_model" not in st.session_state:
@@ -299,7 +296,7 @@ if use_saved_model and st.session_state.bg_model is None and os.path.exists(mode
         st.session_state.bg_model = None
         st.session_state.bg_model_path = None
 
-if side.button("Build Background Model", use_container_width=True, type="primary"):
+if st.button("🧠 Build Background Model", use_container_width=True, type="primary", key="bf_build"):
     pcd_files = discover_pcd_files(config["pcd_dir"])
     if not pcd_files:
         st.error("No PCD files found!")
