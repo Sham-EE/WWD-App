@@ -34,24 +34,22 @@ _src_label = _ic.radio("Input cloud", ["Cropped (road)", "Full (uncropped)"],
                             "filtered/detection folders so you can compare eval metrics.")
 _src = "cropped" if _src_label.startswith("Cropped") else "full"
 
-filtered_pcd_dir = st.text_input(
-    "Enter the path to the FILTERED PCD files (for detection):",
-    value=_ds.filtered_dir_for_sensor(_sensor, _src)
-)
-
-original_pcd_dir = st.text_input(
-    "Enter the path to the ORIGINAL PCD files (for visualization):",
-    value=_ds.input_pcd_for_sensor(_sensor, _src)
-)
-
 output_dir = _ds.detection_dir_for_sensor(_sensor, _src)
+# Folder paths default from the Sensor/Input toggles; tuck them into a collapsible
+# section (keyed by sensor/source so they re-follow the toggles when you switch).
+with st.expander("📁 Folder paths (advanced override)", expanded=False):
+    filtered_pcd_dir = st.text_input(
+        "FILTERED PCD files (for detection):",
+        value=_ds.filtered_dir_for_sensor(_sensor, _src), key=f"odt_filt_{_sensor}_{_src}")
+    original_pcd_dir = st.text_input(
+        "ORIGINAL PCD files (for visualization):",
+        value=_ds.input_pcd_for_sensor(_sensor, _src), key=f"odt_orig_{_sensor}_{_src}")
+    st.caption(f"Detection output → `{output_dir}`")
 
-# --- Parameters ---
+# --- Parameters (each group collapses into its own section) ---
 st.subheader("⚙️ Algorithm Parameters")
-col1, col2 = st.columns(2)
 
-with col1:
-    st.markdown("#### Clustering and Detection")
+with st.expander("🔧 Clustering & Detection", expanded=False):
     adaptive_eps = st.checkbox("Range-adaptive eps", value=True,
         help="Grow the clustering radius with distance (eps = eps0 + eps_k·range, clipped). Near, dense "
              "objects use a small eps (kept separate → precision); far, sparse objects use a larger eps "
@@ -68,11 +66,13 @@ with col1:
     else:
         dbscan_eps = st.slider("DBSCAN Epsilon (eps)", 0.1, 5.0, 2.0, 0.1, help="Fixed cluster radius (m).")
         aeps0, aeps_k, aeps_min, aeps_max = 0.8, 0.04, 1.0, 3.0
-    min_cluster_pts = st.slider("Min Cluster Points", 1, 50, 1, 1, help="Minimum points to form a cluster.")
-    min_hits = st.slider("Min Temporal Hits", 1, 10, 2, 1,
+    cc1, cc2 = st.columns(2)
+    min_cluster_pts = cc1.slider("Min Cluster Points", 1, 50, 1, 1, help="Minimum points to form a cluster.")
+    min_hits = cc2.slider("Min Temporal Hits", 1, 10, 2, 1,
         help="Frames a candidate must exist to be confirmed. Higher = fewer spurious tracks and fewer "
              "ID switches, but lower recall (e.g. 3 cut ID switches ~half but dropped recall).")
-    st.markdown("##### Vehicle class gate")
+
+with st.expander("🚗 Vehicle class gate", expanded=False):
     vehicle_gate = st.checkbox("Drop non-vehicles (peds/bikes)", value=False,
         help="OFF (default) = detect everything, including pedestrians & bicycles (each detection is "
              "still tagged is_vehicle). ON = drop clusters below BOTH size thresholds. NOTE: on the "
@@ -86,23 +86,21 @@ with col1:
     vehicle_min_points = vg2.number_input("Veh. min points", 1, 500, 40, 1,
         help="A track counts as a vehicle if it has at least this many points OR is long enough.")
 
-with col2:
-    st.markdown("#### Tracking and Association")
-    fps = st.slider("Frames Per Second (FPS)", 1.0, 30.0, 10.0, 0.5, help="Data frame rate for velocity calculation.")
-    max_missed = st.slider("Max Missed Frames", 0, 20, 5, 1, help="Frames to keep a track alive without detection.")
-    moving_speed_thresh = st.slider("Moving Speed Threshold (m/s)", 0.0, 10.0, 3.0, 0.1, help="Speed above which an object is 'moving'.")
-    roi_abs_y = st.slider("ROI Absolute Y (m)", 5.0, 100.0, 40.0, 1.0, help="Y-coordinate processing range.")
+with st.expander("🛰️ Tracking & Association", expanded=False):
+    tc1, tc2 = st.columns(2)
+    fps = tc1.slider("Frames Per Second (FPS)", 1.0, 30.0, 10.0, 0.5, help="Data frame rate for velocity calculation.")
+    max_missed = tc2.slider("Max Missed Frames", 0, 20, 5, 1, help="Frames to keep a track alive without detection.")
+    tc3, tc4 = st.columns(2)
+    moving_speed_thresh = tc3.slider("Moving Speed Threshold (m/s)", 0.0, 10.0, 3.0, 0.1, help="Speed above which an object is 'moving'.")
+    roi_abs_y = tc4.slider("ROI Absolute Y (m)", 5.0, 100.0, 40.0, 1.0, help="Y-coordinate processing range.")
 
-st.markdown("#### Visualization")
-col_v1, col_v2, col_v3 = st.columns(3)
-with col_v1:
-    eye_x = st.number_input("Camera Eye X", value=0.8, step=0.05)
-with col_v2:
-    eye_y = st.number_input("Camera Eye Y", value=0.8, step=0.05)
-with col_v3:
-    eye_z = st.number_input("Camera Eye Z", value=0.8, step=0.05)
-
-max_frames_to_animate = st.number_input("Max Frames to Animate (0 for all)", min_value=0, max_value=2000, value=0, help="Limit the number of frames to process for the animation to save time.")
+with st.expander("🎥 Visualization", expanded=False):
+    col_v1, col_v2, col_v3 = st.columns(3)
+    eye_x = col_v1.number_input("Camera Eye X", value=0.8, step=0.05)
+    eye_y = col_v2.number_input("Camera Eye Y", value=0.8, step=0.05)
+    eye_z = col_v3.number_input("Camera Eye Z", value=0.8, step=0.05)
+    max_frames_to_animate = st.number_input("Max Frames to Animate (0 for all)", min_value=0, max_value=2000,
+        value=0, help="Limit the number of frames to process for the animation to save time.")
 
 st.divider()
 
@@ -173,7 +171,6 @@ if st.session_state.detection_results:
 
     # --- Wrong-Way Driving (WWD) analysis ---
     st.divider()
-    st.subheader("🚨 Wrong-Way Driving Detection")
     lanes = load_lane_config()
     if not lanes:
         st.warning("No lane configuration found (config/lanes.geojson). WWD is disabled.")
@@ -184,30 +181,25 @@ if st.session_state.detection_results:
                 "headings). WWD will run, but results are not trustworthy until you set "
                 "the real per-lane headings — see README → 'Calibrating lane geometry'."
             )
-        wc1, wc2, wc3, wc4 = st.columns(4)
-        with wc1:
-            ww_angle = st.slider("Angle vs. flow (deg)", 90.0, 180.0, 120.0, 5.0,
-                                 help="How far against the expected lane direction counts as wrong-way.")
-        with wc2:
-            ww_speed = st.slider("Min speed (m/s)", 0.5, 10.0, 2.0, 0.5,
-                                 help="Below this, heading is unreliable.")
-        with wc3:
-            ww_frames = st.slider("Sustained frames", 1, 30, 5, 1,
-                                  help="Consecutive flagged frames required.")
-        with wc4:
-            ww_disp = st.slider("Min displacement (m)", 0.0, 20.0, 3.0, 0.5,
-                                help="Net travel over the flagged span.")
-        wc5, wc6 = st.columns(2)
-        with wc5:
-            ww_exempt = st.checkbox("Exempt junction turns", value=True,
-                                    help="Ignore wrong-way inside the intersection (where lane boxes "
-                                         "overlap and turning is legal). Fixes turning vehicles being "
-                                         "misflagged.")
-        with wc6:
-            ww_consist = st.slider("Min heading steadiness", 0.0, 1.0, 0.85, 0.05,
-                                   help="A real wrong-way vehicle holds a steady heading; a turn sweeps "
-                                        "through headings. Higher = reject turns more aggressively (1.0 = "
-                                        "perfectly steady).")
+        with st.expander("🚨 Wrong-Way Driving Detection", expanded=False):
+            wc1, wc2, wc3, wc4 = st.columns(4)
+            ww_angle = wc1.slider("Angle vs. flow (deg)", 90.0, 180.0, 120.0, 5.0,
+                                  help="How far against the expected lane direction counts as wrong-way.")
+            ww_speed = wc2.slider("Min speed (m/s)", 0.5, 10.0, 2.0, 0.5,
+                                  help="Below this, heading is unreliable.")
+            ww_frames = wc3.slider("Sustained frames", 1, 30, 5, 1,
+                                   help="Consecutive flagged frames required.")
+            ww_disp = wc4.slider("Min displacement (m)", 0.0, 20.0, 3.0, 0.5,
+                                 help="Net travel over the flagged span.")
+            wc5, wc6 = st.columns(2)
+            ww_exempt = wc5.checkbox("Exempt junction turns", value=True,
+                                     help="Ignore wrong-way inside the intersection (where lane boxes "
+                                          "overlap and turning is legal). Fixes turning vehicles being "
+                                          "misflagged.")
+            ww_consist = wc6.slider("Min heading steadiness", 0.0, 1.0, 0.85, 0.05,
+                                    help="A real wrong-way vehicle holds a steady heading; a turn sweeps "
+                                         "through headings. Higher = reject turns more aggressively (1.0 = "
+                                         "perfectly steady).")
         ww_params = {"angle_thresh_deg": ww_angle, "min_speed": ww_speed,
                      "min_frames": ww_frames, "min_displacement_m": ww_disp,
                      "exempt_junction": ww_exempt, "min_heading_consistency": ww_consist}
@@ -224,36 +216,62 @@ if st.session_state.detection_results:
     n_frames = len(results['pcd_files'])
     frame_idx, playing, play_delay = vu.nav_row("odt_frame", n_frames, "odt")
 
+    # GT index for the active sensor (scorable set; same one Evaluation scores).
+    _gt_dir = _ds.gt_dir_for_input(original_pcd_dir)
+
+    @st.cache_data(show_spinner=False)
+    def _gt_index(gt_dir):
+        idx = {}
+        if gt_dir and os.path.isdir(gt_dir):
+            for f in glob.glob(os.path.join(gt_dir, "*.json")):
+                idx["_".join(os.path.basename(f).split("_")[:2])] = f
+        return idx
+    gt_index = _gt_index(_gt_dir)
+    has_gt = bool(gt_index)
+
     # --- Collapsible layers & overlays (bulk on/off; matches Background Filtering) ---
     have_lanes = bool(lanes)
     toggle_defaults = {
-        "odt_orig": True, "odt_objects": True, "odt_lanes": have_lanes,
-        "odt_road": True, "odt_roi": False, "odt_excl": False,
-        "odt_sensors": True, "odt_height": False, "odt_topdown": False,
+        "odt_orig": True, "odt_fg": False, "odt_objects": True, "odt_gt": False,
+        "odt_missed": False, "odt_lanes": have_lanes, "odt_road": True, "odt_roi": False,
+        "odt_excl": False, "odt_sensors": True, "odt_height": False, "odt_topdown": False,
     }
     vu.ensure_toggle_defaults(toggle_defaults)
-    overlay_keys = ["odt_orig", "odt_objects", "odt_lanes", "odt_road",
-                    "odt_roi", "odt_excl", "odt_sensors"]
+    # "All" also turns Height on (per request); top-down stays manual.
+    overlay_keys = ["odt_orig", "odt_fg", "odt_objects", "odt_gt", "odt_missed", "odt_lanes",
+                    "odt_road", "odt_roi", "odt_excl", "odt_sensors", "odt_height"]
     with st.expander("🎛️ Layers & overlays", expanded=True):
         vu.bulk_toggle_buttons(overlay_keys, "odt_bulk", rerun_scope="app")
         r1 = st.columns(4)
         show_orig = r1[0].toggle("⚪ Point cloud", key="odt_orig", help="The original cloud (grey/Turbo).")
-        show_objects = r1[1].toggle("🔴 Objects/tracks", key="odt_objects",
+        show_fg = r1[1].toggle("🟠 Foreground", key="odt_fg",
+                               help="The filtered foreground points the detector actually ran on "
+                                    "(orange — distinct from the red object markers and the cyan CAR "
+                                    "GT boxes).")
+        show_objects = r1[2].toggle("🔴 Objects/tracks", key="odt_objects",
                                     help="Detection markers, wrong-way diamonds, heading arrows, trails.")
-        show_lanes = r1[2].toggle("🟦 Lanes", key="odt_lanes", disabled=not have_lanes,
+        show_gt = r1[3].toggle("🏷️ GT boxes", key="odt_gt", disabled=not has_gt,
+                               help="Overlay this frame's ground-truth boxes (category-coloured) to "
+                                    "eyeball detections against truth." if has_gt
+                                    else "No ground truth found for this sensor.")
+        r2 = st.columns(4)
+        show_missed = r2[0].toggle("❌ Missed GT", key="odt_missed", disabled=not has_gt,
+                                   help="Outline the GT boxes with NO detection within 2 m (false "
+                                        "negatives) in bright red, so you can see which objects were "
+                                        "missed." if has_gt else "No ground truth found for this sensor.")
+        show_lanes = r2[1].toggle("🟦 Lanes", key="odt_lanes", disabled=not have_lanes,
                                   help="Lane polygons + expected-direction arrows."
                                        if have_lanes else "No calibrated lanes for this dataset.")
-        sensors_on = r1[3].toggle("📍 LiDAR", key="odt_sensors", help="Mark the LiDAR position(s).")
-        r2 = st.columns(4)
-        show_road = r2[0].toggle("🛣️ Road", key="odt_road", help="Road polygon outline.")
-        show_roi = r2[1].toggle("🔵 ROI", key="odt_roi", help="Research region boundary.")
-        show_excl = r2[2].toggle("🟣 Exclusion", key="odt_excl", help="Foreground-exclusion rects.")
-        color_h = r2[3].toggle("🌈 Height", key="odt_height", help="Colour the cloud by z (Turbo).")
-        r3 = st.columns([1.3, 2.7])
-        top_down = r3[0].toggle("⬇️ Top-down", key="odt_topdown",
+        show_road = r2[2].toggle("🛣️ Road", key="odt_road", help="Road polygon outline.")
+        show_roi = r2[3].toggle("🔵 ROI", key="odt_roi", help="Research region boundary.")
+        r3 = st.columns(4)
+        show_excl = r3[0].toggle("🟣 Exclusion", key="odt_excl", help="Foreground-exclusion rects.")
+        sensors_on = r3[1].toggle("📍 LiDAR", key="odt_sensors", help="Mark the LiDAR position(s).")
+        color_h = r3[2].toggle("🌈 Height", key="odt_height", help="Colour the cloud by z (Turbo).")
+        top_down = r3[3].toggle("⬇️ Top-down", key="odt_topdown",
                                 help="Snap the camera straight down (bird's-eye).")
-        h_span = r3[1].slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="odt_hspan",
-                              help="Colour spreads over this many metres above ground.") if color_h else 4.0
+        h_span = st.slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="odt_hspan",
+                           help="Colour spreads over this many metres above ground.") if color_h else 4.0
 
     results['lanes'] = lanes
     results['show_lanes'] = bool(show_lanes and have_lanes)
@@ -265,12 +283,50 @@ if st.session_state.detection_results:
     if not os.path.exists(original_pcd_path):
         st.error(f"Original PCD file not found for this frame: {original_pcd_path}")
     else:
+        # Load GT once if it's needed for display, the missed overlay, or the metric.
+        gt_objs = None
+        if (show_gt or show_missed) and has_gt:
+            import label_projection as lp
+            gp = gt_index.get("_".join(os.path.basename(original_pcd_path).split("_")[:2]))
+            if gp:
+                gt_objs = lp.load_objects(gp)
+
+        # Match detections -> GT once (BEV centre, 2 m) for both the missed overlay
+        # and the per-frame coverage metric.
+        covered = ng = None
+        missed_objs = None
+        if gt_objs is not None:
+            from evaluation import _match_frame
+            det_xy = [{"cx": d["cx"], "cy": d["cy"]} for d in results["det_frames"][frame_idx]]
+            gt_xy = [{"cx": o["val"][0], "cy": o["val"][1]} for o in gt_objs]
+            matches, _, _, _ = _match_frame(det_xy, gt_xy, 2.0)
+            matched_gt = {j for _, j, _ in matches}
+            ng = len(gt_objs)
+            covered = len(matched_gt)
+            missed_objs = [gt_objs[j] for j in range(ng) if j not in matched_gt]
+
+        # filtered foreground for this frame (the cloud detection ran on)
+        _fg_files = results.get('pcd_files', [])
+        fg_path = _fg_files[frame_idx] if (show_fg and frame_idx < len(_fg_files)) else None
         fig = create_3d_figure(results, frame_idx, original_pcd_path,
                                color_by_height=color_h, height_span=h_span,
                                show_original=show_orig, show_road=show_road,
                                show_roi=show_roi, show_excl=show_excl,
-                               show_objects=show_objects, sensors=sensors)
+                               show_objects=show_objects, sensors=sensors,
+                               gt_objs=(gt_objs if show_gt else None),
+                               missed_objs=(missed_objs if show_missed else None),
+                               foreground_path=fg_path)
         st.plotly_chart(fig, use_container_width=True, height=800)
+        if show_gt or show_missed:
+            if not has_gt:
+                st.caption("🏷️ No GT found for this sensor.")
+            elif gt_objs is None:
+                st.caption("🏷️ No GT for this frame.")
+            else:
+                pct = (100.0 * covered / ng) if ng else 0.0
+                st.caption(f"🏷️ GT: {ng} boxes · **{covered}/{ng} detected** ({pct:.0f}%) · "
+                           f"❌ {ng - covered} missed — a GT box counts as detected if a track centre is "
+                           f"within 2 m  ·  `{os.path.basename(_gt_dir.rstrip('/'))}`")
 
     # Auto-play: advance one frame and rerun until the end or until paused.
     if playing and frame_idx < n_frames - 1:

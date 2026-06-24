@@ -179,6 +179,7 @@ def foreground_quality(fg_pts, original_pts, gt_objs, min_pts=10):
     fg_on = np.zeros(len(fg_xy), dtype=bool)
     or_on = np.zeros(len(or_xy), dtype=bool)
     scanned = covered = 0
+    uncovered = []
     for o in gt_objs or []:
         path = Path(_box_footprint(o["val"]))
         fin = path.contains_points(fg_xy) if len(fg_xy) else np.zeros(0, dtype=bool)
@@ -188,6 +189,8 @@ def foreground_quality(fg_pts, original_pts, gt_objs, min_pts=10):
             scanned += 1
             if fc >= min_pts:
                 covered += 1
+            else:
+                uncovered.append(o)       # hit by the LiDAR but too little foreground kept
         if len(fg_xy): fg_on |= fin
         if len(or_xy): or_on |= oin
     on_fg, on_or = int(fg_on.sum()), int(or_on.sum())
@@ -195,6 +198,8 @@ def foreground_quality(fg_pts, original_pts, gt_objs, min_pts=10):
         "scanned": scanned, "covered": covered, "min_pts": int(min_pts),
         "recall": (on_fg / on_or) if on_or else None,
         "off_object": int(len(fg_xy) - on_fg), "total_fg": int(len(fg_xy)),
+        # for visual overlays: objects hit-but-not-covered, + the on/off-object mask
+        "uncovered": uncovered, "fg_on_mask": fg_on,
     }
 
 

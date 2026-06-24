@@ -60,7 +60,8 @@ def _arrow_segments(cx, cy, hdg, z, length=4.0, head=1.6, head_ang=np.radians(30
 def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_dict=None,
                      color_by_height=False, height_span=4.0,
                      show_original=True, show_road=True, show_roi=False, show_excl=False,
-                     show_objects=True, sensors=None):
+                     show_objects=True, sensors=None, gt_objs=None, foreground_path=None,
+                     missed_objs=None):
     """
     Creates an interactive 3D Plotly figure for a given frame.
     (Keep this for interactive UI display as it doesn't need Kaleido)
@@ -82,6 +83,16 @@ def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_d
             mode='markers', name='Original Point Cloud', marker=pc_marker
         ))
 
+    # 1b. Optional filtered-foreground overlay (the points the detector actually
+    #     ran on). Orange, so it stands apart from the red object markers and the
+    #     cyan CAR ground-truth boxes.
+    if foreground_path and os.path.exists(foreground_path):
+        fpts = load_points_from_pcd(foreground_path)
+        if fpts.size:
+            fig.add_trace(go.Scatter3d(
+                x=fpts[:, 0], y=fpts[:, 1], z=fpts[:, 2], mode='markers',
+                name='Foreground', marker=dict(size=2.2, color='#ff8c00', opacity=0.9)))
+
     # 2. Add Road Polygon
     road_poly = results['road_poly']
     if road_poly.geom_type == 'Polygon': polys = [road_poly]
@@ -98,23 +109,51 @@ def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_d
             ))
 
     # 2a. Optional ROI / exclusion overlays (from the active site geometry)
-    def _outline3d(geom, color, dash, name):
+    def _outline3d(geom, color, dash, name, show_legend=True):
         gs = [geom] if geom.geom_type == 'Polygon' else list(geom.geoms)
         for j, g in enumerate(gs):
             gx, gy = g.exterior.xy
             fig.add_trace(go.Scatter3d(x=list(gx), y=list(gy), z=[z_floor] * len(gx),
                 mode='lines', line=dict(color=color, width=3, dash=dash), name=name,
-                legendgroup=name, showlegend=(j == 0), hoverinfo='skip'))
+                legendgroup=name, showlegend=(show_legend and j == 0), hoverinfo='skip'))
     if show_roi or show_excl:
         try:
             from geometry_config import get_research_polygon, get_fg_exclusion_rects
             if show_roi:
                 _outline3d(get_research_polygon(), '#17becf', 'dot', 'ROI')
             if show_excl:
-                for r in (get_fg_exclusion_rects() or []):
-                    _outline3d(r, '#ff5fec', 'dash', 'Exclusion')
+                # ONE legend entry for all exclusion rects (legend shown on the first
+                # only), dotted like the ROI — not a fat-dashed key per rect.
+                for k, r in enumerate(get_fg_exclusion_rects() or []):
+                    _outline3d(r, '#ff5fec', 'dot', 'Exclusion', show_legend=(k == 0))
         except Exception:
             pass
+
+    # 2c. Optional ground-truth box overlay (category-coloured wireframes), so
+    #     detections can be eyeballed against GT in the same view.
+    if gt_objs:
+        import lidar_viewer as lv
+        first = True
+        for col, (xs, ys, zs) in lv._box_edge_groups(gt_objs, "by_category").items():
+            fig.add_trace(go.Scatter3d(x=xs, y=ys, z=zs, mode='lines',
+                line=dict(color=col, width=3), name='GT boxes', legendgroup='gt',
+                showlegend=first, hoverinfo='skip'))
+            first = False
+
+    # 2d. Undetected GT boxes (false negatives) — bright red, thick, so the missed
+    #     objects pop out (drawn on top of the category-coloured GT).
+    if missed_objs:
+        import label_projection as lp
+        mx, my, mz = [], [], []
+        for o in missed_objs:
+            c = lp.cuboid_corners(o['val'])
+            for a, b in lp._EDGES:
+                mx += [c[a, 0], c[b, 0], None]
+                my += [c[a, 1], c[b, 1], None]
+                mz += [c[a, 2], c[b, 2], None]
+        fig.add_trace(go.Scatter3d(x=mx, y=my, z=mz, mode='lines',
+            line=dict(color='#ff2b2b', width=6), name='Missed GT', legendgroup='missed',
+            showlegend=True, hoverinfo='skip'))
 
     # 2b. Optional lane-direction overlay (for WWD calibration / sanity check)
     if results.get('show_lanes') and results.get('lanes'):

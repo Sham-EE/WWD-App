@@ -10,6 +10,7 @@ import dataset_prep as dp
 import geometry_editor as ge
 import registration as reg
 import road_viewer as rv
+import viewer_ui as vu
 
 st.set_page_config(layout="wide", page_title="Dataset Prep")
 st.title("🧰 Dataset Prep")
@@ -145,13 +146,10 @@ with tab_crop:
     # apply to it exactly as they do to the south cloud.
     pv_sensors = {"South": ds.raw_lidar_south_dir, "North": ds.raw_lidar_north_dir,
                   "Registered": ds.registered_dir}
-    pc1, pc2, pc3, pc4, pc5 = st.columns([1, 1, 1.3, 1, 1])
+    pc1, pc2, pc3 = st.columns([1, 1, 1.3])
     pv_left = pc1.selectbox("Left LiDAR", list(pv_sensors), index=0, key="dp_left")
     pv_right = pc2.selectbox("Right LiDAR", list(pv_sensors), index=1, key="dp_right")
     crop_mode = pc3.radio("Points", ["Cropped (road)", "Full (uncropped)"], horizontal=True, key="dp_crop")
-    show_road = pc4.checkbox("🛣️ Road outline", value=True, key="dp_road")
-    color_h = pc5.checkbox("🌈 Color by height", value=False, key="dp_height",
-                           help="Colour points by z (Turbo) like the dev-kit.")
     cropped = crop_mode.startswith("Cropped")
 
     Lf = rv.list_by_frame(pv_sensors[pv_left], [".pcd"])
@@ -162,38 +160,33 @@ with tab_crop:
     else:
         st.session_state.setdefault("dp_frame", 0)
 
-        def _pv_panel(sensor, files, i, key):
-            pts = _load_raw(files[i])
-            shown = dp.crop_points_to_region(pts, dp.road_polygon(margin)) if cropped else pts
-            label = "Registered (fused)" if sensor == "Registered" else f"{sensor} LiDAR"
-            st.markdown(f"**{label}** · {len(shown):,} pts")
-            st.plotly_chart(dp.crop_preview_figure(shown, margin=margin, height=520, draw_boundary=show_road,
-                                                   color_by_height=color_h),
-                            use_container_width=True, key=key, config={"scrollZoom": True})
-
         @st.fragment
         def _crop_preview():
-            st.session_state.dp_frame = max(0, min(st.session_state.dp_frame, npv - 1))
-            nav = st.columns([1, 1, 1, 1, 1.3, 3])
-            if nav[0].button("⏮ First", use_container_width=True):
-                st.session_state.dp_frame = 0
-            if nav[1].button("◀ Prev", use_container_width=True):
-                st.session_state.dp_frame = max(0, st.session_state.dp_frame - 1)
-            if nav[2].button("Next ▶", use_container_width=True):
-                st.session_state.dp_frame = min(npv - 1, st.session_state.dp_frame + 1)
-            if nav[3].button("Last ⏭", use_container_width=True):
-                st.session_state.dp_frame = npv - 1
-            playing = nav[4].toggle("▶ Play", value=False)
-            delay = nav[5].slider("Play delay (s)", 0.0, 1.0, 0.15, 0.05)
-            i = st.slider("Frame", 0, max(npv - 1, 1), st.session_state.dp_frame)
-            st.session_state.dp_frame = i
+            i, playing, delay = vu.nav_row("dp_frame", npv, "dp", label="🎞️ Crop frame")
+            vu.ensure_toggle_defaults({"dp_road": True, "dp_height": False})
+            with st.expander("🎛️ Layers & overlays", expanded=True):
+                vu.bulk_toggle_buttons(["dp_road", "dp_height"], "dp_bulk")
+                tg = st.columns(2)
+                show_road = tg[0].toggle("🛣️ Road outline", key="dp_road",
+                                         help="Draw the road crop boundary.")
+                color_h = tg[1].toggle("🌈 Height", key="dp_height",
+                                       help="Colour points by z (Turbo) like the dev-kit.")
+
+            def _panel(sensor, files, key):
+                pts = _load_raw(files[i])
+                shown = dp.crop_points_to_region(pts, dp.road_polygon(margin)) if cropped else pts
+                label = "Registered (fused)" if sensor == "Registered" else f"{sensor} LiDAR"
+                st.markdown(f"**{label}** · {len(shown):,} pts")
+                st.plotly_chart(dp.crop_preview_figure(shown, margin=margin, height=520,
+                                                       draw_boundary=show_road, color_by_height=color_h),
+                                use_container_width=True, key=key, config={"scrollZoom": True})
 
             with st.container(height=600):
                 cl, cr = st.columns(2)
                 with cl:
-                    _pv_panel(pv_left, Lf, i, "dp_fig_l")
+                    _panel(pv_left, Lf, "dp_fig_l")
                 with cr:
-                    _pv_panel(pv_right, Rf, i, "dp_fig_r")
+                    _panel(pv_right, Rf, "dp_fig_r")
             st.caption(f"Frame {i+1}/{npv} · {crop_mode} · {pv_left} ↔ {pv_right}")
 
             if playing and i < npv - 1:
@@ -280,31 +273,22 @@ with tab_gt:
 
         @st.fragment
         def _gt_preview():
-            st.session_state.gt_frame = max(0, min(st.session_state.gt_frame, n_gt - 1))
-            nav = st.columns([1, 1, 1, 1, 1.3, 3])
-            if nav[0].button("⏮ First", use_container_width=True, key="gt_first"):
-                st.session_state.gt_frame = 0
-            if nav[1].button("◀ Prev", use_container_width=True, key="gt_prev"):
-                st.session_state.gt_frame = max(0, st.session_state.gt_frame - 1)
-            if nav[2].button("Next ▶", use_container_width=True, key="gt_next"):
-                st.session_state.gt_frame = min(n_gt - 1, st.session_state.gt_frame + 1)
-            if nav[3].button("Last ⏭", use_container_width=True, key="gt_last"):
-                st.session_state.gt_frame = n_gt - 1
-            playing = nav[4].toggle("▶ Play", value=False, key="gt_play")
-            delay = nav[5].slider("Play delay (s)", 0.0, 1.0, 0.15, 0.05, key="gt_delay")
-            i = st.slider("GT frame", 0, max(n_gt - 1, 1), st.session_state.gt_frame)
-            st.session_state.gt_frame = i
-
+            i, playing, delay = vu.nav_row("gt_frame", n_gt, "gt", label="🏷️ GT frame")
             # Toggle each Geometry-Editor boundary onto the preview.
-            bt = st.columns(4)
-            show_roi = bt[0].toggle("🔵 ROI", value=True, key="gt_show_roi",
-                                    help="Research region — objects outside it are dropped (red).")
-            show_road = bt[1].toggle("🟢 Road outline", value=False, key="gt_show_road",
-                                     help="Drivable area used for cropping.")
-            show_excl = bt[2].toggle("🟣 Exclusion zones", value=False, key="gt_show_excl",
-                                     help="Foreground-exclusion rectangles (static clutter).")
-            color_h = bt[3].toggle("🌈 Color by height", value=False, key="gt_height",
-                                   help="Colour points by z (Turbo) like the dev-kit.")
+            vu.ensure_toggle_defaults({"gt_show_roi": True, "gt_show_road": False,
+                                       "gt_show_excl": False, "gt_height": False})
+            with st.expander("🎛️ Layers & overlays", expanded=True):
+                vu.bulk_toggle_buttons(["gt_show_roi", "gt_show_road", "gt_show_excl", "gt_height"],
+                                       "gt_bulk")
+                bt = st.columns(4)
+                show_roi = bt[0].toggle("🔵 ROI", key="gt_show_roi",
+                                        help="Research region — objects outside it are dropped (red).")
+                show_road = bt[1].toggle("🟢 Road outline", key="gt_show_road",
+                                         help="Drivable area used for cropping.")
+                show_excl = bt[2].toggle("🟣 Exclusion zones", key="gt_show_excl",
+                                         help="Foreground-exclusion rectangles (static clutter).")
+                color_h = bt[3].toggle("🌈 Height", key="gt_height",
+                                       help="Colour points by z (Turbo) like the dev-kit.")
 
             kept_boxes, dropped_boxes = dp.scorable_classify(gt_labels[i], region, crit)
             pts = _load_raw(gt_clouds[i]) if (gt_clouds and i < len(gt_clouds)) else None
@@ -652,20 +636,7 @@ with tab_reg:
 
     @st.fragment
     def _reg_preview():
-        st.session_state.reg_frame = max(0, min(st.session_state.reg_frame, len(pairs) - 1))
-        nav = st.columns([1, 1, 1, 1, 1.3, 3])
-        if nav[0].button("⏮ First", use_container_width=True, key="reg_first"):
-            st.session_state.reg_frame = 0
-        if nav[1].button("◀ Prev", use_container_width=True, key="reg_prev"):
-            st.session_state.reg_frame = max(0, st.session_state.reg_frame - 1)
-        if nav[2].button("Next ▶", use_container_width=True, key="reg_next"):
-            st.session_state.reg_frame = min(len(pairs) - 1, st.session_state.reg_frame + 1)
-        if nav[3].button("Last ⏭", use_container_width=True, key="reg_last"):
-            st.session_state.reg_frame = len(pairs) - 1
-        playing = nav[4].toggle("▶ Play", value=False, key="reg_play")
-        delay = nav[5].slider("Play delay (s)", 0.0, 1.0, 0.15, 0.05, key="reg_delay")
-        i = st.slider("Pair", 0, max(len(pairs) - 1, 1), st.session_state.reg_frame, key="reg_slider")
-        st.session_state.reg_frame = i
+        i, playing, delay = vu.nav_row("reg_frame", len(pairs), "reg", label="🧭 Pair")
         sp, npath, dt_ms = pairs[i]
 
         # view controls — one cohesive viewer with a Raw <-> Registered toggle

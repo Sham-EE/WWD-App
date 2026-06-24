@@ -4,6 +4,7 @@ import numpy as np
 
 from evaluation import (evaluate, save_report, load_gt_by_key, bev_figure,
                         _frame_key, _match_frame, BEV_CONFIG)
+import viewer_ui as vu
 
 
 @st.cache_data(show_spinner="Loading ground-truth frames…")
@@ -204,19 +205,7 @@ else:
                                   help="In separate view, draw GT objects that have NO matching "
                                        "detection (false negatives) in red on the Detection panel.")
 
-    st.session_state.setdefault('ev_frame', 0)
-    st.session_state.ev_frame = max(0, min(st.session_state.ev_frame, n - 1))
-    nav = st.columns([1, 1, 1, 1, 4])
-    if nav[0].button("⏮ First", use_container_width=True):
-        st.session_state.ev_frame = 0; st.rerun()
-    if nav[1].button("◀ Prev", use_container_width=True):
-        st.session_state.ev_frame = max(0, st.session_state.ev_frame - 1); st.rerun()
-    if nav[2].button("Next ▶", use_container_width=True):
-        st.session_state.ev_frame = min(n - 1, st.session_state.ev_frame + 1); st.rerun()
-    if nav[3].button("Last ⏭", use_container_width=True):
-        st.session_state.ev_frame = n - 1; st.rerun()
-    i = st.slider("Frame", 0, max(n - 1, 1), st.session_state.ev_frame)
-    st.session_state.ev_frame = i
+    i, playing, play_delay = vu.nav_row("ev_frame", n, "ev")
 
     key = _frame_key(pcd_files[i])
     gt_raw = gt_by_key.get(key, [])
@@ -260,3 +249,9 @@ else:
 
     st.caption(f"Frame {i}/{n-1} · GT objects: {len(gt_boxes)} · Detections: {len(det_boxes)}"
                + ("  ·  🟩 GT  🟦 Detection" + ("  🟥 missed" if (separate and show_missed) else "")))
+
+    if playing and i < n - 1:
+        import time
+        time.sleep(float(play_delay))
+        st.session_state.ev_frame = i + 1
+        st.rerun()
