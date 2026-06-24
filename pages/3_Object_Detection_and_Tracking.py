@@ -101,6 +101,21 @@ with st.expander("🛰️ Tracking & Association", expanded=False):
                                        "higher re-joins a split-up truck. Default lowered 10→5 after the "
                                        "Registered A/B (10 m tanked far-field recall on the fused cloud).")
 
+    st.markdown("**Static-phantom suppression**")
+    suppress_static = st.checkbox("Drop persistent, never-moving tracks", value=True,
+        help="Removes tracks that BOTH persist a long time AND never exceed the speed floor — the "
+             "static-leak signature (barriers/poles the background model missed, detected in the same "
+             "spot every frame). Measured +5 F1 / +8.5 precision for −0.9 recall on registered/cropped; "
+             "real vehicles always break the speed floor, so recall is barely touched. Also task-aligned "
+             "(a never-moving object is never a wrong-way driver).")
+    sc1, sc2 = st.columns(2)
+    static_min_frames = sc1.slider("Min lifetime (frames)", 5, 120,
+        int(DEFAULT_DETECTION_PARAMS["static_min_frames"]), 5,
+        help="Only suppress tracks seen for at least this many frames (so briefly-seen real objects are safe).")
+    static_max_speed = sc2.slider("Static speed floor (m/s)", 0.1, 3.0,
+        float(DEFAULT_DETECTION_PARAMS["static_max_speed"]), 0.1,
+        help="A track is 'static' only if its lifetime MAX speed stays below this. Real vehicles exceed it.")
+
 with st.expander("🎥 Visualization", expanded=False):
     col_v1, col_v2, col_v3 = st.columns(3)
     eye_x = col_v1.number_input("Camera Eye X", value=0.8, step=0.05)
@@ -139,6 +154,8 @@ if st.button("🚀 Start Detection and Tracking", use_container_width=True):
                 'vehicle_min_points': vehicle_min_points,
                 'adaptive_eps': adaptive_eps, 'aeps0': aeps0, 'aeps_k': aeps_k,
                 'aeps_min': aeps_min, 'aeps_max': aeps_max,
+                'suppress_static': suppress_static, 'static_min_frames': static_min_frames,
+                'static_max_speed': static_max_speed,
             }
             st.info(f"Processing {len(filtered_files)} files from: {filtered_pcd_dir}...")
             progress_bar = st.progress(0, text="Starting...")

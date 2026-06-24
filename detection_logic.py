@@ -27,6 +27,13 @@ DEFAULT_DETECTION_PARAMS = {
     "merge_dist": 2.5, "yaw_merge_deg": 15.0, "truck_len_thresh": 7.0, "truck_merge_dist": 5.0,
     "vehicle_gate": False, "vehicle_min_length": 2.5, "vehicle_min_points": 40,
     "adaptive_eps": True, "aeps0": 0.8, "aeps_k": 0.04, "aeps_min": 1.0, "aeps_max": 3.0,
+    # Static-phantom suppression: drop tracks that are BOTH long-lived AND never
+    # moved (the static-leak signature — barriers/poles/vegetation the background
+    # model missed, detected in the same spot every frame). A real vehicle always
+    # exceeds the speed floor at some point, so recall is essentially untouched
+    # (measured +5 F1 / +8.5 precision for −0.9 recall on registered/cropped).
+    # Also task-aligned: a never-moving object is never a wrong-way driver.
+    "suppress_static": True, "static_min_frames": 30, "static_max_speed": 0.5,
 }
 
 # ---------------------- Helper functions ------------------------
@@ -412,6 +419,27 @@ def run_detection_and_tracking(pcd_dir, out_dir, params, progress_callback=None)
             if tid not in alive_tids: pending_by_tid.pop(tid, None)
         if progress_callback:
             progress_callback(fi + 1, len(pcd_files), "Tracking objects")
+
+    # Static-phantom suppression (post-pass, needs each track's full history).
+    # Drop a track's detections from EVERY frame if the track both persists for
+    # >= static_min_frames AND never exceeded static_max_speed (its lifetime max
+    # speed). This removes the static-leak phantoms that the occupancy background
+    # model can't (they're geometrically identical to parked cars, but they never
+    # move) without touching real vehicles, which always break the speed floor.
+    if bool(getattr(args, 'suppress_static', False)):
+        smin_f = int(getattr(args, 'static_min_frames', 30))
+        smax_v = float(getattr(args, 'static_max_speed', 0.5))
+        life_count, life_maxspeed = {}, {}
+        for dets in track_det_frames:
+            for d in dets:
+                tid = d.get('tid')
+                life_count[tid] = life_count.get(tid, 0) + 1
+                life_maxspeed[tid] = max(life_maxspeed.get(tid, 0.0), float(d.get('speed', 0.0)))
+        static_tids = {t for t in life_count
+                       if life_count[t] >= smin_f and life_maxspeed[t] < smax_v}
+        if static_tids:
+            track_det_frames = [[d for d in dets if d.get('tid') not in static_tids]
+                                for dets in track_det_frames]
 
     # Instead of creating a GIF, return the raw data for 3D visualization
     results = {
