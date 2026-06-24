@@ -73,7 +73,7 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
                            show_excl=False, gt_objs=None, color_by_height=False, height_span=4.0,
                            show_foreground=True, show_original=True, height=560,
                            azimuth=45.0, elevation=35.0, sensors=None,
-                           uncovered_objs=None, off_object_pts=None):
+                           uncovered_objs=None, off_object_pts=None, split=None):
     fig = go.Figure()
     # Resolve the road window first so we can lock the view AND clip the plotted points
     # to it. Clipping is the key: aspectmode="data" sizes the 3D box from the POINT
@@ -102,7 +102,18 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
     foreground_pts = _clip(foreground_pts)
     off_object_pts = _clip(off_object_pts)
 
-    if show_original and original_pts.size > 0:
+    # Sensor split (registered only): colour the original cloud by source LiDAR —
+    # south vs north — like the registration tab, so you can see fusion coverage /
+    # which sensor a region's points come from. Overrides the plain/height original.
+    if show_original and split is not None:
+        s_pts, n_pts = _clip(split[0]), _clip(split[1])
+        if s_pts is not None and len(s_pts):
+            fig.add_trace(go.Scatter3d(x=s_pts[:, 0], y=s_pts[:, 1], z=s_pts[:, 2], mode="markers",
+                name="South pts", marker=dict(size=1.5, color="#1f77b4", opacity=0.4)))
+        if n_pts is not None and len(n_pts):
+            fig.add_trace(go.Scatter3d(x=n_pts[:, 0], y=n_pts[:, 1], z=n_pts[:, 2], mode="markers",
+                name="North pts", marker=dict(size=1.5, color="#ff7f0e", opacity=0.4)))
+    elif show_original and original_pts.size > 0:
         if color_by_height:
             z = original_pts[:, 2]; z0 = float(np.percentile(z, 1))
             omk = dict(size=1.5, color=z, colorscale="Turbo", cmin=z0, cmax=z0 + float(height_span),
@@ -505,6 +516,7 @@ if st.session_state.bg_model:
                 "bf_show_fg": True, "bf_show_orig": True, road_key: (_src == "cropped"),
                 "bf_roi": False, "bf_excl": False, "bf_gt": False, "bf_sensors": True,
                 "bf_height": False, "bf_metric": False, "bf_uncov": False, "bf_offfg": False,
+                "bf_split": False,
             }
             vu.ensure_toggle_defaults(toggle_defaults)
             # "All" also turns Height on (per request).
@@ -546,6 +558,14 @@ if st.session_state.bg_model:
                                               if has_gt else "No ground truth for this dataset.")
                 min_pts = r3[3].number_input("≥ pts", 1, 200, 10, 1, key="bf_minpts",
                                              help="Foreground pts for a GT object to count as 'covered'.")
+                r4 = st.columns(4)
+                split_on = r4[0].toggle("🔵🟠 S/N split", key="bf_split",
+                                        disabled=(_sensor != "registered"),
+                                        help="Colour the original cloud by source LiDAR — south (blue) vs "
+                                             "north (orange) — like the Registration tab, to see fusion "
+                                             "coverage. Registered only."
+                                             if _sensor == "registered"
+                                             else "Only for the Registered (fused) cloud.")
                 h_span = st.slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="bf_hspan",
                                    help="Colour spreads over this many metres above ground.") \
                     if color_h else 4.0
@@ -566,6 +586,9 @@ if st.session_state.bg_model:
                 q = foreground_quality(fg, pts, gt_objs, min_pts=int(min_pts))
             uncovered_objs = q["uncovered"] if (q and uncov_on) else None
             off_object_pts = fg[~q["fg_on_mask"]] if (q and offfg_on and len(fg)) else None
+            # Per-frame south/north split for the registered cloud (on-the-fly re-fuse).
+            split = reg.registered_split_for_frame(_ds, _frame_key(pcd_files[i])) \
+                if (split_on and _sensor == "registered") else None
             # NOTE: render the chart directly (no fixed-height st.container) — wrapping
             # it in a container remounts the plot each rerun and wipes the camera, which
             # defeats uirevision. Height is set on the figure instead.
@@ -578,7 +601,7 @@ if st.session_state.bg_model:
                                        show_foreground=show_fg_pts, show_original=show_orig,
                                        height=560, azimuth=azimuth, elevation=elevation,
                                        sensors=sensors, uncovered_objs=uncovered_objs,
-                                       off_object_pts=off_object_pts),
+                                       off_object_pts=off_object_pts, split=split),
                 use_container_width=True, key="bf_fig")
             cap = (f"{os.path.basename(pcd_files[i])} · frame {i+1}/{n_bf} · "
                    f"{len(fg)} foreground / {len(pts)} points")
