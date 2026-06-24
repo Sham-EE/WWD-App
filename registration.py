@@ -103,6 +103,30 @@ def transform_points(pts, M):
     return (M @ hom.T).T[:, :3]
 
 
+def south_to_sensor_4x4(ds, sensor):
+    """Rigid 4x4 mapping a **south-frame** point into ``sensor``'s frame. Identity
+    for south/registered (both already in the south frame); ``inv(M_north)@M_south``
+    (south→base→north) for north. Returns identity if calibration can't be read."""
+    if sensor in ("south", "registered"):
+        return np.eye(4)
+    Ms = calibration_for(ds.raw_labels_south_dir, "south")
+    Mn = calibration_for(ds.raw_labels_north_dir, "north")
+    if Ms is None or Mn is None:
+        return np.eye(4)
+    return np.linalg.inv(Mn) @ Ms
+
+
+def transform_polygon(poly, T):
+    """Apply a rigid 4x4 transform to a shapely Polygon's XY (vertices lifted to
+    z=0). The south↔sensor transform is ~pure yaw, so the result is insensitive to
+    that z. Used to express the south-frame ROI/road geometry in another sensor's
+    frame so cropping / scorable-GT line up with that sensor's cloud."""
+    from shapely.geometry import Polygon
+    xs, ys = poly.exterior.xy
+    out = transform_points(np.column_stack([xs, ys, np.zeros(len(xs))]), np.asarray(T, dtype=float))
+    return Polygon(out[:, :2])
+
+
 def load_xyz(pcd_path, max_points=0, seed=0):
     """Load a .pcd as an Nx3 float array, optionally random-downsampled."""
     import open3d as o3d

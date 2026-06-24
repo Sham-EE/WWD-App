@@ -223,7 +223,14 @@ with tab_gt:
     gt_margin = gs2.slider("Region margin (m)", 0.0, 15.0, 0.0, 1.0,
                            help="Expand the research/ROI region. Edit its SHAPE in the Geometry Editor; "
                                 "this just buffers it outward.")
+    # The ROI is defined in the SOUTH frame; express it in the selected source's frame
+    # so it lines up with that sensor's cloud (identity for south/registered; rotated
+    # into the north frame for north — both are physically the same intersection ROI).
+    _gt_sensor = ("north" if gt_source.startswith("North")
+                  else "registered" if "Registered" in gt_source else "south")
     region = dp.research_region(gt_margin)
+    if _gt_sensor == "north":
+        region = reg.transform_polygon(region, reg.south_to_sensor_4x4(ds, "north"))
 
     with st.expander("⚙️ Keep / drop criteria", expanded=True):
         st.caption("Define exactly what counts as a scorable object. The region (above) is the ROI; "
