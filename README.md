@@ -341,13 +341,16 @@ direct test of the "fusion fills occlusion shadows → better far recall" hypoth
   denominator. (The alternative, "each sensor's own GT", flatters south — its GT is
   missing those objects entirely.) A **Scorable / All-raw** toggle picks the GT kind;
   scorable (num_points recomputed on the fused cloud) is the fair bar.
-- **First result (cropped, ROI, shared scorable GT, default detector):** fusion is a
-  clear win **near/mid-field** — recall **0.18 → 0.44** at 0–20 m and **0.63 → 0.70** at
-  20–40 m — but **regresses far** (**0.52 → 0.36** at 40–60 m). Because the far bin holds
-  ~43% of objects, that one regression outweighs the near/mid gains, so *overall* recall
-  is a wash (south 0.543 vs registered 0.531) **with the south-tuned detector**. The
-  takeaway isn't "registration doesn't help" — it's "the detector needs retuning for the
-  denser fused far-field" (likely `eps` / merge distances).
+- **Result (cropped, ROI, shared scorable GT).** Fusion is a clear win near/mid-field —
+  recall **0.18 → 0.49** at 0–20 m, **0.64 → 0.77** at 20–40 m. With the original
+  `truck_merge_dist = 10 m` it *regressed* far (0.52 → 0.36): in the denser fused far-field
+  the 10 m truck-merge fused adjacent vehicles into one. Dropping it to **`5 m` (now the
+  default)** fixes that — it barely changes south (sparse far-field) but lifts registered
+  far recall **0.36 → 0.49** and **overall recall 0.531 → 0.625, F1 0.598 → 0.666**. Net,
+  on the fair shared GT, **registered now beats south**: recall **0.625 vs 0.549**, F1
+  **0.666 vs 0.643** (south keeps a precision edge, 0.78 vs 0.71). This is exactly what the
+  benchmark is for — it turned "should help" into a measured win *and* surfaced the
+  one-line tuning fix that was hiding the benefit.
 
 ### Current baseline (defaults, ROI on, all classes)
 | match gate | Precision | Recall | F1 | MOTA | MOTP |

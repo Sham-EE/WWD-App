@@ -2,7 +2,7 @@ import streamlit as st
 import os
 import glob
 
-from detection_logic import run_detection_and_tracking, sorted_by_frame_index
+from detection_logic import run_detection_and_tracking, sorted_by_frame_index, DEFAULT_DETECTION_PARAMS
 from visualization import create_3d_figure, generate_tracking_animation
 from wwd_detection import load_lane_config, lanes_calibrated, detect_wrong_way, summarize_wrong_way
 import registration as reg
@@ -93,6 +93,13 @@ with st.expander("🛰️ Tracking & Association", expanded=False):
     tc3, tc4 = st.columns(2)
     moving_speed_thresh = tc3.slider("Moving Speed Threshold (m/s)", 0.0, 10.0, 3.0, 0.1, help="Speed above which an object is 'moving'.")
     roi_abs_y = tc4.slider("ROI Absolute Y (m)", 5.0, 100.0, 40.0, 1.0, help="Y-coordinate processing range.")
+    tc5, _tc6 = st.columns(2)
+    truck_merge_dist = tc5.slider("Truck merge distance (m)", 0.0, 15.0,
+                                  float(DEFAULT_DETECTION_PARAMS["truck_merge_dist"]), 0.5,
+                                  help="Merge two clusters up to this far apart when one is truck-length. "
+                                       "Lower avoids over-merging adjacent vehicles in dense (fused) clouds; "
+                                       "higher re-joins a split-up truck. Default lowered 10→5 after the "
+                                       "Registered A/B (10 m tanked far-field recall on the fused cloud).")
 
 with st.expander("🎥 Visualization", expanded=False):
     col_v1, col_v2, col_v3 = st.columns(3)
@@ -120,11 +127,14 @@ if st.button("🚀 Start Detection and Tracking", use_container_width=True):
         elif len(filtered_files) != len(original_files):
             st.error(f"PCD file count mismatch: {len(filtered_files)} filtered vs {len(original_files)} original files.")
         else:
+            # Overlay the UI-controlled values on the shared defaults (single source of
+            # truth in detection_logic) — non-UI knobs (yaw_bias_deg, merge_dist,
+            # yaw_merge_deg, truck_len_thresh) come straight from the defaults.
             params = {
+                **DEFAULT_DETECTION_PARAMS,
                 'dbscan_eps': dbscan_eps, 'min_cluster_pts': min_cluster_pts, 'min_hits': min_hits,
-                'roi_abs_y': roi_abs_y, 'yaw_bias_deg': -90.0,
-                'fps': fps, 'max_missed': max_missed, 'moving_speed_thresh': moving_speed_thresh,
-                'merge_dist': 2.5, 'yaw_merge_deg': 15.0, 'truck_len_thresh': 7.0, 'truck_merge_dist': 10.0,
+                'roi_abs_y': roi_abs_y, 'fps': fps, 'max_missed': max_missed,
+                'moving_speed_thresh': moving_speed_thresh, 'truck_merge_dist': truck_merge_dist,
                 'vehicle_gate': vehicle_gate, 'vehicle_min_length': vehicle_min_length,
                 'vehicle_min_points': vehicle_min_points,
                 'adaptive_eps': adaptive_eps, 'aeps0': aeps0, 'aeps_k': aeps_k,

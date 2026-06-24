@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 import dataset_manager as dm
-from detection_logic import run_detection_and_tracking
+from detection_logic import run_detection_and_tracking, DEFAULT_DETECTION_PARAMS
 from evaluation import (evaluate, recall_by_distance, save_report, load_gt_by_key,
                         bev_figure, _frame_key, _match_frame, BEV_CONFIG)
 import viewer_ui as vu
@@ -262,15 +262,10 @@ def _render_single_run():
 
 
 # ===================== Tab 2: Registered vs South (A/B) =====================
-# Identical detection params for BOTH runs (the detection-page defaults) — the whole
-# point of the controlled comparison, so they're fixed rather than per-run.
-_AB_PARAMS = {
-    "dbscan_eps": 2.0, "min_cluster_pts": 1, "min_hits": 2, "roi_abs_y": 40.0, "yaw_bias_deg": -90.0,
-    "fps": 10.0, "max_missed": 5, "moving_speed_thresh": 3.0,
-    "merge_dist": 2.5, "yaw_merge_deg": 15.0, "truck_len_thresh": 7.0, "truck_merge_dist": 10.0,
-    "vehicle_gate": False, "vehicle_min_length": 2.5, "vehicle_min_points": 40,
-    "adaptive_eps": True, "aeps0": 0.8, "aeps_k": 0.04, "aeps_min": 1.0, "aeps_max": 3.0,
-}
+# Identical detection params for BOTH runs — the whole point of the controlled
+# comparison. Uses the shared DEFAULT_DETECTION_PARAMS (single source of truth) so the
+# A/B and the live detector can't drift.
+_AB_PARAMS = DEFAULT_DETECTION_PARAMS
 _VEHICLE_CLASSES = {"CAR", "TRUCK", "VAN", "BUS", "TRAILER", "MOTORCYCLE", "EMERGENCY_VEHICLE"}
 _DIST_BINS = (0, 20, 40, 60, 1e9)
 _AB_SENSORS = ["south", "registered"]

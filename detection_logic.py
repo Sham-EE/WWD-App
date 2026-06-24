@@ -16,6 +16,19 @@ from shapely.ops import unary_union
 # geometry_config (config-driven, with a hard-coded fallback).
 from geometry_config import get_research_polygon, get_road_polygon
 
+# Single source of truth for detection/tracking defaults. The Object Detection page
+# overlays its UI-controlled values on top of this; the Evaluation A/B benchmark uses
+# it as-is — so the two can't silently drift (the "identical params" guarantee for the
+# A/B is structural, not manual). `truck_merge_dist` was lowered 10→5 after the A/B
+# showed the 10 m merge over-joined adjacent vehicles in the denser fused far-field.
+DEFAULT_DETECTION_PARAMS = {
+    "dbscan_eps": 2.0, "min_cluster_pts": 1, "min_hits": 2, "roi_abs_y": 40.0, "yaw_bias_deg": -90.0,
+    "fps": 10.0, "max_missed": 5, "moving_speed_thresh": 3.0,
+    "merge_dist": 2.5, "yaw_merge_deg": 15.0, "truck_len_thresh": 7.0, "truck_merge_dist": 5.0,
+    "vehicle_gate": False, "vehicle_min_length": 2.5, "vehicle_min_points": 40,
+    "adaptive_eps": True, "aeps0": 0.8, "aeps_k": 0.04, "aeps_min": 1.0, "aeps_max": 3.0,
+}
+
 # ---------------------- Helper functions ------------------------
 
 def sorted_by_frame_index(files):
