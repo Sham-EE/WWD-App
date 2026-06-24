@@ -222,6 +222,55 @@ def evaluate(det_frames, pred_frame_paths, gt_dir, match_dist=2.0, classes=None,
     }
 
 
+def recall_by_distance(det_frames, pred_frame_paths, gt_dir, bins=(0, 20, 40, 60, 1e9),
+                       match_dist=2.0, classes=None, roi_bounds=None):
+    """Per-distance-bin recall: scored GT objects matched / total, binned by BEV
+    range from the sensor origin (0,0). Tests the "fusion fills occlusion shadows →
+    better recall on far objects" hypothesis. Returns a list of per-bin dicts."""
+    cls_filter = {c.upper() for c in classes} if classes else None
+
+    def _in_roi(b):
+        if roi_bounds is None:
+            return True
+        x0, x1, y0, y1 = roi_bounds
+        return (x0 <= b['cx'] <= x1) and (y0 <= b['cy'] <= y1)
+
+    gt_by_key = {}
+    for f in sorted(glob.glob(os.path.join(gt_dir, '*.json'))):
+        gt_by_key[_frame_key(f)] = [
+            b for b in parse_gt_frame(f)
+            if _in_roi(b) and (cls_filter is None or str(b['cls']).upper() in cls_filter)]
+
+    nb = len(bins) - 1
+    matched = [0] * nb
+    total = [0] * nb
+    for fi, dets in enumerate(det_frames):
+        if fi >= len(pred_frame_paths):
+            break
+        gt = gt_by_key.get(_frame_key(pred_frame_paths[fi]))
+        if not gt:
+            continue
+        if roi_bounds is not None:
+            x0, x1, y0, y1 = roi_bounds
+            dets = [d for d in dets if x0 <= d['cx'] <= x1 and y0 <= d['cy'] <= y1]
+        matched_gt = {gj for _, gj, _ in _match_frame(dets, gt, match_dist)[0]}
+        for j, g in enumerate(gt):
+            r = (g['cx'] ** 2 + g['cy'] ** 2) ** 0.5
+            for bi in range(nb):
+                if bins[bi] <= r < bins[bi + 1]:
+                    total[bi] += 1
+                    if j in matched_gt:
+                        matched[bi] += 1
+                    break
+    out = []
+    for bi in range(nb):
+        lo, hi = bins[bi], bins[bi + 1]
+        label = f"{int(lo)}–{int(hi)} m" if hi < 1e8 else f"{int(lo)}+ m"
+        out.append({"bin": label, "matched": matched[bi], "total": total[bi],
+                    "recall": (matched[bi] / total[bi] if total[bi] else None)})
+    return out
+
+
 def _box_corners(cx, cy, yaw, l, w):
     c, s = np.cos(yaw), np.sin(yaw)
     dx, dy = l / 2.0, w / 2.0
