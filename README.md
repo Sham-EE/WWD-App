@@ -480,6 +480,9 @@ tab):
    GT alone misses the objects only north saw (~2.3 boxes/frame here). The Registration tab
    builds a **union GT**: north boxes are transformed into the south frame and the ones
    south didn't annotate are appended (shared objects de-duplicated by centre distance).
+   Every box's **`num_points` is recomputed against the fused cloud** (the stored counts are
+   south-only, which would unfairly drop objects sparse for south but dense once fused —
+   ~10% of boxes at `min_points=10`), so the scorable gate is honest for registered.
    Registered detection/eval then resolve to this fused GT.
 7. **Propagates** through the **Registered (south + north)** source in the Crop-to-road
    and Scorable-GT tabs (and the per-sensor toggles on Filtering / Detection / Evaluation /
