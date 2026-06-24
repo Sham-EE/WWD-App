@@ -267,7 +267,7 @@ def _render_single_run():
 _AB_PARAMS = {
     "dbscan_eps": 2.0, "min_cluster_pts": 1, "min_hits": 2, "roi_abs_y": 40.0, "yaw_bias_deg": -90.0,
     "fps": 10.0, "max_missed": 5, "moving_speed_thresh": 3.0,
-    "merge_dist": 2.5, "yaw_merge_deg": 15.0, "truck_len_thresh": 7.0, "truck_merge_dist": 10.0,
+    "merge_dist": 2.5, "yaw_merge_deg": 15.0, "truck_len_thresh": 7.0, "truck_merge_dist": 5.0,
     "vehicle_gate": False, "vehicle_min_length": 2.5, "vehicle_min_points": 40,
     "adaptive_eps": True, "aeps0": 0.8, "aeps_k": 0.04, "aeps_min": 1.0, "aeps_max": 3.0,
 }

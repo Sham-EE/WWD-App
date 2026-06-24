@@ -124,7 +124,7 @@ if st.button("🚀 Start Detection and Tracking", use_container_width=True):
                 'dbscan_eps': dbscan_eps, 'min_cluster_pts': min_cluster_pts, 'min_hits': min_hits,
                 'roi_abs_y': roi_abs_y, 'yaw_bias_deg': -90.0,
                 'fps': fps, 'max_missed': max_missed, 'moving_speed_thresh': moving_speed_thresh,
-                'merge_dist': 2.5, 'yaw_merge_deg': 15.0, 'truck_len_thresh': 7.0, 'truck_merge_dist': 10.0,
+                'merge_dist': 2.5, 'yaw_merge_deg': 15.0, 'truck_len_thresh': 7.0, 'truck_merge_dist': 5.0,
                 'vehicle_gate': vehicle_gate, 'vehicle_min_length': vehicle_min_length,
                 'vehicle_min_points': vehicle_min_points,
                 'adaptive_eps': adaptive_eps, 'aeps0': aeps0, 'aeps_k': aeps_k,
