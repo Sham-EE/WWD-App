@@ -60,7 +60,7 @@ def _arrow_segments(cx, cy, hdg, z, length=4.0, head=1.6, head_ang=np.radians(30
 def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_dict=None,
                      color_by_height=False, height_span=4.0,
                      show_original=True, show_road=True, show_roi=False, show_excl=False,
-                     show_objects=True, sensors=None):
+                     show_objects=True, sensors=None, gt_objs=None):
     """
     Creates an interactive 3D Plotly figure for a given frame.
     (Keep this for interactive UI display as it doesn't need Kaleido)
@@ -98,23 +98,36 @@ def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_d
             ))
 
     # 2a. Optional ROI / exclusion overlays (from the active site geometry)
-    def _outline3d(geom, color, dash, name):
+    def _outline3d(geom, color, dash, name, show_legend=True):
         gs = [geom] if geom.geom_type == 'Polygon' else list(geom.geoms)
         for j, g in enumerate(gs):
             gx, gy = g.exterior.xy
             fig.add_trace(go.Scatter3d(x=list(gx), y=list(gy), z=[z_floor] * len(gx),
                 mode='lines', line=dict(color=color, width=3, dash=dash), name=name,
-                legendgroup=name, showlegend=(j == 0), hoverinfo='skip'))
+                legendgroup=name, showlegend=(show_legend and j == 0), hoverinfo='skip'))
     if show_roi or show_excl:
         try:
             from geometry_config import get_research_polygon, get_fg_exclusion_rects
             if show_roi:
                 _outline3d(get_research_polygon(), '#17becf', 'dot', 'ROI')
             if show_excl:
-                for r in (get_fg_exclusion_rects() or []):
-                    _outline3d(r, '#ff5fec', 'dash', 'Exclusion')
+                # ONE legend entry for all exclusion rects (legend shown on the first
+                # only), dotted like the ROI — not a fat-dashed key per rect.
+                for k, r in enumerate(get_fg_exclusion_rects() or []):
+                    _outline3d(r, '#ff5fec', 'dot', 'Exclusion', show_legend=(k == 0))
         except Exception:
             pass
+
+    # 2c. Optional ground-truth box overlay (category-coloured wireframes), so
+    #     detections can be eyeballed against GT in the same view.
+    if gt_objs:
+        import lidar_viewer as lv
+        first = True
+        for col, (xs, ys, zs) in lv._box_edge_groups(gt_objs, "by_category").items():
+            fig.add_trace(go.Scatter3d(x=xs, y=ys, z=zs, mode='lines',
+                line=dict(color=col, width=3), name='GT boxes', legendgroup='gt',
+                showlegend=first, hoverinfo='skip'))
+            first = False
 
     # 2b. Optional lane-direction overlay (for WWD calibration / sanity check)
     if results.get('show_lanes') and results.get('lanes'):

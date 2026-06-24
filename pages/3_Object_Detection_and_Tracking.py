@@ -224,35 +224,53 @@ if st.session_state.detection_results:
     n_frames = len(results['pcd_files'])
     frame_idx, playing, play_delay = vu.nav_row("odt_frame", n_frames, "odt")
 
+    # GT index for the active sensor (scorable set; same one Evaluation scores).
+    _gt_dir = _ds.gt_dir_for_input(original_pcd_dir)
+
+    @st.cache_data(show_spinner=False)
+    def _gt_index(gt_dir):
+        idx = {}
+        if gt_dir and os.path.isdir(gt_dir):
+            for f in glob.glob(os.path.join(gt_dir, "*.json")):
+                idx["_".join(os.path.basename(f).split("_")[:2])] = f
+        return idx
+    gt_index = _gt_index(_gt_dir)
+    has_gt = bool(gt_index)
+
     # --- Collapsible layers & overlays (bulk on/off; matches Background Filtering) ---
     have_lanes = bool(lanes)
     toggle_defaults = {
-        "odt_orig": True, "odt_objects": True, "odt_lanes": have_lanes,
+        "odt_orig": True, "odt_objects": True, "odt_gt": False, "odt_lanes": have_lanes,
         "odt_road": True, "odt_roi": False, "odt_excl": False,
         "odt_sensors": True, "odt_height": False, "odt_topdown": False,
     }
     vu.ensure_toggle_defaults(toggle_defaults)
-    overlay_keys = ["odt_orig", "odt_objects", "odt_lanes", "odt_road",
-                    "odt_roi", "odt_excl", "odt_sensors"]
+    # "All" also turns Height on (per request); top-down stays manual.
+    overlay_keys = ["odt_orig", "odt_objects", "odt_gt", "odt_lanes", "odt_road",
+                    "odt_roi", "odt_excl", "odt_sensors", "odt_height"]
     with st.expander("🎛️ Layers & overlays", expanded=True):
         vu.bulk_toggle_buttons(overlay_keys, "odt_bulk", rerun_scope="app")
         r1 = st.columns(4)
         show_orig = r1[0].toggle("⚪ Point cloud", key="odt_orig", help="The original cloud (grey/Turbo).")
         show_objects = r1[1].toggle("🔴 Objects/tracks", key="odt_objects",
                                     help="Detection markers, wrong-way diamonds, heading arrows, trails.")
-        show_lanes = r1[2].toggle("🟦 Lanes", key="odt_lanes", disabled=not have_lanes,
+        show_gt = r1[2].toggle("🏷️ GT boxes", key="odt_gt", disabled=not has_gt,
+                               help="Overlay this frame's ground-truth boxes (category-coloured) to "
+                                    "eyeball detections against truth." if has_gt
+                                    else "No ground truth found for this sensor.")
+        show_lanes = r1[3].toggle("🟦 Lanes", key="odt_lanes", disabled=not have_lanes,
                                   help="Lane polygons + expected-direction arrows."
                                        if have_lanes else "No calibrated lanes for this dataset.")
-        sensors_on = r1[3].toggle("📍 LiDAR", key="odt_sensors", help="Mark the LiDAR position(s).")
         r2 = st.columns(4)
         show_road = r2[0].toggle("🛣️ Road", key="odt_road", help="Road polygon outline.")
         show_roi = r2[1].toggle("🔵 ROI", key="odt_roi", help="Research region boundary.")
         show_excl = r2[2].toggle("🟣 Exclusion", key="odt_excl", help="Foreground-exclusion rects.")
-        color_h = r2[3].toggle("🌈 Height", key="odt_height", help="Colour the cloud by z (Turbo).")
-        r3 = st.columns([1.3, 2.7])
-        top_down = r3[0].toggle("⬇️ Top-down", key="odt_topdown",
+        sensors_on = r2[3].toggle("📍 LiDAR", key="odt_sensors", help="Mark the LiDAR position(s).")
+        r3 = st.columns([1.3, 1.3, 2.4])
+        color_h = r3[0].toggle("🌈 Height", key="odt_height", help="Colour the cloud by z (Turbo).")
+        top_down = r3[1].toggle("⬇️ Top-down", key="odt_topdown",
                                 help="Snap the camera straight down (bird's-eye).")
-        h_span = r3[1].slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="odt_hspan",
+        h_span = r3[2].slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="odt_hspan",
                               help="Colour spreads over this many metres above ground.") if color_h else 4.0
 
     results['lanes'] = lanes
@@ -265,12 +283,22 @@ if st.session_state.detection_results:
     if not os.path.exists(original_pcd_path):
         st.error(f"Original PCD file not found for this frame: {original_pcd_path}")
     else:
+        gt_objs = None
+        if show_gt and has_gt:
+            import label_projection as lp
+            gp = gt_index.get("_".join(os.path.basename(original_pcd_path).split("_")[:2]))
+            if gp:
+                gt_objs = lp.load_objects(gp)
         fig = create_3d_figure(results, frame_idx, original_pcd_path,
                                color_by_height=color_h, height_span=h_span,
                                show_original=show_orig, show_road=show_road,
                                show_roi=show_roi, show_excl=show_excl,
-                               show_objects=show_objects, sensors=sensors)
+                               show_objects=show_objects, sensors=sensors, gt_objs=gt_objs)
         st.plotly_chart(fig, use_container_width=True, height=800)
+        if show_gt:
+            st.caption(f"🏷️ GT: {len(gt_objs) if gt_objs else 0} boxes "
+                       f"(`{os.path.basename(_gt_dir.rstrip('/'))}`)" if has_gt
+                       else "🏷️ No GT found for this sensor.")
 
     # Auto-play: advance one frame and rerun until the end or until paused.
     if playing and frame_idx < n_frames - 1:

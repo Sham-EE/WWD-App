@@ -366,8 +366,9 @@ if st.session_state.bg_model:
                 "bf_height": False, "bf_metric": False,
             }
             vu.ensure_toggle_defaults(toggle_defaults)
+            # "All" also turns Height on (per request).
             overlay_keys = ["bf_show_fg", "bf_show_orig", road_key, "bf_roi",
-                            "bf_excl", "bf_gt", "bf_sensors"]
+                            "bf_excl", "bf_gt", "bf_sensors", "bf_height"]
 
             with st.expander("🎛️ Layers & overlays", expanded=True):
                 vu.bulk_toggle_buttons(overlay_keys, "bf_bulk")

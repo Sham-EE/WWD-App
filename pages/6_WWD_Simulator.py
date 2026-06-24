@@ -7,6 +7,7 @@ from wwd_detection import load_lane_config, lanes_calibrated, detect_wrong_way
 from wwd_simulator import (wrong_way_options, make_wrong_way_track,
                            build_sim_det_frames, simulator_figure, SIM_TID,
                            v2x_dashboard_html, math_heading_to_compass)
+import viewer_ui as vu
 
 st.set_page_config(layout="wide", page_title="WWD Simulator")
 st.title("🚨 Wrong-Way Driver Simulator")
@@ -93,20 +94,7 @@ first_flag = sim_res.get("first_flag_frame")  # det-frame index
 # ---------------- Playback + view ----------------
 st.subheader("2. Run the simulation")
 n_steps = len(sim_track)
-st.session_state.setdefault("sim_step", 0)
-st.session_state.sim_step = min(st.session_state.sim_step, n_steps - 1)
-nav = st.columns([1, 1, 1, 1, 4])
-if nav[0].button("⏮ Start", use_container_width=True):
-    st.session_state.sim_step = 0; st.rerun()
-if nav[1].button("◀ Prev", use_container_width=True):
-    st.session_state.sim_step = max(0, st.session_state.sim_step - 1); st.rerun()
-if nav[2].button("Next ▶", use_container_width=True):
-    st.session_state.sim_step = min(n_steps - 1, st.session_state.sim_step + 1); st.rerun()
-if nav[3].button("End ⏭", use_container_width=True):
-    st.session_state.sim_step = n_steps - 1; st.rerun()
-playing = nav[4].toggle("▶ Play", value=False)
-step = st.slider("Step", 0, max(n_steps - 1, 1), st.session_state.sim_step)
-st.session_state.sim_step = step
+step, playing, play_delay = vu.nav_row("sim_step", n_steps, "sim", label="🎞️ Step")
 
 cur_frame_idx = start_frame + step
 # The detector confirms only AFTER `conf_frames` consecutive wrong-way frames, so
@@ -189,6 +177,6 @@ if st.session_state.v2x_armed and st.session_state.v2x_event:
 # auto-advance (paused while the dashboard is embedded to avoid re-render churn)
 if playing and step < n_steps - 1 and not st.session_state.v2x_armed:
     import time
-    time.sleep(max(0.03, 1.0 / float(fps)))
+    time.sleep(float(play_delay))
     st.session_state.sim_step = step + 1
     st.rerun()
