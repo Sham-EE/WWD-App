@@ -106,7 +106,11 @@ by file mtime, so a save updates the whole app with no restart).
   can't be reproduced from the labels). Runs **per source** (south / north /
   registered → `derived/labels/scorable/<sensor>/`). Editable keep/drop
   **criteria** (min/max points, max range, occlusion levels, classes) with a live
-  kept-vs-dropped preview.
+  kept-vs-dropped preview. The **Source LiDAR** picker drives the preview cloud,
+  labels *and* the ROI: the ROI is defined in the south frame and **transformed into
+  the selected source's frame** (identity for south/registered, rotated into the
+  north frame for north) so kept/dropped classification lines up with that sensor's
+  cloud.
 - **🗺️ Geometry Editor** — edit the **research polygon (ROI)**, **road polygons**
   (cropping), and **foreground-exclusion rectangles**, then **Save** to update the
   whole pipeline. Editing options:
@@ -402,7 +406,12 @@ i.e. `atan2(vy,vx)` in the sensor frame). The file is **currently calibrated**
   LiDAR frame** so it reuses the south GT / camera calibration / polygons. One viewer with
   **Raw ↔ Registered** + **by-sensor / by-height** + **Frame (south / s110_base)** + **Crop**
   + LiDAR markers; batch write + `registration.json` manifest; plus a **fused (union) GT**
-  (`fuse_labels`) that adds the north-only boxes the south GT misses.
+  (`fuse_labels`) that adds the north-only boxes the south GT misses, with each box's
+  **`num_points` recomputed on the fused cloud** so the scorable gate is honest for
+  registered (south-only counts would unfairly drop objects dense only after fusion).
+- **Frame-aware scorable-GT ROI** — the south-frame research polygon is transformed into
+  the selected source's frame (identity for south/registered, rotated for north) so the
+  kept/dropped classification lines up with that sensor's cloud.
 - **South / North / Registered sensor toggle** shared across Background Filtering /
   Detection / Evaluation, each combination writing to its own folder, with **auto-
   resolved GT** per sensor. Detection/Eval **tag results with sensor/source** and warn
