@@ -60,7 +60,8 @@ def _arrow_segments(cx, cy, hdg, z, length=4.0, head=1.6, head_ang=np.radians(30
 def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_dict=None,
                      color_by_height=False, height_span=4.0,
                      show_original=True, show_road=True, show_roi=False, show_excl=False,
-                     show_objects=True, sensors=None, gt_objs=None, foreground_path=None):
+                     show_objects=True, sensors=None, gt_objs=None, foreground_path=None,
+                     missed_objs=None):
     """
     Creates an interactive 3D Plotly figure for a given frame.
     (Keep this for interactive UI display as it doesn't need Kaleido)
@@ -138,6 +139,21 @@ def create_3d_figure(results, frame_index_to_render, original_pcd_path, camera_d
                 line=dict(color=col, width=3), name='GT boxes', legendgroup='gt',
                 showlegend=first, hoverinfo='skip'))
             first = False
+
+    # 2d. Undetected GT boxes (false negatives) — bright red, thick, so the missed
+    #     objects pop out (drawn on top of the category-coloured GT).
+    if missed_objs:
+        import label_projection as lp
+        mx, my, mz = [], [], []
+        for o in missed_objs:
+            c = lp.cuboid_corners(o['val'])
+            for a, b in lp._EDGES:
+                mx += [c[a, 0], c[b, 0], None]
+                my += [c[a, 1], c[b, 1], None]
+                mz += [c[a, 2], c[b, 2], None]
+        fig.add_trace(go.Scatter3d(x=mx, y=my, z=mz, mode='lines',
+            line=dict(color='#ff2b2b', width=6), name='Missed GT', legendgroup='missed',
+            showlegend=True, hoverinfo='skip'))
 
     # 2b. Optional lane-direction overlay (for WWD calibration / sanity check)
     if results.get('show_lanes') and results.get('lanes'):

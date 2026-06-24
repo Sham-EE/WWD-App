@@ -241,13 +241,13 @@ if st.session_state.detection_results:
     have_lanes = bool(lanes)
     toggle_defaults = {
         "odt_orig": True, "odt_fg": False, "odt_objects": True, "odt_gt": False,
-        "odt_lanes": have_lanes, "odt_road": True, "odt_roi": False, "odt_excl": False,
-        "odt_sensors": True, "odt_height": False, "odt_topdown": False,
+        "odt_missed": False, "odt_lanes": have_lanes, "odt_road": True, "odt_roi": False,
+        "odt_excl": False, "odt_sensors": True, "odt_height": False, "odt_topdown": False,
     }
     vu.ensure_toggle_defaults(toggle_defaults)
     # "All" also turns Height on (per request); top-down stays manual.
-    overlay_keys = ["odt_orig", "odt_fg", "odt_objects", "odt_gt", "odt_lanes", "odt_road",
-                    "odt_roi", "odt_excl", "odt_sensors", "odt_height"]
+    overlay_keys = ["odt_orig", "odt_fg", "odt_objects", "odt_gt", "odt_missed", "odt_lanes",
+                    "odt_road", "odt_roi", "odt_excl", "odt_sensors", "odt_height"]
     with st.expander("🎛️ Layers & overlays", expanded=True):
         vu.bulk_toggle_buttons(overlay_keys, "odt_bulk", rerun_scope="app")
         r1 = st.columns(4)
@@ -263,19 +263,23 @@ if st.session_state.detection_results:
                                     "eyeball detections against truth." if has_gt
                                     else "No ground truth found for this sensor.")
         r2 = st.columns(4)
-        show_lanes = r2[0].toggle("🟦 Lanes", key="odt_lanes", disabled=not have_lanes,
+        show_missed = r2[0].toggle("❌ Missed GT", key="odt_missed", disabled=not has_gt,
+                                   help="Outline the GT boxes with NO detection within 2 m (false "
+                                        "negatives) in bright red, so you can see which objects were "
+                                        "missed." if has_gt else "No ground truth found for this sensor.")
+        show_lanes = r2[1].toggle("🟦 Lanes", key="odt_lanes", disabled=not have_lanes,
                                   help="Lane polygons + expected-direction arrows."
                                        if have_lanes else "No calibrated lanes for this dataset.")
-        show_road = r2[1].toggle("🛣️ Road", key="odt_road", help="Road polygon outline.")
-        show_roi = r2[2].toggle("🔵 ROI", key="odt_roi", help="Research region boundary.")
-        show_excl = r2[3].toggle("🟣 Exclusion", key="odt_excl", help="Foreground-exclusion rects.")
+        show_road = r2[2].toggle("🛣️ Road", key="odt_road", help="Road polygon outline.")
+        show_roi = r2[3].toggle("🔵 ROI", key="odt_roi", help="Research region boundary.")
         r3 = st.columns(4)
-        sensors_on = r3[0].toggle("📍 LiDAR", key="odt_sensors", help="Mark the LiDAR position(s).")
-        color_h = r3[1].toggle("🌈 Height", key="odt_height", help="Colour the cloud by z (Turbo).")
-        top_down = r3[2].toggle("⬇️ Top-down", key="odt_topdown",
+        show_excl = r3[0].toggle("🟣 Exclusion", key="odt_excl", help="Foreground-exclusion rects.")
+        sensors_on = r3[1].toggle("📍 LiDAR", key="odt_sensors", help="Mark the LiDAR position(s).")
+        color_h = r3[2].toggle("🌈 Height", key="odt_height", help="Colour the cloud by z (Turbo).")
+        top_down = r3[3].toggle("⬇️ Top-down", key="odt_topdown",
                                 help="Snap the camera straight down (bird's-eye).")
-        h_span = r3[3].slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="odt_hspan",
-                              help="Colour spreads over this many metres above ground.") if color_h else 4.0
+        h_span = st.slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="odt_hspan",
+                           help="Colour spreads over this many metres above ground.") if color_h else 4.0
 
     results['lanes'] = lanes
     results['show_lanes'] = bool(show_lanes and have_lanes)
@@ -287,12 +291,28 @@ if st.session_state.detection_results:
     if not os.path.exists(original_pcd_path):
         st.error(f"Original PCD file not found for this frame: {original_pcd_path}")
     else:
+        # Load GT once if it's needed for display, the missed overlay, or the metric.
         gt_objs = None
-        if show_gt and has_gt:
+        if (show_gt or show_missed) and has_gt:
             import label_projection as lp
             gp = gt_index.get("_".join(os.path.basename(original_pcd_path).split("_")[:2]))
             if gp:
                 gt_objs = lp.load_objects(gp)
+
+        # Match detections -> GT once (BEV centre, 2 m) for both the missed overlay
+        # and the per-frame coverage metric.
+        covered = ng = None
+        missed_objs = None
+        if gt_objs is not None:
+            from evaluation import _match_frame
+            det_xy = [{"cx": d["cx"], "cy": d["cy"]} for d in results["det_frames"][frame_idx]]
+            gt_xy = [{"cx": o["val"][0], "cy": o["val"][1]} for o in gt_objs]
+            matches, _, _, _ = _match_frame(det_xy, gt_xy, 2.0)
+            matched_gt = {j for _, j, _ in matches}
+            ng = len(gt_objs)
+            covered = len(matched_gt)
+            missed_objs = [gt_objs[j] for j in range(ng) if j not in matched_gt]
+
         # filtered foreground for this frame (the cloud detection ran on)
         _fg_files = results.get('pcd_files', [])
         fg_path = _fg_files[frame_idx] if (show_fg and frame_idx < len(_fg_files)) else None
@@ -300,27 +320,21 @@ if st.session_state.detection_results:
                                color_by_height=color_h, height_span=h_span,
                                show_original=show_orig, show_road=show_road,
                                show_roi=show_roi, show_excl=show_excl,
-                               show_objects=show_objects, sensors=sensors, gt_objs=gt_objs,
+                               show_objects=show_objects, sensors=sensors,
+                               gt_objs=(gt_objs if show_gt else None),
+                               missed_objs=(missed_objs if show_missed else None),
                                foreground_path=fg_path)
         st.plotly_chart(fig, use_container_width=True, height=800)
-        if show_gt:
+        if show_gt or show_missed:
             if not has_gt:
                 st.caption("🏷️ No GT found for this sensor.")
             elif gt_objs is None:
                 st.caption("🏷️ No GT for this frame.")
             else:
-                # Per-frame coverage: GT boxes with a detection centre within 2 m
-                # (a quick recall proxy — full metrics are on the Evaluation page).
-                from evaluation import _match_frame
-                det_xy = [{"cx": d["cx"], "cy": d["cy"]} for d in results["det_frames"][frame_idx]]
-                gt_xy = [{"cx": o["val"][0], "cy": o["val"][1]} for o in gt_objs]
-                matches, _, _, _ = _match_frame(det_xy, gt_xy, 2.0)
-                covered = len({j for _, j, _ in matches})
-                ng = len(gt_objs)
                 pct = (100.0 * covered / ng) if ng else 0.0
-                st.caption(f"🏷️ GT: {ng} boxes · **{covered}/{ng} detected** ({pct:.0f}%) — a GT box "
-                           f"counts as detected if a track centre is within 2 m  ·  "
-                           f"`{os.path.basename(_gt_dir.rstrip('/'))}`")
+                st.caption(f"🏷️ GT: {ng} boxes · **{covered}/{ng} detected** ({pct:.0f}%) · "
+                           f"❌ {ng - covered} missed — a GT box counts as detected if a track centre is "
+                           f"within 2 m  ·  `{os.path.basename(_gt_dir.rstrip('/'))}`")
 
     # Auto-play: advance one frame and rerun until the end or until paused.
     if playing and frame_idx < n_frames - 1:
