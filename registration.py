@@ -334,8 +334,34 @@ def transform_cuboid(val, T):
             float(val[7]), float(val[8]), float(val[9])]
 
 
+def count_points_in_box(pts, val):
+    """Number of points inside an OpenLABEL cuboid ``[x,y,z, qx,qy,qz,qw, l,w,h]``
+    (full 3-D containment in the box's own frame). Used to recompute ``num_points``
+    against the fused cloud."""
+    from scipy.spatial.transform import Rotation
+    pts = np.asarray(pts, dtype=float)
+    if pts.shape[0] == 0:
+        return 0
+    c = np.asarray(val[:3], dtype=float)
+    R = Rotation.from_quat([val[3], val[4], val[5], val[6]]).as_matrix()
+    half = np.asarray(val[7:10], dtype=float) / 2.0
+    local = (pts[:, :3] - c) @ R            # world -> box-local (R orthonormal)
+    return int((np.abs(local) <= half).all(axis=1).sum())
+
+
+def _set_cuboid_num_points(cuboid, n):
+    """Set/overwrite the ``num_points`` attribute on an OpenLABEL cuboid dict."""
+    num = cuboid.setdefault("attributes", {}).setdefault("num", [])
+    for a in num:
+        if a.get("name") == "num_points":
+            a["val"] = int(n)
+            return
+    num.append({"name": "num_points", "val": int(n)})
+
+
 def fuse_labels(south_label_dir, north_label_dir, M_south, M_north, out_dir,
-                refine=None, match_dist=2.5, max_dt_ms=None, max_frames=0, progress=None):
+                refine=None, match_dist=2.5, max_dt_ms=None, max_frames=0, progress=None,
+                registered_pcd_dir=None):
     """Build a UNION GT for the registered (south-frame) cloud.
 
     Each sensor only annotates the objects IT can see, so the south GT alone
@@ -346,7 +372,13 @@ def fuse_labels(south_label_dir, north_label_dir, M_south, M_north, out_dir,
     south didn't annotate** (no south box within ``match_dist`` m). Shared objects
     keep their south box. Writes OpenLABEL JSONs (south basename, so the frame key
     matches the registered clouds) to ``out_dir``. Returns
-    ``(n_frames, n_north_added, n_shared)``."""
+    ``(n_frames, n_north_added, n_shared)``.
+
+    If ``registered_pcd_dir`` is given, **every** box's ``num_points`` is recomputed
+    against the matching FUSED cloud — so the scorable-GT gate reflects what the
+    registered cloud can actually see (the stored per-sensor counts are south-only
+    for shared objects, which unfairly drops objects that are sparse for south but
+    dense for north)."""
     refine = np.eye(4) if refine is None else np.asarray(refine, dtype=float)
     T = to_south_frame(M_south) @ refine @ np.asarray(M_north, dtype=float)
     south = sorted(glob.glob(os.path.join(south_label_dir, "*.json")))
@@ -354,6 +386,11 @@ def fuse_labels(south_label_dir, north_label_dir, M_south, M_north, out_dir,
     pairs = match_frame_pairs(south, north, max_dt_ms=max_dt_ms)
     if max_frames and max_frames > 0:
         pairs = pairs[:max_frames]
+    # index the fused clouds by frame key (<ts1>_<ts2>) for the num_points recompute
+    reg_pcd_by_key = None
+    if registered_pcd_dir and os.path.isdir(registered_pcd_dir):
+        reg_pcd_by_key = {"_".join(os.path.basename(p).split("_")[:2]): p
+                          for p in glob.glob(os.path.join(registered_pcd_dir, "*.pcd"))}
     os.makedirs(out_dir, exist_ok=True)
     n = added = shared = 0
     for sp, npath, _dt in pairs:
@@ -384,6 +421,16 @@ def fuse_labels(south_label_dir, north_label_dir, M_south, M_north, out_dir,
                     "type": od.get("type", "OTHER"),
                     "cuboid": {**od.get("cuboid", {}), "val": nv}}}
                 added += 1
+        # Recompute num_points for EVERY box against the fused cloud (shared boxes
+        # carry south-only counts otherwise), so scorable GT is honest for registered.
+        if reg_pcd_by_key is not None:
+            rp = reg_pcd_by_key.get("_".join(os.path.basename(sp).split("_")[:2]))
+            if rp:
+                rpts = load_xyz(rp)
+                for v in fobjs.values():
+                    cub = v.get("object_data", {}).get("cuboid")
+                    if cub and cub.get("val"):
+                        _set_cuboid_num_points(cub, count_points_in_box(rpts, cub["val"]))
         with open(os.path.join(out_dir, os.path.basename(sp)), "w", encoding="utf-8") as f:
             json.dump(sj, f)
         n += 1

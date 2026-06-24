@@ -793,7 +793,9 @@ with tab_reg:
                "borrows the **south** GT — is missing the objects only **north** saw (they have points in "
                "the fused cloud but no box). This builds a **union** GT: north boxes are transformed into "
                "the south frame and the ones south didn't annotate are added (shared objects keep their "
-               "south box). Afterwards, build the **Registered** scorable set in the 🏷️ Scorable GT tab.")
+               "south box). Each box's **`num_points` is recomputed against the fused cloud** so the "
+               "scorable gate is honest for registered (the stored counts are south-only). Afterwards, "
+               "build the **Registered** scorable set in the 🏷️ Scorable GT tab.")
     fc1, fc2 = st.columns([1.4, 2])
     fuse_dist = fc1.slider("Duplicate-merge distance (m)", 0.5, 5.0, 2.5, 0.5,
                            help="A north box within this distance of a south box is treated as the SAME "
@@ -804,7 +806,7 @@ with tab_reg:
         nfr, added, shared = reg.fuse_labels(
             label_dirs["south"], label_dirs["north"], Ms, Mn, reg_label_out,
             refine=(np.array(batch_refine) if batch_refine is not None else None),
-            match_dist=float(fuse_dist),
+            match_dist=float(fuse_dist), registered_pcd_dir=ds.registered_dir,
             progress=lambda c, t: bar.progress(c / t, text=f"Fusing {c}/{t}"))
         bar.empty()
         st.success(f"Wrote **{nfr}** fused label files → `{reg_label_out}`  "
