@@ -219,6 +219,49 @@ def fuse_pair(south_pts, north_pts, M_south, M_north, refine=None, to_frame=None
     return {"south": s_out, "north": n_out, "points": pts, "source": src}
 
 
+_REG_PAIR_CACHE = {}
+
+
+def _registered_pair_map(ds):
+    """frame_key (<ts1>_<ts2>) -> (south_pcd, north_pcd) via nearest-timestamp
+    pairing of the RAW lidar clouds (the same pairing register_dataset used).
+    Cached per dataset so the per-frame split lookup is cheap."""
+    key = ds.registered_dir
+    if key in _REG_PAIR_CACHE:
+        return _REG_PAIR_CACHE[key]
+    sfiles = glob.glob(os.path.join(ds.raw_lidar_south_dir, "*.pcd"))
+    nfiles = glob.glob(os.path.join(ds.raw_lidar_north_dir, "*.pcd"))
+    m = {}
+    if sfiles and nfiles:
+        for sp, npath, _dt in match_frame_pairs(sfiles, nfiles):
+            m["_".join(os.path.basename(sp).split("_")[:2])] = (sp, npath)
+    _REG_PAIR_CACHE[key] = m
+    return m
+
+
+def registered_split_for_frame(ds, frame_key):
+    """Return ``(south_pts, north_pts)`` for one registered frame, both in the
+    SOUTH LiDAR frame (the registered output frame), by re-fusing the raw clouds
+    with the calibration matrices + ICP refine recorded in registration.json —
+    so the split lines up with the saved registered cloud without persisting a
+    per-point tag. Returns ``None`` if the manifest or the frame is unavailable."""
+    man_path = os.path.join(ds.registered_dir, "registration.json")
+    if not os.path.exists(man_path):
+        return None
+    try:
+        man = json.load(open(man_path, encoding="utf-8"))
+        Ms = np.array(man["M_south_to_base"]); Mn = np.array(man["M_north_to_base"])
+        refine = np.array(man["icp_refine_delta"]) if man.get("icp_refine_delta") else None
+        to_frame = np.array(man["frame_transform"]) if man.get("frame_transform") else None
+    except Exception:
+        return None
+    pp = _registered_pair_map(ds).get(frame_key)
+    if not pp:
+        return None
+    f = fuse_pair(load_xyz(pp[0]), load_xyz(pp[1]), Ms, Mn, refine=refine, to_frame=to_frame)
+    return f["south"], f["north"]
+
+
 def icp_refine(north_base, south_base, max_dist=0.5, max_iter=60, voxel=0.25,
                point_to_plane=True, coarse_to_fine=True):
     """ICP aligning the north cloud onto the south cloud (both already in
@@ -358,6 +401,29 @@ def transform_cuboid(val, T):
             float(val[7]), float(val[8]), float(val[9])]
 
 
+def _bev_box_poly(val):
+    """Shapely BEV (top-down) footprint polygon of an OpenLABEL cuboid."""
+    from scipy.spatial.transform import Rotation
+    from shapely.geometry import Polygon
+    c = np.asarray(val[:3], dtype=float)
+    yaw = float(Rotation.from_quat([val[3], val[4], val[5], val[6]]).as_euler("xyz")[2])
+    l, w = float(val[7]), float(val[8])
+    co, si = np.cos(yaw), np.sin(yaw)
+    ax = np.array([co, si]); ay = np.array([-si, co])
+    corners = [c[:2] + sx * (l / 2.0) * ax + sy * (w / 2.0) * ay
+               for sx, sy in ((1, 1), (1, -1), (-1, -1), (-1, 1))]
+    return Polygon(corners)
+
+
+def _bev_box_iou(poly_a, poly_b):
+    """BEV IoU of two shapely box footprints (0 if disjoint)."""
+    if poly_a is None or poly_b is None or not poly_a.intersects(poly_b):
+        return 0.0
+    inter = poly_a.intersection(poly_b).area
+    union = poly_a.area + poly_b.area - inter
+    return float(inter / union) if union > 0 else 0.0
+
+
 def count_points_in_box(pts, val):
     """Number of points inside an OpenLABEL cuboid ``[x,y,z, qx,qy,qz,qw, l,w,h]``
     (full 3-D containment in the box's own frame). Used to recompute ``num_points``
@@ -385,7 +451,7 @@ def _set_cuboid_num_points(cuboid, n):
 
 def fuse_labels(south_label_dir, north_label_dir, M_south, M_north, out_dir,
                 refine=None, match_dist=2.5, max_dt_ms=None, max_frames=0, progress=None,
-                registered_pcd_dir=None):
+                registered_pcd_dir=None, dedup_iou=0.10):
     """Build a UNION GT for the registered (south-frame) cloud.
 
     Each sensor only annotates the objects IT can see, so the south GT alone
@@ -424,9 +490,11 @@ def fuse_labels(south_label_dir, north_label_dir, M_south, M_north, out_dir,
         if not frames:
             continue
         fobjs = frames[next(iter(frames))].setdefault("objects", {})
-        s_centers = np.array([o["object_data"]["cuboid"]["val"][:3] for o in fobjs.values()
-                              if o.get("object_data", {}).get("cuboid", {}).get("val")]) \
-            if fobjs else np.zeros((0, 3))
+        s_vals = [o["object_data"]["cuboid"]["val"] for o in fobjs.values()
+                  if o.get("object_data", {}).get("cuboid", {}).get("val")]
+        s_centers = np.array([v[:3] for v in s_vals]) if s_vals else np.zeros((0, 3))
+        # Pre-build south footprints once for the IoU dedup (residual-aware).
+        s_polys = [_bev_box_poly(v) for v in s_vals] if dedup_iou and dedup_iou > 0 else []
         with open(npath, "r", encoding="utf-8") as f:
             nfr = json.load(f).get("openlabel", {}).get("frames", {})
         if nfr:
@@ -437,7 +505,16 @@ def fuse_labels(south_label_dir, north_label_dir, M_south, M_north, out_dir,
                     continue
                 nv = transform_cuboid(v, T)
                 c = np.array(nv[:3])
-                if len(s_centers) and float(np.min(np.linalg.norm(s_centers - c, axis=1))) < match_dist:
+                # Shared if a south box is within match_dist (cheap centre gate) OR
+                # their BEV footprints overlap (IoU) — the latter catches the same
+                # vehicle whose south/north boxes are pushed apart by the residual
+                # ~8° yaw / ~2 m calibration error (a tight centre gate alone leaves
+                # those duplicated, double-counting GT -> phantom FNs + a red twin).
+                is_shared = len(s_centers) and float(np.min(np.linalg.norm(s_centers - c, axis=1))) < match_dist
+                if not is_shared and s_polys:
+                    np_poly = _bev_box_poly(nv)
+                    is_shared = any(_bev_box_iou(np_poly, sp) >= dedup_iou for sp in s_polys)
+                if is_shared:
                     shared += 1
                     continue                            # south already has this object
                 fobjs["north_" + oid] = {"object_data": {
