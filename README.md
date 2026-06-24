@@ -154,9 +154,12 @@ error) — re-run Detection after switching the toggle.
 
 ## Background Filtering (page 2) — 3D inspector
 
-The Background Filtering viewer is a full inspection tool for tuning the
-filter, not just a preview (sidebar **Sensor** + **Input cloud** toggles pick the
-source; the active input + GT folders are shown in the sidebar):
+The Background Filtering viewer is a full inspection tool for tuning the filter, not just
+a preview. All controls live **on the page** (no sidebar) — **Sensor** + **Input cloud**
+toggles at the top pick the source, then the model/filter parameters are grouped into
+collapsible expanders (📁 Folder paths & model · 🧹 Ground removal · 🧱 Background model ·
+🔗 Clustering (DBSCAN) · 📍 Pole-like geometry filter · ⚙️ Misc filters) above a full-width
+**🧠 Build Background Model** button — matching the Object Detection page's layout:
 
 - **Compact, collapsible controls.** A single-line frame nav (⏮ ◀ ▶ ⏭ · Play · delay ·
   frame slider) plus a collapsible **🎛️ Layers & overlays** panel with **✅ All / ⬜ None**
@@ -413,8 +416,9 @@ i.e. `atan2(vy,vx)` in the sensor frame). The file is **currently calibrated**
 - **Compact, consistent viewers** (`viewer_ui.py`): one-line frame nav + collapsible
   **🎛️ Layers & overlays** panel with **✅ All / ⬜ None**, shared by **every** preview
   with a play/next control — Background Filtering, Detection, Visualizer, and the Dataset
-  Prep / Evaluation / WWD Simulator viewers. Detection's parameter groups and folder
-  paths also collapse into expanders.
+  Prep / Evaluation / WWD Simulator viewers. **Object Detection** and **Background
+  Filtering** both put all their controls on the page (no sidebar), with parameter
+  groups + folder paths in collapsible expanders and a full-width Build/Start button.
 - **Detection ↔ GT diagnostics:** Detection gains a **🏷️ GT-box overlay**, a **🟠
   foreground overlay** (the filtered cloud it ran on), a **❌ Missed-GT overlay** (red,
   undetected objects) and a per-frame coverage caption; Background Filtering gains the
