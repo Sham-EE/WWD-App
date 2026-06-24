@@ -295,6 +295,22 @@ def _render_ab():
                          help="Only score GT inside the research region — the fair number.")
     classes = _VEHICLE_CLASSES if vehicles_only else None
 
+    g1, g2 = st.columns(2)
+    score_mode = g1.radio("Score both against", ["Registered union (shared)", "Each sensor's own GT"],
+                          horizontal=True, key="ab_gtmode",
+                          help="**Registered union (shared)** = grade BOTH pipelines against the SAME "
+                               "objective GT — the registered union, which includes the north-only vehicles "
+                               "south's GT lacks. So south is fairly penalised for objects it physically "
+                               "can't see (the limitation fusion fixes), and recall shares one denominator. "
+                               "**Each sensor's own GT** = grade each on its own annotations (south is "
+                               "flattered by its incomplete GT).")
+    gt_kind = g2.radio("GT boxes", ["Scorable", "All (raw)"], horizontal=True, key="ab_gtkind",
+                       help="Scorable = only objects with enough LiDAR points to be detectable (num_points "
+                            "recomputed on the fused cloud). All (raw) = every annotated box, including ones "
+                            "too sparse to fairly detect.")
+    shared_gt = score_mode.startswith("Registered union")
+    gt_kind_key = "raw" if gt_kind.startswith("All") else "scorable"
+
     roi_bounds = None
     if roi_on:
         try:
@@ -327,7 +343,8 @@ def _render_ab():
         for si, s in enumerate(_AB_SENSORS):
             fdir = _ds.filtered_dir_for_sensor(s, src)
             outdir = _ds.detection_dir_for_sensor(s, src)
-            gtdir = _ds.gt_dir_for_input(_ds.input_pcd_for_sensor(s, src))
+            # Shared objective GT = the registered union for both; else each sensor's own.
+            gtdir = _ds.labels_dir_for("registered" if shared_gt else s, gt_kind_key)
 
             def _pcb(c, t, m, _s=s, _si=si):
                 bar.progress((_si + c / max(t, 1)) / len(_AB_SENSORS), text=f"{_s.capitalize()}: {m} {c}/{t}")
@@ -343,7 +360,8 @@ def _render_ab():
             out[s] = {"summary": rep["summary"], "rbd": rbd, "gt_dir": os.path.basename(gtdir.rstrip("/"))}
         bar.empty()
         st.session_state.ab_results = {"results": out, "src": src_label, "match_dist": match_dist,
-                                       "vehicles_only": vehicles_only, "roi_on": roi_on}
+                                       "vehicles_only": vehicles_only, "roi_on": roi_on,
+                                       "gt_mode": score_mode, "gt_kind": gt_kind, "shared": shared_gt}
 
     state = st.session_state.get("ab_results")
     if not (state and all(s in state["results"] for s in _AB_SENSORS)):
@@ -355,10 +373,15 @@ def _render_ab():
     ss, rs = res["south"]["summary"], res["registered"]["summary"]
     cfg = (f"{state['src']} · match {state['match_dist']} m · "
            f"{'vehicles only' if state['vehicles_only'] else 'all classes'} · "
-           f"{'ROI' if state['roi_on'] else 'no ROI'}")
+           f"{'ROI' if state['roi_on'] else 'no ROI'} · GT: {state.get('gt_kind', '')}")
     st.divider()
     st.subheader("Overall metrics")
-    st.caption(f"South GT: `{res['south']['gt_dir']}` · Registered GT: `{res['registered']['gt_dir']}`  ·  {cfg}")
+    if state.get("shared"):
+        st.caption(f"⚖️ Both scored against the **shared registered-union GT** "
+                   f"(`{res['south']['gt_dir']}`, {ss['gt_objects_total']} objects — same denominator)  ·  {cfg}")
+    else:
+        st.caption(f"South GT: `{res['south']['gt_dir']}` · Registered GT: `{res['registered']['gt_dir']}`  "
+                   f"·  {cfg}")
 
     def _delta(rv, sv):
         d = rv - sv
