@@ -115,7 +115,8 @@ def apply_geometry_crop(fg, geom):
 
 def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=None,
                    dragmode="pan", show_vertex_labels=False, fg_excluded_points=None,
-                   color_by_height=False, height_span=4.0, off_object_points=None):
+                   color_by_height=False, height_span=4.0, off_object_points=None,
+                   det_objs=None, det_scatter=None):
     """BEV: point cloud + research (cyan dotted), road (green), exclusion (magenta).
     `fg_points` (kept foreground) is drawn red; `fg_excluded_points` (foreground that
     the current geometry crops out) is drawn grey. If `gt_objs` is given, overlay GT
@@ -123,6 +124,10 @@ def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=N
     `off_object_points` (kept foreground outside every GT box) is drawn yellow — the
     same clutter/false-foreground cue as the Background-Filtering viewer, so you can
     place crop/exclusion zones over the points the filter wrongly keeps.
+    `det_objs` = this-frame detections [(cx,cy,yaw,l,w,is_static), …] drawn as oriented
+    boxes; `det_scatter` = (centres Nx2, is_static bool N) for the all-frames aggregate
+    drawn as ✕ markers. Moving detections are green, never-moving (static, FP/pole risk)
+    are purple — so you can see where the detector keeps placing phantom objects.
     `color_by_height` colours the backdrop cloud by z (Turbo) like the dev-kit."""
     import numpy as np
     import plotly.graph_objects as go
@@ -152,6 +157,32 @@ def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=N
         fig.add_trace(go.Scattergl(x=off_object_points[:, 0], y=off_object_points[:, 1], mode="markers",
                                    marker=dict(size=3.5, color="#ffd400"), name="off-object FG",
                                    hoverinfo="skip"))
+    # Detections — what the detector reported as objects. Green = moving, purple = static
+    # (never-moving over its track; FP/pole risk). Per-frame: oriented boxes; all-frames:
+    # ✕ markers at each centre.
+    _DET_MOV, _DET_STAT = "#16c60c", "#b14cff"
+    if det_objs:
+        _shown = {False: False, True: False}
+        for (cx, cy, yaw, l, w, stat) in det_objs:
+            c, s = np.cos(yaw), np.sin(yaw)
+            loc = np.array([[l / 2, w / 2], [l / 2, -w / 2], [-l / 2, -w / 2], [-l / 2, w / 2], [l / 2, w / 2]])
+            corners = loc @ np.array([[c, -s], [s, c]]).T + np.array([cx, cy])
+            fig.add_trace(go.Scatter(x=corners[:, 0], y=corners[:, 1], mode="lines",
+                                     line=dict(color=_DET_STAT if stat else _DET_MOV, width=2),
+                                     name=("static det" if stat else "detection"),
+                                     legendgroup=("sdet" if stat else "det"),
+                                     showlegend=not _shown[stat], hoverinfo="skip"))
+            _shown[stat] = True
+    if det_scatter is not None:
+        cen, stat = det_scatter
+        if len(cen):
+            stat = np.asarray(stat, dtype=bool)
+            for mask, col, nm in ((~stat, _DET_MOV, "detections (all frames)"),
+                                  (stat, _DET_STAT, "static detections (all frames)")):
+                if mask.any():
+                    fig.add_trace(go.Scattergl(x=cen[mask, 0], y=cen[mask, 1], mode="markers",
+                                               marker=dict(size=4, color=col, symbol="x"),
+                                               name=nm, hoverinfo="skip"))
     if gt_objs:
         import label_projection as lp
         import lidar_viewer as lv

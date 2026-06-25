@@ -101,6 +101,34 @@ def _geom_foreground_all(pcd_dir, gt_dir, model_path, model_mtime, geom_mtime, b
     return _vox(fg_list), _vox(off_list), len(files)
 
 
+@st.cache_data(show_spinner=False)
+def _geom_detections(csv_path, _mtime):
+    """Read a detection tracks.csv -> (by_frame dict, all-centres Nx2, all-static bool N).
+    'static' = the track's lifetime MAX speed never crossed 1.5 m/s (FP / pole risk).
+    Boxes fall back to nominal car size when no extent was measured."""
+    import csv
+    rows, maxsp = [], {}
+    try:
+        with open(csv_path, newline="") as f:
+            for r in csv.DictReader(f):
+                tid = r.get("tid", "")
+                fr = int(float(r["frame"]))
+                cx, cy = float(r["cx"]), float(r["cy"])
+                yaw = float(r.get("yaw", 0) or 0)
+                l = float(r.get("length", 0) or 0) or 4.5
+                w = float(r.get("width", 0) or 0) or 1.9
+                rows.append((fr, tid, cx, cy, yaw, l, w))
+                maxsp[tid] = max(maxsp.get(tid, 0.0), float(r.get("speed", 0) or 0))
+    except Exception:
+        return {}, np.zeros((0, 2)), np.zeros((0,), dtype=bool)
+    by_frame, cen, stat = {}, [], []
+    for fr, tid, cx, cy, yaw, l, w in rows:
+        is_static = maxsp.get(tid, 9.9) < 1.5
+        by_frame.setdefault(fr, []).append((cx, cy, yaw, l, w, is_static))
+        cen.append((cx, cy)); stat.append(is_static)
+    return by_frame, (np.array(cen) if cen else np.zeros((0, 2))), np.array(stat, dtype=bool)
+
+
 def _resolve_bg_model(src):
     """Saved model path matching `src`, else the other source's, else None."""
     for p in (ds.model_path_for(src), ds.model_path_for("cropped" if src == "full" else "full")):
@@ -407,7 +435,10 @@ with tab_geom:
     step = st.select_slider("Stepper increment (m)", [0.5, 1.0, 2.0, 5.0], value=1.0, key="geom_step",
                             help="Step size for the +/- vertex / box editors below.")
     _nframes = len(geom_clouds) if geom_clouds else 0
-    _ov_keys = ["geom_show_fg", "geom_show_gt", "geom_show_off", "geom_metric", "geom_height", "geom_verts"]
+    _det_csv = os.path.join(ds.detection_dir_for_sensor(_g_sensor, _g_src), "tracks.csv")
+    _has_det = os.path.exists(_det_csv)
+    _ov_keys = ["geom_show_fg", "geom_show_gt", "geom_show_off", "geom_metric",
+                "geom_show_det", "geom_height", "geom_verts"]
     vu.ensure_toggle_defaults({k: False for k in _ov_keys})
     with st.expander("🎛️ Layers & overlays", expanded=True):
         vu.bulk_toggle_buttons(_ov_keys, "geom_bulk", rerun_scope="app")
@@ -430,6 +461,12 @@ with tab_geom:
                                 help="Colour the backdrop cloud by z (Turbo) — spot clutter in 2D.")
         show_verts = gr2[2].toggle("🔖 Vertex labels", key="geom_verts",
                                    help="Tag every vertex (ROIn / R<road>.<v> / X<rect>.<v>) while editing.")
+        gr3 = st.columns(3)
+        show_det = gr3[0].toggle("🎯 Detections", key="geom_show_det", disabled=not _has_det,
+                                 help="What the detector reported as objects — green = moving, purple = "
+                                      "static (never-moving = FP / pole risk). This frame's boxes, or (with "
+                                      "Show ALL frames) every detection centre across the sequence." if _has_det
+                                      else "No detection tracks.csv for this sensor/source — run Detection first.")
         off_buf = st.number_input("🟡 Off-object box buffer (m)", 0.0, 2.0, 0.3, 0.1, key="geom_offbuf",
                                   help="Grow each GT box by this margin before flagging foreground as off-object "
                                        "(yellow). Moves the yellow overlay AND the FG-quality numbers together "
@@ -449,6 +486,15 @@ with tab_geom:
         fg_all, off_all, _ = _geom_foreground_all(
             _g_pcd_dir, ds.gt_dir_for_input(_g_pcd_dir), model_path,
             os.path.getmtime(model_path), _gmt, float(off_buf))
+
+    # Detections (the detector's reported objects) for this frame, or all frames.
+    det_objs = det_scatter = None
+    if show_det and _has_det:
+        _by_frame, _det_cen, _det_stat = _geom_detections(_det_csv, os.path.getmtime(_det_csv))
+        if show_all:
+            det_scatter = (_det_cen, _det_stat)
+        else:
+            det_objs = _by_frame.get(gfi)
 
     # Compute foreground / GT if any of their consumers (overlay or metric) is on.
     geom_fg = None
@@ -593,11 +639,20 @@ with tab_geom:
             _fg_disp = geom_fg_kept if show_fg else None
             _fgx_disp = geom_fg_excl if show_fg else None
             _off_disp = geom_off
+        if show_det and (det_objs or det_scatter is not None):
+            if show_all and det_scatter is not None:
+                _ds_cen = det_scatter[0]
+                st.caption(f"🎯 All-frames detections: {len(_ds_cen):,} object centres "
+                           f"({int(det_scatter[1].sum()):,} static — purple = FP/pole risk).")
+            elif det_objs:
+                _ns = sum(1 for d in det_objs if d[5])
+                st.caption(f"🎯 Frame {gfi}: {len(det_objs)} detections ({_ns} static).")
         ev = st.plotly_chart(ge.preview_figure(geom_bg, geom, height=620,
                                                fg_points=_fg_disp,
                                                fg_excluded_points=_fgx_disp,
                                                gt_objs=geom_gt if show_gt else None,
                                                off_object_points=_off_disp,
+                                               det_objs=det_objs, det_scatter=det_scatter,
                                                dragmode=dm_mode, show_vertex_labels=show_verts,
                                                color_by_height=color_h, height_span=h_span),
                              use_container_width=True, config={"scrollZoom": True},
