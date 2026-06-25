@@ -118,7 +118,35 @@ precision (e.g. P 57 at the cost of recall) when fewer false alarms matter more 
 
 ---
 
-## 6. Correctness fixes (small metric effect, real for soundness)
+## 6. Failure-mode trace → a recall fix the precision sweep missed
+
+Tracing every scorable GT box through the pipeline (cluster → accept → track → match) on
+registered/cropped (2849 boxes) localized the misses:
+
+- **231 "dense misses"** (FN with ≥ 20 foreground points inside): **69** no cluster formed
+  near the box, **41** a cluster existed but was **rejected by the acceptance gate**, **121**
+  accepted but **lost in tracking** (association confusion between adjacent vehicles).
+- **68 split detections** (a matched GT with ≥ 2 detections inside) — the "one car → two
+  objects" case, from a sparse cluster fragmenting under DBSCAN.
+
+The acceptance-gate misses pointed at `strong_pts` (auto-accept a cluster without temporal
+confirmation once it has this many points). The old cutoff **200** was arbitrary; a dense
+fast mover (e.g. a 184-pt car at frame 0 with no prior frame) fell just under it and failed
+temporal confirmation. **`strong_pts` was never in the precision sweep** — it's a recall
+lever — and lowering it is a clean **Pareto improvement** (recall up, precision flat):
+
+| strong_pts | Precision | Recall | F1 | R@0–20 |
+|---|---|---|---|---|
+| 200 (old) | 52.4 | 60.8 | 56.3 | 52.5 |
+| **100 (new default)** | 52.4 | 61.3 | 56.5 | **55.8** |
+| 60 | 52.6 | 61.6 | 56.7 | 56.8 |
+
+Near-field recall rises 52.5→55.8 at zero precision cost (dense road clusters are real
+vehicles; clutter is tiny, median ~5 pts). Shipped `strong_pts = 100`. The **split** and
+**tracking-association** misses remain — they need a better *model* (L-shape box fitting,
+smarter adjacent-vehicle association), not a knob, consistent with §5.
+
+## 7. Correctness fixes (small metric effect, real for soundness)
 
 - **Cross-sensor GT dedup (IoU-aware).** The ~8° yaw / ~2 m calibration residual pushed a
   shared vehicle's south/north boxes apart (up to ~5 m at range), past the 2.5 m centre

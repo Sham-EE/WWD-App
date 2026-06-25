@@ -77,6 +77,12 @@ with st.expander("🔧 Clustering & Detection", expanded=False):
     min_hits = cc2.slider("Min Temporal Hits", 1, 10, 2, 1,
         help="Frames a candidate must exist to be confirmed. Higher = fewer spurious tracks and fewer "
              "ID switches, but lower recall (e.g. 3 cut ID switches ~half but dropped recall).")
+    strong_pts = st.slider("Auto-accept point count (strong_pts)", 20, 400,
+        int(DEFAULT_DETECTION_PARAMS["strong_pts"]), 10,
+        help="A cluster with at least this many points is accepted immediately, skipping temporal "
+             "confirmation — dense road clusters are unambiguously real vehicles. Lower to catch dense "
+             "fast movers that fail temporal confirmation (lifts near-field recall); too low starts "
+             "auto-accepting dense clutter. Lowered 200→100 by default.")
 
 with st.expander("🚗 Vehicle class gate", expanded=False):
     vehicle_gate = st.checkbox("Drop non-vehicles (peds/bikes)", value=False,
@@ -161,7 +167,7 @@ if st.button("🚀 Start Detection and Tracking", use_container_width=True):
                 'adaptive_eps': adaptive_eps, 'aeps0': aeps0, 'aeps_k': aeps_k,
                 'aeps_min': aeps_min, 'aeps_max': aeps_max,
                 'suppress_static': suppress_static, 'static_min_frames': static_min_frames,
-                'static_max_speed': static_max_speed,
+                'static_max_speed': static_max_speed, 'strong_pts': strong_pts,
             }
             st.info(f"Processing {len(filtered_files)} files from: {filtered_pcd_dir}...")
             progress_bar = st.progress(0, text="Starting...")

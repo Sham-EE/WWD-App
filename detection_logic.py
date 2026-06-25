@@ -26,6 +26,12 @@ DEFAULT_DETECTION_PARAMS = {
     "fps": 10.0, "max_missed": 5, "moving_speed_thresh": 3.0,
     "merge_dist": 2.5, "yaw_merge_deg": 15.0, "truck_len_thresh": 7.0, "truck_merge_dist": 5.0,
     "vehicle_gate": False, "vehicle_min_length": 2.5, "vehicle_min_points": 40,
+    # Auto-accept a cluster (skip temporal confirmation) once it has this many points —
+    # a dense road cluster is unambiguously a real vehicle, while clutter is tiny (median
+    # ~5 pts). Lowered 200→100 after a trace showed dense near-field movers (e.g. a fast
+    # 184-pt car with no prior frame) failing temporal confirmation at the old cutoff;
+    # 100 lifts 0-20 m recall 52.5→55.8 at zero precision cost.
+    "strong_pts": 100,
     "adaptive_eps": True, "aeps0": 0.8, "aeps_k": 0.04, "aeps_min": 1.0, "aeps_max": 3.0,
     # Static-phantom suppression: drop tracks that are BOTH long-lived AND never
     # moved (the static-leak signature — barriers/poles/vegetation the background
