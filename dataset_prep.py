@@ -153,18 +153,21 @@ def _keep_object(cuboid, obj_type, region_poly, crit):
     return True
 
 
-def _box_footprint(val):
-    """Closed top-down (x, y) rectangle for a cuboid [x,y,z, qx,qy,qz,qw, l,w,h]."""
+def _box_footprint(val, buffer=0.0):
+    """Closed top-down (x, y) rectangle for a cuboid [x,y,z, qx,qy,qz,qw, l,w,h].
+    ``buffer`` (m) expands the footprint outward on all sides — used only by the
+    off-object overlays so a real return spilling just past a tight / slightly
+    mis-placed box doesn't get flagged as clutter (the metric passes buffer=0)."""
     x, y = val[0], val[1]
     qx, qy, qz, qw = val[3], val[4], val[5], val[6]
     yaw = np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
-    l, w = val[7] / 2.0, val[8] / 2.0
+    l, w = val[7] / 2.0 + buffer, val[8] / 2.0 + buffer
     c, s = np.cos(yaw), np.sin(yaw)
     local = np.array([[l, w], [l, -w], [-l, -w], [-l, w], [l, w]])
     return local @ np.array([[c, -s], [s, c]]).T + np.array([x, y])
 
 
-def foreground_quality(fg_pts, original_pts, gt_objs, min_pts=10):
+def foreground_quality(fg_pts, original_pts, gt_objs, min_pts=10, box_buffer=0.0):
     """How well the filter preserved real objects, vs the GT boxes for this frame.
     A *proxy* for downstream detectability, not the detection F1. Counts foreground
     (and original) points inside each GT box footprint:
@@ -181,7 +184,7 @@ def foreground_quality(fg_pts, original_pts, gt_objs, min_pts=10):
     scanned = covered = 0
     uncovered = []
     for o in gt_objs or []:
-        path = Path(_box_footprint(o["val"]))
+        path = Path(_box_footprint(o["val"], buffer=box_buffer))
         fin = path.contains_points(fg_xy) if len(fg_xy) else np.zeros(0, dtype=bool)
         oin = path.contains_points(or_xy) if len(or_xy) else np.zeros(0, dtype=bool)
         fc = int(fin.sum()); oc = int(oin.sum())

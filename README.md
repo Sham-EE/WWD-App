@@ -402,6 +402,11 @@ direct test of the "fusion fills occlusion shadows → better far recall" hypoth
   **0.666 vs 0.643** (south keeps a precision edge, 0.78 vs 0.71). This is exactly what the
   benchmark is for — it turned "should help" into a measured win *and* surfaced the
   one-line tuning fix that was hiding the benefit.
+  *(Numbers above are pre-matching-fix. Under the corrected gated matcher the A/B is a clean
+  **recall-vs-precision trade**: registered **recall 0.652 vs 0.501** — the occlusion-shadow
+  win that matters for not missing a wrong-way driver — while south keeps higher precision,
+  F1 a near-tie (0.602 vs 0.611). For a recall-critical safety task, registered is the right
+  pipeline.)*
 
 ### Current baseline (defaults, ROI on, all classes)
 | match gate | Precision | Recall | F1 | MOTA | MOTP |
@@ -410,6 +415,17 @@ direct test of the "fusion fills occlusion shadows → better far recall" hypoth
 | 2.5 m | 0.813 | 0.701 | 0.753 | 0.531 | ~1.0 m |
 
 (Detection is deterministic: identical settings → identical results.)
+
+> **⚠️ Evaluator matching fix.** The Hungarian matcher applied the distance gate *after*
+> the global assignment; in dense scenes that stranded genuinely-close detection/GT pairs,
+> scoring a real in-box detection as *both* a miss and a false positive. Fixed (gate before
+> assigning). This raises absolute F1 ≈ 4 pts (both precision **and** recall); the corrected
+> registered/cropped baseline is **P 0.559 / R 0.652 / F1 0.602**. Numbers measured before
+> this fix understate F1; see [`RESULTS.md`](RESULTS.md).
+
+> **Full ablation tables → [`RESULTS.md`](RESULTS.md)** — the paper-ready evidence base
+> (registration A/B, BG-filter ablation, cropped≫full, static-suppression, and the
+> precision Pareto analysis below).
 
 ### Static-phantom suppression (detection FP analysis)
 
@@ -438,6 +454,16 @@ but they never move). Two things follow:
   already-clean single south sensor (it has few phantoms) — consistent with the leak being
   a fusion artifact. Same gate applied to both, so the A/B stays fair.
 
+**Precision is then Pareto-capped.** With static-suppression on, the registered/cropped
+baseline is **P 52.4 / R 60.8 / F1 56.3**. Every remaining precision lever was swept —
+`min_cluster_pts` (flat and range-aware), `min_hits`, `merge_dist`, static aggressiveness,
+and an NMS duplicate-suppression pass — and **all are pure precision↔recall trades; none
+beats the baseline F1** (full table in [`RESULTS.md`](RESULTS.md)). The leftover FPs are
+tiny clusters (median 5 pts) in the mid-field, irreducibly ambiguous against real sparse
+vehicles; near-duplicates within ≤2.5 m are already merged by the tracker. So the defaults
+are kept (the `min_cluster_pts` slider already lets you dial toward precision when fewer
+false alarms matter more than recall); further gains need a learned detector, not tuning.
+
 ---
 
 ## Changelog (highlights since the pipeline came together)
@@ -462,6 +488,13 @@ but they never move). Two things follow:
   *Static-phantom suppression* section.
 - **Cross-sensor GT dedup** now IoU-aware (`fuse_labels`, `dedup_iou`) — kills the
   residual-displaced south/north "twin" boxes (phantom FNs + red twins).
+- **Evaluator matching fix** — gate the Hungarian assignment *before* solving (was gated
+  after), so dense scenes stop stranding close detection/GT pairs as miss+FP. Raised
+  absolute F1 ≈ 4 pts (both P and R). All pre-fix numbers understate F1.
+- **Lowered `strong_pts` 200→100** (auto-accept dense clusters) — recovers near-field dense
+  movers that failed temporal confirmation; clean Pareto gain (recall up, precision flat).
+- **Persistent eval history** — every evaluation (single + A/B) appends settings+metrics to
+  `outputs/run_history/`, with current-vs-previous deltas + trend (reuses `run_history.py`).
 - **Density-adaptive background clustering** + **SOR denoise** (off by default) + **📈 run
   tracker** on Background Filtering; a measured ablation showed the BG-occupancy knobs are
   near their ceiling (the win was structural — fusion, cropping, static-suppression).
@@ -551,6 +584,19 @@ but they never move). Two things follow:
   undetected objects) and a per-frame coverage caption; Background Filtering gains the
   matching **❌ uncovered-object** and **🟡 off-object-foreground** overlays. The
   Visualizer adds a **Scorable vs All-raw GT** toggle with per-frame box counts.
+- **Geometry Editor + Lane Editor follow the active sensor/source** (shared `pipeline_*`
+  state) — they show the **registered/cropped cloud + that model/GT/tracks** by default,
+  not a hardcoded south/full reference (which had made the FG numbers look wrong). The
+  Geometry Editor adds a **🎯 detection overlay** (per-frame boxes + an all-frames centre
+  scatter, static detections in purple = FP/pole risk), a **🕒 Show-ALL-frames** aggregate
+  of foreground + off-object FG (so persistent clutter is visible for exclusion-zone
+  placement), a tunable **off-object box buffer**, a **📌 Set-as-new-default** button, and
+  Box-Select drawing (no Pan/Draw toggle). Its overlays + Registration's now use the same
+  collapsible **🎛️ Layers & overlays + ✅ All / ⬜ None** pattern as the rest of the app.
+- **Persistent eval history** — every evaluation (single run + A/B) appends settings +
+  metrics to `outputs/run_history/`, with current-vs-previous deltas + a trend
+  (`run_history.py`), so detection runs are comparable over time (not just the latest
+  `evaluation_report.json`).
 - **LiDAR position markers** (diamond + nadir plumb line) available on every 3D viewer,
   frame-aware (sensor origin for south/north, calibrated position for registered).
 - Fixed the exclusion-zone legend (one dotted entry, not four fat-dashed keys).

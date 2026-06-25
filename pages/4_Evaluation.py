@@ -10,6 +10,46 @@ from detection_logic import run_detection_and_tracking, DEFAULT_DETECTION_PARAMS
 from evaluation import (evaluate, recall_by_distance, save_report, load_gt_by_key,
                         bev_figure, _frame_key, _match_frame, BEV_CONFIG)
 import viewer_ui as vu
+import run_history as rh
+
+
+def _eval_metrics(s):
+    """Flatten an evaluate() summary into the metrics dict we log per run."""
+    return {"precision": round(100 * s["precision"], 2), "recall": round(100 * s["recall"], 2),
+            "f1": round(100 * s["f1"], 2), "MOTA": round(100 * s["MOTA"], 2),
+            "MOTP_m": round(s["MOTP_m"], 3), "TP": s["TP"], "FP": s["FP"], "FN": s["FN"],
+            "ID_switches": s["ID_switches"], "gt_total": s["gt_objects_total"],
+            "frames": s["evaluated_frames"]}
+
+
+def _render_eval_history(_ds, tag):
+    """Persistent eval-run history: current-vs-previous deltas + a trend + a param diff +
+    the full log, mirroring the Background-Filtering run tracker but for the real
+    detection metrics. Reads outputs/run_history/<tag>.jsonl."""
+    hist = rh.load_history(_ds, tag)
+    if not hist:
+        st.caption("No logged eval runs yet for this selection — each **Run Evaluation** appends one.")
+        return
+    cur = hist[-1]["metrics"]
+    prev = hist[-2]["metrics"] if len(hist) > 1 else None
+    m = st.columns(4)
+    def _d(k, fmt="{:+.1f}"):
+        return fmt.format(cur[k] - prev[k]) if prev else None
+    m[0].metric("Precision", f"{cur['precision']:.1f}%", _d("precision"))
+    m[1].metric("Recall", f"{cur['recall']:.1f}%", _d("recall"))
+    m[2].metric("F1", f"{cur['f1']:.1f}%", _d("f1"))
+    m[3].metric("FP", f"{cur['FP']:,}", _d("FP", "{:+d}"), delta_color="inverse")
+    df = pd.DataFrame([{"run": i + 1, "P": h["metrics"]["precision"], "R": h["metrics"]["recall"],
+                        "F1": h["metrics"]["f1"]} for i, h in enumerate(hist)]).set_index("run")
+    st.line_chart(df)
+    if prev:
+        diff = rh.param_diff(hist[-2]["params"], hist[-1]["params"])
+        st.caption("🔧 Changed since previous run: "
+                   + (", ".join(f"`{k}` {a}→{b}" for k, (a, b) in diff.items())
+                      if diff else "nothing tracked changed."))
+    with st.expander("Full eval log"):
+        st.dataframe(pd.DataFrame([{"time": h["time"], "note": h.get("note", ""), **h["metrics"]}
+                                   for h in hist]), use_container_width=True)
 
 
 @st.cache_data(show_spinner="Loading ground-truth frames…")
@@ -77,6 +117,8 @@ def _render_single_run():
                                  "(research polygon ∩ |y|≤ROI). Objects outside the sensor's operational "
                                  "region aren't counted as misses — this is the fair number.")
     output_dir = _ds.detection_dir_for_sensor(_sensor, _src)
+    eval_note = st.text_input("Run note (optional — logged with this eval)", key="eval_note_single",
+                              placeholder="e.g. strong_pts=100, suppress_static on")
 
     # Cross-check: the in-memory detection must be for the sensor/source being scored,
     # otherwise we'd match one sensor's frames against another's GT (the cryptic
@@ -165,6 +207,23 @@ def _render_single_run():
                 with st.expander("📄 Full report summary (readable JSON)"):
                     st.json(report['summary'])
                     st.caption("Full report (incl. per-frame rows + settings) saved at the path above.")
+
+                # Append to the PERSISTENT eval history (settings + metrics) so runs are
+                # comparable over time — save_report only keeps the latest report.
+                _dp = results.get('params', {})
+                _eparams = {"match_dist": match_dist, "vehicles_only": bool(veh_only),
+                            "roi": bool(roi_only), "gt": os.path.basename(gt_dir.rstrip('/'))}
+                for _k in ("strong_pts", "suppress_static", "static_max_speed", "truck_merge_dist",
+                           "min_cluster_pts", "min_hits", "adaptive_eps", "dbscan_eps"):
+                    if _k in _dp:
+                        _eparams[_k] = _dp[_k]
+                rh.log_run(_ds, f"eval_{_sensor}_{_src}", _eval_metrics(s), _eparams, note=eval_note)
+
+    st.divider()
+    st.markdown("#### 📈 Eval history — this sensor · source")
+    st.caption("Persistent log of every evaluation you've run for this selection (settings + metrics), "
+               "with current-vs-previous deltas. Stored in `outputs/run_history/`.")
+    _render_eval_history(_ds, f"eval_{_sensor}_{_src}")
 
     # ---------------- Visual evaluation: GT vs Detection, side-by-side top-down ----------------
     st.divider()
@@ -353,6 +412,16 @@ def _render_ab():
             rbd = recall_by_distance(det_frames, paths, gtdir, bins=_DIST_BINS, match_dist=match_dist,
                                      classes=classes, roi_bounds=roi_bounds)
             out[s] = {"summary": rep["summary"], "rbd": rbd, "gt_dir": os.path.basename(gtdir.rstrip("/"))}
+            # Log each arm to the persistent eval history (shared GT mode in the tag so
+            # shared-vs-own-GT runs don't mix), so A/B runs are comparable over time too.
+            _abtag = f"eval_ab_{s}_{src}_{'shared' if shared_gt else 'own'}"
+            _abparams = {"match_dist": match_dist, "vehicles_only": bool(vehicles_only),
+                         "roi": bool(roi_on), "gt_kind": gt_kind_key, "gt": out[s]["gt_dir"],
+                         "strong_pts": _AB_PARAMS.get("strong_pts"),
+                         "suppress_static": _AB_PARAMS.get("suppress_static"),
+                         "truck_merge_dist": _AB_PARAMS.get("truck_merge_dist")}
+            rh.log_run(_ds, _abtag, _eval_metrics(rep["summary"]), _abparams,
+                       note=f"A/B {s}·{src}·{'shared' if shared_gt else 'own'} GT")
         bar.empty()
         st.session_state.ab_results = {"results": out, "src": src_label, "match_dist": match_dist,
                                        "vehicles_only": vehicles_only, "roi_on": roi_on,
@@ -412,6 +481,14 @@ def _render_ab():
         chart["Registered"].append(r_r if r_r is not None else np.nan)
     st.dataframe(pd.DataFrame(drows), use_container_width=True, hide_index=True)
     st.bar_chart(pd.DataFrame(chart, index=list(sb)))
+
+    st.divider()
+    with st.expander("📈 A/B eval history (per arm — current source + GT mode)", expanded=False):
+        st.caption("Every A/B run appends to a persistent log. Trend below is for the current Input "
+                   "cloud + scoring mode; switch those to see other histories.")
+        for _s in _AB_SENSORS:
+            st.markdown(f"**{_s.capitalize()}**")
+            _render_eval_history(_ds, f"eval_ab_{_s}_{src}_{'shared' if shared_gt else 'own'}")
 
 
 tab_single, tab_ab = st.tabs(["📐 Single run", "📊 Registered vs South (A/B)"])

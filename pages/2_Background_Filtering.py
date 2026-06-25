@@ -105,7 +105,9 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
     # Sensor split (registered only): colour the original cloud by source LiDAR —
     # south vs north — like the registration tab, so you can see fusion coverage /
     # which sensor a region's points come from. Overrides the plain/height original.
-    if show_original and split is not None:
+    # Split shows whenever it's supplied (independent of the ⚪ Original toggle — it IS
+    # the original cloud, just coloured by source LiDAR).
+    if split is not None:
         s_pts, n_pts = _clip(split[0]), _clip(split[1])
         # Match the Registration tab's by-sensor palette exactly (reg.SENSOR_COLORS).
         if s_pts is not None and len(s_pts):
@@ -196,7 +198,6 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
             line=dict(color="#ff2b2b", width=6), name="Uncovered obj", hoverinfo="skip"))
 
     if sensors:
-        import registration as reg
         for tr in reg.sensor_marker_traces(go, sensors, z_floor=z_floor):
             fig.add_trace(tr)
 
@@ -567,6 +568,13 @@ if st.session_state.bg_model:
                                              "coverage. Registered only."
                                              if _sensor == "registered"
                                              else "Only for the Registered (fused) cloud.")
+                off_buf = r4[1].number_input("🟡 box buffer (m)", 0.0, 2.0, 0.3, 0.1,
+                                             key="bf_offbuf", disabled=not has_gt,
+                                             help="Grow each GT box by this margin before deciding which "
+                                                  "foreground is 'off-object' (yellow). A return spilling "
+                                                  "just past a tight / mis-placed box then counts as on-object, "
+                                                  "not clutter. Moves the yellow overlay AND the off-object / "
+                                                  "covered numbers together (set 0 for the strict count).")
                 h_span = st.slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="bf_hspan",
                                    help="Colour spreads over this many metres above ground.") \
                     if color_h else 4.0
@@ -580,11 +588,13 @@ if st.session_state.bg_model:
                 gp = gt_index.get(_frame_key(pcd_files[i]))
                 if gp:
                     gt_objs = lp.load_objects(gp)
-            # Foreground-quality analysis, computed ONCE and shared by the metric
-            # readout and the two overlays (uncovered objects + off-object foreground).
+            # Foreground-quality analysis, computed ONCE with the box buffer and shared by
+            # the metric readout, the caption, and the overlays — so the 🟡 box-buffer
+            # slider moves the yellow points AND the off-object count together (a wider
+            # buffer counts truck-edge spillover as on-object, not clutter).
             q = None
             if gt_objs is not None and (metric_on or uncov_on or offfg_on):
-                q = foreground_quality(fg, pts, gt_objs, min_pts=int(min_pts))
+                q = foreground_quality(fg, pts, gt_objs, min_pts=int(min_pts), box_buffer=float(off_buf))
             uncovered_objs = q["uncovered"] if (q and uncov_on) else None
             off_object_pts = fg[~q["fg_on_mask"]] if (q and offfg_on and len(fg)) else None
             # Per-frame south/north split for the registered cloud (on-the-fly re-fuse).

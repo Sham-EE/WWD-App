@@ -1,4 +1,5 @@
 import os
+import glob
 import time
 
 import numpy as np
@@ -26,16 +27,19 @@ def _load_raw(path):
     return np.asarray(o3d.io.read_point_cloud(path).points)
 
 
-# Filter-time config (matches the Background Filtering page defaults) — lets the
-# geometry editor reuse a saved background model to show foreground classification.
+# Filter-time config — must mirror the Background Filtering page DEFAULTS so the geometry
+# editor's foreground matches what that page would produce (density clusterer, 5x5 on, SOR
+# off). Keep in sync if those defaults change.
 _GEOM_FILTER_CFG = {
     "ground_grid": 0.5, "dz_thresh": 0.3, "bg_voxel": 1.0, "bg_ratio": 0.98,
-    "cell_size": 1.0, "cell_ratio": 0.9,
-    "cluster": {"ds_voxel": 0.15, "eps0": 0.35, "eps_k": 0.008, "eps_min": 0.35,
-                "eps_max": 2.0, "min_samples": 16},
+    "cell_size": 1.0, "cell_ratio": 0.9, "inward_buffer_m": 2.0,
+    "cluster": {"mode": "density", "ds_voxel": 0.15, "eps0": 0.35, "eps_k": 0.008,
+                "eps_min": 0.35, "eps_max": 2.0, "min_samples": 16,
+                "eps_scale": 2.5, "n_tiers": 3, "min_samples_far": 8},
     "enable_pole_filter": True, "pole_min_height": 1.5, "pole_min_aspect_xy": 6.0,
     "pole_max_xy_area": 1.0, "pole_min_linearity": 0.75, "pole_min_points": 8,
-    "pole_max_points": 80,
+    "pole_max_points": 80, "enable_5x5": True, "enable_sor": False,
+    "coarse_5x5": {"NX": 5, "NY": 5},
 }
 
 
@@ -59,6 +63,70 @@ def _geom_foreground(cloud_path, model_path, model_mtime, geom_mtime):
         return fg
     except Exception:
         return None
+
+
+@st.cache_data(show_spinner="Aggregating foreground over ALL frames…", max_entries=3)
+def _geom_foreground_all(pcd_dir, gt_dir, model_path, model_mtime, geom_mtime, box_buffer, voxel=0.25):
+    """Foreground (and off-object foreground) accumulated over EVERY frame of pcd_dir,
+    voxel-downsampled for display. Lets the editor show all clutter across the whole
+    sequence at once, so you can place exclusion zones over persistent off-object FG.
+    Cached by model/geometry/buffer so it only recomputes when those change."""
+    import bg_filter_core as bf
+    import label_projection as lp
+    from dataset_prep import foreground_quality
+    try:
+        model = _load_bg_model(model_path, model_mtime)
+    except Exception:
+        return None, None, 0
+    gtmap = {}
+    if gt_dir and os.path.isdir(gt_dir):
+        for f in glob.glob(os.path.join(gt_dir, "*.json")):
+            gtmap["_".join(os.path.basename(f).split("_")[:2])] = f
+    files = rv.list_by_frame(pcd_dir, [".pcd"])
+    fg_list, off_list = [], []
+    for cp in files:
+        pts = _load_raw(cp)
+        fg, _ = bf.filter_points_with_model(pts, model, _GEOM_FILTER_CFG)
+        if not len(fg):
+            continue
+        fg_list.append(fg[:, :3])
+        gp = gtmap.get("_".join(os.path.basename(cp).split("_")[:2]))
+        if gp:
+            q = foreground_quality(fg, pts, lp.load_objects(gp), box_buffer=box_buffer)
+            off_list.append(fg[~q["fg_on_mask"]][:, :3])
+        else:
+            off_list.append(fg[:, :3])  # no GT this frame -> all foreground is "off-object"
+    def _vox(lst):
+        return bf.voxel_downsample_numpy(np.vstack(lst), voxel) if lst else None
+    return _vox(fg_list), _vox(off_list), len(files)
+
+
+@st.cache_data(show_spinner=False)
+def _geom_detections(csv_path, _mtime):
+    """Read a detection tracks.csv -> (by_frame dict, all-centres Nx2, all-static bool N).
+    'static' = the track's lifetime MAX speed never crossed 1.5 m/s (FP / pole risk).
+    Boxes fall back to nominal car size when no extent was measured."""
+    import csv
+    rows, maxsp = [], {}
+    try:
+        with open(csv_path, newline="") as f:
+            for r in csv.DictReader(f):
+                tid = r.get("tid", "")
+                fr = int(float(r["frame"]))
+                cx, cy = float(r["cx"]), float(r["cy"])
+                yaw = float(r.get("yaw", 0) or 0)
+                l = float(r.get("length", 0) or 0) or 4.5
+                w = float(r.get("width", 0) or 0) or 1.9
+                rows.append((fr, tid, cx, cy, yaw, l, w))
+                maxsp[tid] = max(maxsp.get(tid, 0.0), float(r.get("speed", 0) or 0))
+    except Exception:
+        return {}, np.zeros((0, 2)), np.zeros((0,), dtype=bool)
+    by_frame, cen, stat = {}, [], []
+    for fr, tid, cx, cy, yaw, l, w in rows:
+        is_static = maxsp.get(tid, 9.9) < 1.5
+        by_frame.setdefault(fr, []).append((cx, cy, yaw, l, w, is_static))
+        cen.append((cx, cy)); stat.append(is_static)
+    return by_frame, (np.array(cen) if cen else np.zeros((0, 2))), np.array(stat, dtype=bool)
 
 
 def _resolve_bg_model(src):
@@ -328,7 +396,7 @@ with tab_geom:
     geom = st.session_state.geom_edit
 
     default_geom = ge.load_default_geometry(ds)
-    gt1, gt2, gt3 = st.columns([1, 1, 1])
+    gt1, gt2, gt3, gt4 = st.columns([1.2, 1, 1, 1.2])
     if gt1.button("💾 Save (updates everything)", type="primary", use_container_width=True, key="geom_save"):
         ge.save_site_geometry(ds, geom)
         st.success(f"Saved → `{ds.site_geometry_path}`. The whole pipeline now uses this geometry.")
@@ -340,43 +408,106 @@ with tab_geom:
         import copy
         st.session_state.geom_edit = copy.deepcopy(default_geom)
         st.rerun()
+    if gt4.button("📌 Set as new default", use_container_width=True, key="geom_set_default",
+                  help="Snapshot the CURRENT geometry as this dataset's default — what every "
+                       "'Reset to default' button restores from here on."):
+        ge.save_default_geometry(ds, geom)
+        st.success(f"Default updated → `{ds.default_site_geometry_path}`. "
+                   "'Reset to default' now restores this geometry.")
 
-    geom_clouds = rv.list_by_frame(ds.raw_lidar_south_dir, [".pcd"])
-    geom_src = "full"
-    if not geom_clouds:
-        geom_clouds = rv.list_by_frame(ds.pcd_dir, [".pcd"]); geom_src = "cropped"
+    # Follow the SAME sensor/source the rest of the app uses (shared pipeline_* state),
+    # so the foreground / FG-quality here matches Background Filtering & Detection — not a
+    # hardcoded south/full reference. Resolve the cloud, model and GT for that selection.
+    gsc, gic = st.columns(2)
+    _g_sensor = gsc.radio("Sensor", ["Registered", "South", "North"], key="pipeline_sensor",
+                          horizontal=True, help="Which LiDAR's cloud + background model to show the "
+                          "foreground for. Shared with Background Filtering / Detection.").lower()
+    _g_src = "cropped" if gic.radio("Input cloud", ["Cropped (road)", "Full (uncropped)"],
+                                    key="pipeline_source", horizontal=True).startswith("Cropped") else "full"
+    geom_src = _g_src
+    _g_pcd_dir = ds.input_pcd_for_sensor(_g_sensor, _g_src)
+    geom_clouds = rv.list_by_frame(_g_pcd_dir, [".pcd"])
+    if not geom_clouds:  # fallback so the editor still works if that selection isn't built
+        geom_clouds = rv.list_by_frame(ds.raw_lidar_south_dir, [".pcd"]) or rv.list_by_frame(ds.pcd_dir, [".pcd"])
     geom_bg = None
     if geom_clouds:
         gfi = st.slider("Backdrop frame", 0, len(geom_clouds) - 1, 0, key="geom_bg_frame")
         geom_bg = _load_raw(geom_clouds[gfi])
-    gt_map = _gt_map(ds.raw_labels_south_dir) or _gt_map(ds.gt_dir)
-    model_path = _resolve_bg_model(geom_src)
-    bc1, bc2, bc3, bc4, bc5 = st.columns([1.2, 1, 1, 1.1, 1.1])
-    step = bc1.select_slider("Stepper increment (m)", [0.5, 1.0, 2.0, 5.0], value=1.0, key="geom_step")
-    show_fg = bc2.toggle("🔴 Foreground", value=False, key="geom_show_fg", disabled=not model_path,
-                         help="Overlay what the background model classifies as foreground (red), so "
-                              "you can drop an exclusion rect over poles/clutter that leak through. "
-                              "Save geometry to see the effect." if model_path
-                              else "No saved background model — build one on the Background Filtering page.")
-    show_gt = bc3.toggle("🏷️ GT boxes", value=False, key="geom_show_gt", disabled=not gt_map,
-                         help="Overlay this frame's ground-truth boxes (category-coloured + labels)."
-                              if gt_map else "No ground truth for this dataset.")
-    show_off = bc4.toggle("🟡 Off-object FG", value=False, key="geom_show_off",
-                          disabled=not (model_path and gt_map),
-                          help="Recolour (yellow) the kept foreground that falls OUTSIDE every GT box — "
-                               "clutter / false-foreground. Use it to place crop / exclusion zones over the "
-                               "junk the filter keeps." if (model_path and gt_map)
-                               else "Needs a saved model AND ground truth.")
-    show_metric = bc5.toggle("📊 FG quality", value=False, key="geom_metric",
-                             disabled=not (model_path and gt_map),
-                             help="Live foreground-vs-GT quality for this frame (needs a model + GT). "
-                                  "Edit/Save geometry and watch the numbers move."
-                                  if (model_path and gt_map) else "Needs a saved model AND ground truth.")
+    gt_map = _gt_map(ds.gt_dir_for_input(_g_pcd_dir)) or _gt_map(ds.raw_labels_south_dir) or _gt_map(ds.gt_dir)
+    _g_model = ds.model_path_for_sensor(_g_sensor, _g_src)
+    model_path = _g_model if (_g_model and os.path.exists(_g_model)) else _resolve_bg_model(geom_src)
+    st.caption(f"🛰️ {_g_sensor.capitalize()} · {'Cropped' if _g_src=='cropped' else 'Full'}  ·  "
+               f"model: `{os.path.basename(model_path) if model_path else 'none — build on Background Filtering'}`")
+    step = st.select_slider("Stepper increment (m)", [0.5, 1.0, 2.0, 5.0], value=1.0, key="geom_step",
+                            help="Step size for the +/- vertex / box editors below.")
+    _nframes = len(geom_clouds) if geom_clouds else 0
+    _det_csv = os.path.join(ds.detection_dir_for_sensor(_g_sensor, _g_src), "tracks.csv")
+    _has_det = os.path.exists(_det_csv)
+    _ov_keys = ["geom_show_fg", "geom_show_gt", "geom_show_off", "geom_metric",
+                "geom_show_det", "geom_height", "geom_verts"]
+    vu.ensure_toggle_defaults({k: False for k in _ov_keys})
+    with st.expander("🎛️ Layers & overlays", expanded=True):
+        vu.bulk_toggle_buttons(_ov_keys, "geom_bulk", rerun_scope="app")
+        gr1 = st.columns(3)
+        show_fg = gr1[0].toggle("🔴 Foreground", key="geom_show_fg", disabled=not model_path,
+                                help="What the background model classifies as foreground (red) — drop an "
+                                     "exclusion rect over poles/clutter that leak through."
+                                     if model_path else "No saved background model.")
+        show_gt = gr1[1].toggle("🏷️ GT boxes", key="geom_show_gt", disabled=not gt_map,
+                                help="This frame's ground-truth boxes (category-coloured + labels)."
+                                     if gt_map else "No ground truth for this dataset.")
+        show_off = gr1[2].toggle("🟡 Off-object FG", key="geom_show_off", disabled=not (model_path and gt_map),
+                                 help="Foreground OUTSIDE every GT box (yellow) — clutter to place exclusion "
+                                      "zones over." if (model_path and gt_map) else "Needs a model AND ground truth.")
+        gr2 = st.columns(3)
+        show_metric = gr2[0].toggle("📊 FG quality", key="geom_metric", disabled=not (model_path and gt_map),
+                                    help="Live foreground-vs-GT quality for this frame (model + GT)."
+                                         if (model_path and gt_map) else "Needs a model AND ground truth.")
+        color_h = gr2[1].toggle("🌈 Height", key="geom_height",
+                                help="Colour the backdrop cloud by z (Turbo) — spot clutter in 2D.")
+        show_verts = gr2[2].toggle("🔖 Vertex labels", key="geom_verts",
+                                   help="Tag every vertex (ROIn / R<road>.<v> / X<rect>.<v>) while editing.")
+        gr3 = st.columns(3)
+        show_det = gr3[0].toggle("🎯 Detections", key="geom_show_det", disabled=not _has_det,
+                                 help="What the detector reported as objects — green = moving, purple = "
+                                      "static (never-moving = FP / pole risk). This frame's boxes, or (with "
+                                      "Show ALL frames) every detection centre across the sequence." if _has_det
+                                      else "No detection tracks.csv for this sensor/source — run Detection first.")
+        off_buf = st.number_input("🟡 Off-object box buffer (m)", 0.0, 2.0, 0.3, 0.1, key="geom_offbuf",
+                                  help="Grow each GT box by this margin before flagging foreground as off-object "
+                                       "(yellow). Moves the yellow overlay AND the FG-quality numbers together "
+                                       "(0 = strict).") if (show_off or show_metric) else 0.3
+        mpts = st.number_input("📊 Covered if ≥ pts", 1, 200, 10, 1, key="geom_minpts",
+                               help="A GT object counts as 'covered' with at least this many surviving "
+                                    "foreground points.") if show_metric else 10
+        h_span = st.slider("🌈 Height span (m)", 1.5, 12.0, 4.0, 0.5, key="geom_hspan",
+                           help="Colour spreads over this many metres above the ground.") if color_h else 4.0
+        show_all = st.checkbox(f"🕒 Show ALL {_nframes} frames at once (whole-sequence FG + off-object)",
+                               value=False, key="geom_allframes", disabled=not (model_path and geom_clouds),
+                               help="Accumulate foreground (red) + off-object FG (yellow) across every frame so "
+                                    "you can place exclusion zones over persistent clutter. First run filters all "
+                                    "frames (slow); then cached." if (model_path and geom_clouds)
+                                    else "Needs a saved background model.")
+
+    _gmt = os.path.getmtime(ds.site_geometry_path) if os.path.exists(ds.site_geometry_path) else 0.0
+    fg_all = off_all = None
+    if show_all and model_path and geom_clouds:
+        fg_all, off_all, _ = _geom_foreground_all(
+            _g_pcd_dir, ds.gt_dir_for_input(_g_pcd_dir), model_path,
+            os.path.getmtime(model_path), _gmt, float(off_buf))
+
+    # Detections (the detector's reported objects) for this frame, or all frames.
+    det_objs = det_scatter = None
+    if show_det and _has_det:
+        _by_frame, _det_cen, _det_stat = _geom_detections(_det_csv, os.path.getmtime(_det_csv))
+        if show_all:
+            det_scatter = (_det_cen, _det_stat)
+        else:
+            det_objs = _by_frame.get(gfi)
 
     # Compute foreground / GT if any of their consumers (overlay or metric) is on.
     geom_fg = None
     if (show_fg or show_metric or show_off) and model_path and geom_clouds:
-        _gmt = os.path.getmtime(ds.site_geometry_path) if os.path.exists(ds.site_geometry_path) else 0.0
         geom_fg = _geom_foreground(geom_clouds[gfi], model_path, os.path.getmtime(model_path), _gmt)
     geom_gt = None
     if (show_gt or show_metric or show_off) and gt_map and geom_clouds:
@@ -392,10 +523,8 @@ with tab_geom:
         geom_fg_kept, geom_fg_excl = ge.apply_geometry_crop(geom_fg, geom)
 
     if show_metric and geom_fg_kept is not None and geom_gt is not None:
-        mpts = st.number_input("Covered if ≥ pts", 1, 200, 10, 1, key="geom_minpts",
-                               help="A GT object counts as 'covered' with at least this many "
-                                    "surviving foreground points.")
-        q = dp.foreground_quality(geom_fg_kept, geom_bg, geom_gt, min_pts=int(mpts))
+        q = dp.foreground_quality(geom_fg_kept, geom_bg, geom_gt, min_pts=int(mpts),
+                                  box_buffer=float(off_buf))
         n_excl = int(len(geom_fg_excl)) if geom_fg_excl is not None else 0
         mm = st.columns(4)
         mm[0].metric(f"Objects covered (≥{q['min_pts']} pts)", f"{q['covered']} / {q['scanned']}",
@@ -490,38 +619,48 @@ with tab_geom:
             else:
                 st.info("No exclusion rectangles.")
     with g_right:
-        pv1, pv2, pv3, pv4 = st.columns([1, 1, 1, 1])
-        pv1.markdown("**👁 Live preview**")
-        mode = pv2.radio("Mouse", ["🖐 Pan", "⬛ Draw box"], horizontal=True, key="geom_drawmode",
-                         label_visibility="collapsed",
-                         help="Draw box: drag a rectangle on the plot, then add it as an exclusion "
-                              "zone or set it as the ROI.")
-        show_verts = pv3.toggle("🔖 Vertex labels", value=False, key="geom_verts",
-                                help="Tag every vertex (ROIn / R<road>.<v> / X<rect>.<v>) so you know "
-                                     "which polygon and vertex you're editing.")
-        color_h = pv4.toggle("🌈 Color by height", value=False, key="geom_height",
-                             help="Colour the backdrop cloud by z (Turbo) like the dev-kit — ground vs "
-                                  "poles/vehicles separate by hue (great for spotting clutter in 2D).")
-        h_span = 4.0
-        if color_h:
-            h_span = st.slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="geom_hspan",
-                               help="Colour spreads over this many metres above the ground. Smaller = "
-                                    "more colour detail on short objects (cars show a gradient too); "
-                                    "taller things saturate at the top colour.")
-        dm_mode = "select" if mode.startswith("⬛") else "pan"
+        st.markdown("**👁 Live preview** — **drag to pan**, scroll to zoom. To draw a road / exclusion / "
+                    "ROI box, click the ⬚ **Box Select** tool in the chart's top-right toolbar, then drag "
+                    "a rectangle. (Overlay toggles are in 🎛️ Layers & overlays.)")
+        dm_mode = "pan"  # left-drag pans; drawing uses the modebar Box-Select tool
         # Off-object foreground = kept foreground outside every GT box (yellow).
         geom_off = None
         if show_off and geom_fg_kept is not None and len(geom_fg_kept) and geom_gt:
-            _q = dp.foreground_quality(geom_fg_kept, geom_bg, geom_gt, min_pts=1)
+            # 0.3 m box buffer so real returns spilling just past a tight box aren't
+            # flagged as clutter (overlay-only; the FG-quality metric stays unbuffered).
+            _q = dp.foreground_quality(geom_fg_kept, geom_bg, geom_gt, min_pts=1, box_buffer=float(off_buf))
             geom_off = geom_fg_kept[~_q["fg_on_mask"]]
+        # All-frames mode shows the whole-sequence aggregates instead of the current frame's
+        # foreground, so every persistent clutter point is visible for exclusion-zone placement.
+        if show_all:
+            _fg_disp, _fgx_disp, _off_disp = fg_all, None, off_all
+            if fg_all is not None:
+                st.caption(f"🕒 All-frames view: {len(fg_all):,} foreground voxels"
+                           + (f" · {len(off_all):,} off-object" if off_all is not None else "")
+                           + " (downsampled). Yellow = persistent clutter to exclude.")
+        else:
+            _fg_disp = geom_fg_kept if show_fg else None
+            _fgx_disp = geom_fg_excl if show_fg else None
+            _off_disp = geom_off
+        if show_det and (det_objs or det_scatter is not None):
+            if show_all and det_scatter is not None:
+                _ds_cen = det_scatter[0]
+                st.caption(f"🎯 All-frames detections: {len(_ds_cen):,} object centres "
+                           f"({int(det_scatter[1].sum()):,} static — purple = FP/pole risk).")
+            elif det_objs:
+                _ns = sum(1 for d in det_objs if d[5])
+                st.caption(f"🎯 Frame {gfi}: {len(det_objs)} detections ({_ns} static).")
         ev = st.plotly_chart(ge.preview_figure(geom_bg, geom, height=620,
-                                               fg_points=geom_fg_kept if show_fg else None,
-                                               fg_excluded_points=geom_fg_excl if show_fg else None,
+                                               fg_points=_fg_disp,
+                                               fg_excluded_points=_fgx_disp,
                                                gt_objs=geom_gt if show_gt else None,
-                                               off_object_points=geom_off,
+                                               off_object_points=_off_disp,
+                                               det_objs=det_objs, det_scatter=det_scatter,
                                                dragmode=dm_mode, show_vertex_labels=show_verts,
                                                color_by_height=color_h, height_span=h_span),
-                             use_container_width=True, config={"scrollZoom": True},
+                             use_container_width=True,
+                             config={"scrollZoom": True, "displayModeBar": True, "displaylogo": False,
+                                     "modeBarButtonsToRemove": ["lasso2d", "autoScale2d"]},
                              on_select="rerun", key="geom_preview")
 
         # Read a drawn box from the selection and let the user apply it.
@@ -548,8 +687,9 @@ with tab_geom:
             if db3.button("🔵 Set as ROI", use_container_width=True, key="geom_box_roi"):
                 geom["research_polygon"] = rect
                 st.session_state.geom_edit = geom; st.rerun()
-        elif dm_mode == "select":
-            st.caption("Drag a rectangle on the plot to draw a box.")
+        else:
+            st.caption("Tip: click the ⬚ Box Select tool (top-right of the chart), then drag a "
+                       "rectangle to draw a road / exclusion / ROI box.")
 
     st.session_state.geom_edit = geom
 
@@ -612,19 +752,19 @@ with tab_reg:
 
     # --- ICP refine ---
     st.divider()
-    st.markdown("**🔧 ICP refinement** — the bundled extrinsics align the ground plane but carry a "
-                "relative **yaw + translation** error between the two sensors. Coarse-to-fine "
-                "point-to-plane ICP measures and corrects it; the rig is static, so one correction "
-                "applies to every frame.")
-    ic1, ic2, ic3, ic4 = st.columns([1.4, 1, 1, 1])
-    use_refine = ic1.toggle("Apply ICP correction", value=True, key="reg_use_icp",
-                            help="On = north corrected by ICP on top of the calibration (recommended — "
-                                 "the raw calibration is visibly off). Off = pure calibration only.")
-    icp_dist = ic2.slider("ICP fine dist (m)", 0.2, 2.0, 0.5, 0.1, key="reg_icp_dist",
-                          help="Finest correspondence distance (coarse-to-fine starts at 5 m).")
-    icp_iter = ic3.slider("ICP iters/level", 10, 100, 60, 10, key="reg_icp_iter")
-    icp_voxel = ic4.slider("ICP voxel (m)", 0.0, 1.0, 0.25, 0.05, key="reg_icp_voxel",
-                           help="Downsample before ICP for speed (0 = full resolution).")
+    with st.expander("🔧 ICP refinement", expanded=False):
+        st.caption("The bundled extrinsics align the ground plane but carry a relative **yaw + "
+                   "translation** error between the two sensors. Coarse-to-fine point-to-plane ICP "
+                   "measures and corrects it; the rig is static, so one correction applies to every frame.")
+        ic1, ic2, ic3, ic4 = st.columns([1.4, 1, 1, 1])
+        use_refine = ic1.toggle("Apply ICP correction", value=True, key="reg_use_icp",
+                                help="On = north corrected by ICP on top of the calibration (recommended — "
+                                     "the raw calibration is visibly off). Off = pure calibration only.")
+        icp_dist = ic2.slider("ICP fine dist (m)", 0.2, 2.0, 0.5, 0.1, key="reg_icp_dist",
+                              help="Finest correspondence distance (coarse-to-fine starts at 5 m).")
+        icp_iter = ic3.slider("ICP iters/level", 10, 100, 60, 10, key="reg_icp_iter")
+        icp_voxel = ic4.slider("ICP voxel (m)", 0.0, 1.0, 0.25, 0.05, key="reg_icp_voxel",
+                               help="Downsample before ICP for speed (0 = full resolution).")
 
     st.session_state.setdefault("reg_frame", 0)
     st.session_state.setdefault("reg_delta", None)
@@ -681,23 +821,28 @@ with tab_reg:
         zoom = vc1.slider("🔍 Zoom", 0.35, 2.0, 0.9, 0.05, key="reg_zoom")
         az = vc2.slider("🔄 Rotate", 0, 360, 45, key="reg_az")
         el = vc3.slider("📐 Tilt", 5, 88, 35, key="reg_el")
-        rc1, rc2, rc3, rc4, rc5, rc6 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.3])
-        show_s = rc1.toggle("🔵 South", value=True, key="reg_show_s")
-        show_n = rc2.toggle("🟠 North", value=True, key="reg_show_n")
-        crop_road = rc6.toggle("✂️ Crop", value=True, key="reg_crop",
-                               help="Clip the fused cloud to the road region (same window used to make "
-                                    "the cropped clouds). Off = show the full scene incl. background "
-                                    "structures. Applies in both frames.")
-        show_road = rc3.toggle("🟢 Road", value=False, key="reg_road",
-                               help="Road outline (defined in the south frame — Registered + South-frame "
-                                    "view only).")
-        show_roi = rc4.toggle("🔵 ROI", value=False, key="reg_roi",
-                              help="Research region (defined in the south frame — Registered + South-frame "
-                                   "view only).")
-        show_sensors = rc5.toggle("📍 Sensors", value=True, key="reg_sensors",
-                                  help="Mark the LiDAR positions + a plumb line to each nadir "
-                                       "(blank spot) — Registered view only.")
-        hspan = st.slider("🌈 Height span (m)", 1.0, 12.0, 4.0, 0.5, key="reg_hspan")
+        _reg_ov = ["reg_show_s", "reg_show_n", "reg_road", "reg_roi", "reg_sensors"]
+        vu.ensure_toggle_defaults({"reg_show_s": True, "reg_show_n": True, "reg_road": False,
+                                   "reg_roi": False, "reg_sensors": True, "reg_crop": True})
+        with st.expander("🎛️ Layers & overlays", expanded=True):
+            vu.bulk_toggle_buttons(_reg_ov, "reg_bulk")  # fragment-scoped rerun
+            rr1 = st.columns(3)
+            show_s = rr1[0].toggle("🔵 South", key="reg_show_s", help="South cloud (blue).")
+            show_n = rr1[1].toggle("🟠 North", key="reg_show_n", help="North cloud (orange).")
+            show_sensors = rr1[2].toggle("📍 Sensors", key="reg_sensors",
+                                         help="Mark the LiDAR positions + a plumb line to each nadir "
+                                              "(blank spot) — Registered view only.")
+            rr2 = st.columns(3)
+            show_road = rr2[0].toggle("🟢 Road", key="reg_road",
+                                      help="Road outline (south frame — Registered + South-frame view only).")
+            show_roi = rr2[1].toggle("🔵 ROI", key="reg_roi",
+                                     help="Research region (south frame — Registered + South-frame view only).")
+            crop_road = rr2[2].toggle("✂️ Crop", key="reg_crop",
+                                      help="Clip the fused cloud to the road region (same window used to make "
+                                           "the cropped clouds). Off = full scene incl. background structures. "
+                                           "Not part of All/None (it's a clip, not an overlay).")
+            hspan = st.slider("🌈 Height span (m)", 1.0, 12.0, 4.0, 0.5, key="reg_hspan",
+                              help="For 'By height' colour: metres above ground the Turbo ramp spans.")
 
         # ICP correction for this pair (auto-computed + cached). Always measured
         # so the read-out quantifies the calibration error; applied only if the

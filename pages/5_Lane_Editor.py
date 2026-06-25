@@ -20,14 +20,26 @@ def _cached_background(pcd_dir, n_frames):
 import dataset_manager as dm
 _ds = dm.get_active()
 LANES_PATH = _ds.lanes_path
-DEFAULT_TRACKS = os.path.join(_ds.detection_dir, "tracks.csv")
-DEFAULT_PCD_BG = _ds.pcd_dir
 PREVIEW_H = 640
 
 st.session_state.setdefault('le_lanes', [])
 st.session_state.setdefault('le_v', 0)  # widget key version (bump to reseed)
 
 st.title("🛣️ Lane Editor")
+
+# Follow the same sensor/source as the rest of the app (shared pipeline_* state), so the
+# point-cloud backdrop AND the auto-detect tracks come from the active pipeline
+# (registered/cropped by default) — not a hardcoded source.
+_lsc, _lic = st.columns(2)
+_le_sensor = _lsc.radio("Sensor", ["Registered", "South", "North"], key="pipeline_sensor",
+                        horizontal=True, help="Which LiDAR's detection tracks + cloud backdrop to use. "
+                        "Shared with Background Filtering / Detection / Geometry Editor.").lower()
+_le_src = "cropped" if _lic.radio("Input cloud", ["Cropped (road)", "Full (uncropped)"],
+                                  key="pipeline_source", horizontal=True).startswith("Cropped") else "full"
+DEFAULT_TRACKS = os.path.join(_ds.detection_dir_for_sensor(_le_sensor, _le_src), "tracks.csv")
+DEFAULT_PCD_BG = _ds.input_pcd_for_sensor(_le_sensor, _le_src)
+st.caption(f"🛰️ {_le_sensor.capitalize()} · {'Cropped' if _le_src=='cropped' else 'Full'}  ·  "
+           f"tracks: `{'found' if os.path.exists(DEFAULT_TRACKS) else 'none — run Detection'}`")
 
 # ---------------- Top bar: data + template actions ----------------
 top = st.columns([2.3, 1.1, 1.1, 1.3, 1.3, 1.3])

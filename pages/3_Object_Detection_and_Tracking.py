@@ -31,8 +31,14 @@ _sensor = _sensor_label.lower()
 _src_label = _ic.radio("Input cloud", ["Cropped (road)", "Full (uncropped)"],
                        key="pipeline_source", horizontal=True,
                        help="Must match what you ran in Background Filtering. Each source has its own "
-                            "filtered/detection folders so you can compare eval metrics.")
+                            "filtered/detection folders so you can compare eval metrics. **Cropped is "
+                            "recommended for detection** — the full research-region cloud's off-road "
+                            "clutter roughly doubles false positives (measured F1 ≈0.52 cropped vs ≈0.36 full).")
 _src = "cropped" if _src_label.startswith("Cropped") else "full"
+if _src == "full":
+    st.warning("⚠️ Running detection on the **full** cloud — off-road clutter inflates false positives. "
+               "**Cropped (road)** scores markedly higher (F1 ≈0.52 vs ≈0.36). Switch unless you "
+               "specifically need the full research region.", icon="⚠️")
 
 output_dir = _ds.detection_dir_for_sensor(_sensor, _src)
 # Folder paths default from the Sensor/Input toggles; tuck them into a collapsible
@@ -71,6 +77,12 @@ with st.expander("🔧 Clustering & Detection", expanded=False):
     min_hits = cc2.slider("Min Temporal Hits", 1, 10, 2, 1,
         help="Frames a candidate must exist to be confirmed. Higher = fewer spurious tracks and fewer "
              "ID switches, but lower recall (e.g. 3 cut ID switches ~half but dropped recall).")
+    strong_pts = st.slider("Auto-accept point count (strong_pts)", 20, 400,
+        int(DEFAULT_DETECTION_PARAMS["strong_pts"]), 10,
+        help="A cluster with at least this many points is accepted immediately, skipping temporal "
+             "confirmation — dense road clusters are unambiguously real vehicles. Lower to catch dense "
+             "fast movers that fail temporal confirmation (lifts near-field recall); too low starts "
+             "auto-accepting dense clutter. Lowered 200→100 by default.")
 
 with st.expander("🚗 Vehicle class gate", expanded=False):
     vehicle_gate = st.checkbox("Drop non-vehicles (peds/bikes)", value=False,
@@ -155,7 +167,7 @@ if st.button("🚀 Start Detection and Tracking", use_container_width=True):
                 'adaptive_eps': adaptive_eps, 'aeps0': aeps0, 'aeps_k': aeps_k,
                 'aeps_min': aeps_min, 'aeps_max': aeps_max,
                 'suppress_static': suppress_static, 'static_min_frames': static_min_frames,
-                'static_max_speed': static_max_speed,
+                'static_max_speed': static_max_speed, 'strong_pts': strong_pts,
             }
             st.info(f"Processing {len(filtered_files)} files from: {filtered_pcd_dir}...")
             progress_bar = st.progress(0, text="Starting...")
@@ -354,6 +366,27 @@ if st.session_state.detection_results:
                 st.caption(f"🏷️ GT: {ng} boxes · **{covered}/{ng} detected** ({pct:.0f}%) · "
                            f"❌ {ng - covered} missed — a GT box counts as detected if a track centre is "
                            f"within 2 m  ·  `{os.path.basename(_gt_dir.rstrip('/'))}`")
+
+        # Static-detection stat: a track that barely moves over its whole life (lifetime
+        # max speed under a noise-tolerant floor) is static — pole / clutter / parked, not a
+        # mover. Uses 1.5 m/s (≈ walking pace) so Kalman velocity noise on a truly-static
+        # object doesn't flip it to "moving". With GT, how many are unmatched (= static FP).
+        _cur = results["det_frames"][frame_idx]
+        if _cur:
+            _STATIC_V = 1.5
+            _lm = {}
+            for _dets in results["det_frames"]:
+                for _d in _dets:
+                    _t = _d.get("tid")
+                    _lm[_t] = max(_lm.get(_t, 0.0), float(_d.get("speed", 0.0)))
+            _is_static = lambda d: _lm.get(d.get("tid"), 9.9) < _STATIC_V
+            _n_static = sum(1 for d in _cur if _is_static(d))
+            _cap = f"🟣 {_n_static}/{len(_cur)} static (poles/parked)"
+            if gt_objs is not None:
+                _matched_det = {i for i, _, _ in matches}
+                _n_sfp = sum(1 for i, d in enumerate(_cur) if i not in _matched_det and _is_static(d))
+                _cap += f" · {_n_sfp} unmatched FP"
+            st.caption(_cap)
 
     # Auto-play: advance one frame and rerun until the end or until paused.
     if playing and frame_idx < n_frames - 1:
