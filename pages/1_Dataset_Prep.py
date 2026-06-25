@@ -374,9 +374,10 @@ with tab_geom:
                                   if (model_path and gt_map) else "Needs a saved model AND ground truth.")
     off_buf = st.number_input("🟡 Off-object box buffer (m)", 0.0, 2.0, 0.3, 0.1, key="geom_offbuf",
                               help="Grow each GT box by this margin before flagging foreground as "
-                                   "off-object (yellow), so real returns spilling just past a tight / "
-                                   "mis-placed box aren't counted as clutter. Overlay only.") \
-        if show_off else 0.3
+                                   "off-object (yellow), so a return spilling just past a tight / "
+                                   "mis-placed box counts as on-object, not clutter. Moves the yellow "
+                                   "overlay AND the FG-quality numbers together (set 0 for the strict count).") \
+        if (show_off or show_metric) else 0.3
 
     # Compute foreground / GT if any of their consumers (overlay or metric) is on.
     geom_fg = None
@@ -400,7 +401,8 @@ with tab_geom:
         mpts = st.number_input("Covered if ≥ pts", 1, 200, 10, 1, key="geom_minpts",
                                help="A GT object counts as 'covered' with at least this many "
                                     "surviving foreground points.")
-        q = dp.foreground_quality(geom_fg_kept, geom_bg, geom_gt, min_pts=int(mpts))
+        q = dp.foreground_quality(geom_fg_kept, geom_bg, geom_gt, min_pts=int(mpts),
+                                  box_buffer=float(off_buf))
         n_excl = int(len(geom_fg_excl)) if geom_fg_excl is not None else 0
         mm = st.columns(4)
         mm[0].metric(f"Objects covered (≥{q['min_pts']} pts)", f"{q['covered']} / {q['scanned']}",
