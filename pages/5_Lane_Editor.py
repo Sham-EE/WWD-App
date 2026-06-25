@@ -119,7 +119,7 @@ with left:
             st.session_state.le_v += 1
             st.rerun()
 
-    add, dl, sv = st.columns([1.4, 1, 1])
+    add, dl, sv, sd = st.columns([1.4, 1, 1, 1.2])
     if add.button("➕ Add lane", use_container_width=True):
         lanes.append(dict(lane_id=f"lane_{len(lanes)+1}", xmin=-5.0, xmax=5.0,
                           ymin=-5.0, ymax=5.0, heading_deg=0.0))
@@ -137,6 +137,15 @@ with left:
         with open(LANES_PATH, "w") as f:
             f.write(txt)
         st.success(f"Saved {len(lanes)} lanes → {LANES_PATH}")
+    if sd.button("📌 Set as new default", use_container_width=True, disabled=not lanes,
+                 help="Snapshot the CURRENT lanes as this dataset's default — what every "
+                      "'🔄 Default lanes' reset restores from here on. Mirrors the Geometry "
+                      "Editor's set-as-default."):
+        os.makedirs(os.path.dirname(_ds.default_lanes_path), exist_ok=True)
+        with open(_ds.default_lanes_path, "w") as f:
+            f.write(txt)
+        st.success(f"Default updated → `{_ds.default_lanes_path}`. "
+                   "'🔄 Default lanes' now restores these.")
 
 with right:
     head = st.columns([3, 1.4])
