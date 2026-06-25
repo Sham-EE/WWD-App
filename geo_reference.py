@@ -24,11 +24,14 @@ import os
 
 import numpy as np
 
-# Human-readable site, for dashboard/UI display.
-SITE_NAME = "TUMTraf s110 intersection — B471, Garching-Hochbrück (Munich), DE"
-# Rough centroid of the intersection, ONLY a display fallback for the map pin until
-# the exact UTM anchor below is provided (do not treat as survey-grade).
-SITE_LATLON_APPROX = (48.2486, 11.6250)
+# Human-readable site, for dashboard/UI display. Per the TUMTraf Intersection paper
+# (Zimmer et al., ITSC 2023, §III.A): the gantry sits "at the intersection of
+# Schleißheimer Straße (B471) and Zeppelinstraße in Garching near Munich, Germany."
+SITE_NAME = "Schleißheimer Str. (B471) × Zeppelinstr., Garching-Hochbrück (Munich), DE"
+# Geocoded centre of that junction (OpenStreetMap). This is the REAL intersection,
+# accurate to ~tens of metres; the overlay orientation comes from the dataset's
+# sensor→map rotation. For survey-grade ABSOLUTE alignment, set HD_MAP_ORIGIN_UTM.
+SITE_LATLON_APPROX = (48.2506, 11.6311)
 
 # --- Tier 2 anchor -----------------------------------------------------------
 # UTM zone 32N (easting, northing) of the hd_map_origin frame, as published in the
