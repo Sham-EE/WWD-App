@@ -107,12 +107,13 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
     # which sensor a region's points come from. Overrides the plain/height original.
     if show_original and split is not None:
         s_pts, n_pts = _clip(split[0]), _clip(split[1])
+        # Match the Registration tab's by-sensor palette exactly (reg.SENSOR_COLORS).
         if s_pts is not None and len(s_pts):
             fig.add_trace(go.Scatter3d(x=s_pts[:, 0], y=s_pts[:, 1], z=s_pts[:, 2], mode="markers",
-                name="South pts", marker=dict(size=1.5, color="#1f77b4", opacity=0.4)))
+                name="South", marker=dict(size=1.5, color=reg.SENSOR_COLORS["south"], opacity=0.55)))
         if n_pts is not None and len(n_pts):
             fig.add_trace(go.Scatter3d(x=n_pts[:, 0], y=n_pts[:, 1], z=n_pts[:, 2], mode="markers",
-                name="North pts", marker=dict(size=1.5, color="#ff7f0e", opacity=0.4)))
+                name="North", marker=dict(size=1.5, color=reg.SENSOR_COLORS["north"], opacity=0.55)))
     elif show_original and original_pts.size > 0:
         if color_by_height:
             z = original_pts[:, 2]; z0 = float(np.percentile(z, 1))
