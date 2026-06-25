@@ -584,6 +584,19 @@ false alarms matter more than recall); further gains need a learned detector, no
   undetected objects) and a per-frame coverage caption; Background Filtering gains the
   matching **❌ uncovered-object** and **🟡 off-object-foreground** overlays. The
   Visualizer adds a **Scorable vs All-raw GT** toggle with per-frame box counts.
+- **Geometry Editor + Lane Editor follow the active sensor/source** (shared `pipeline_*`
+  state) — they show the **registered/cropped cloud + that model/GT/tracks** by default,
+  not a hardcoded south/full reference (which had made the FG numbers look wrong). The
+  Geometry Editor adds a **🎯 detection overlay** (per-frame boxes + an all-frames centre
+  scatter, static detections in purple = FP/pole risk), a **🕒 Show-ALL-frames** aggregate
+  of foreground + off-object FG (so persistent clutter is visible for exclusion-zone
+  placement), a tunable **off-object box buffer**, a **📌 Set-as-new-default** button, and
+  Box-Select drawing (no Pan/Draw toggle). Its overlays + Registration's now use the same
+  collapsible **🎛️ Layers & overlays + ✅ All / ⬜ None** pattern as the rest of the app.
+- **Persistent eval history** — every evaluation (single run + A/B) appends settings +
+  metrics to `outputs/run_history/`, with current-vs-previous deltas + a trend
+  (`run_history.py`), so detection runs are comparable over time (not just the latest
+  `evaluation_report.json`).
 - **LiDAR position markers** (diamond + nadir plumb line) available on every 3D viewer,
   frame-aware (sensor origin for south/north, calibrated position for registered).
 - Fixed the exclusion-zone legend (one dotted entry, not four fat-dashed keys).
