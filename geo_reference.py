@@ -28,10 +28,13 @@ import numpy as np
 # (Zimmer et al., ITSC 2023, §III.A): the gantry sits "at the intersection of
 # Schleißheimer Straße (B471) and Zeppelinstraße in Garching near Munich, Germany."
 SITE_NAME = "Schleißheimer Str. (B471) × Zeppelinstr., Garching-Hochbrück (Munich), DE"
-# Geocoded centre of that junction (OpenStreetMap). This is the REAL intersection,
-# accurate to ~tens of metres; the overlay orientation comes from the dataset's
-# sensor→map rotation. For survey-grade ABSOLUTE alignment, set HD_MAP_ORIGIN_UTM.
-SITE_LATLON_APPROX = (48.2506, 11.6311)
+# Centre of that junction, from the OpenStreetMap intersection nodes shared by the
+# "Schleißheimer Straße" and "Zeppelinstraße" ways (Overpass: nodes 860592919 /
+# 1941137894, midpoint). This is the REAL crossroads — landmarks GRUMA Fördertechnik
+# and the Jägerhof, both visible in the south2 camera frames, sit right beside it.
+# Overlay orientation comes from the dataset's sensor→map rotation; for survey-grade
+# ABSOLUTE alignment, set HD_MAP_ORIGIN_UTM.
+SITE_LATLON_APPROX = (48.2494, 11.6308)
 
 # --- Tier 2 anchor -----------------------------------------------------------
 # UTM zone 32N (easting, northing) of the hd_map_origin frame, as published in the
