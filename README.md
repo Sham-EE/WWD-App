@@ -402,26 +402,28 @@ direct test of the "fusion fills occlusion shadows → better far recall" hypoth
   **0.666 vs 0.643** (south keeps a precision edge, 0.78 vs 0.71). This is exactly what the
   benchmark is for — it turned "should help" into a measured win *and* surfaced the
   one-line tuning fix that was hiding the benefit.
-  *(Numbers above are pre-matching-fix. Under the corrected gated matcher the A/B is a clean
-  **recall-vs-precision trade**: registered **recall 0.652 vs 0.501** — the occlusion-shadow
-  win that matters for not missing a wrong-way driver — while south keeps higher precision,
-  F1 a near-tie (0.602 vs 0.611). For a recall-critical safety task, registered is the right
-  pipeline.)*
+  *(Numbers in this bullet are the older pre-matching-fix figures. The full evidence base —
+  re-baselined under the corrected matcher AND the current geometry / exclusion zones — is in
+  [`RESULTS.md`](RESULTS.md); see the current values below.)*
 
-### Current baseline (defaults, ROI on, all classes)
-| match gate | Precision | Recall | F1 | MOTA | MOTP |
-|---|---|---|---|---|---|
-| 2.0 m (strict) | 0.736 | 0.635 | 0.682 | 0.400 | ~1.0 m |
-| 2.5 m | 0.813 | 0.701 | 0.753 | 0.531 | ~1.0 m |
+### Current baseline (registered/cropped, gated matcher, exclusion zones, ROI, 2.0 m gate)
+| classes | Precision | Recall | F1 | MOTP |
+|---|---|---|---|---|
+| vehicles only | 0.691 | 0.654 | 0.672 | ~1.2 m |
+| all classes | 0.723 | 0.682 | 0.702 | ~1.2 m |
 
-(Detection is deterministic: identical settings → identical results.)
+**A/B vs south (shared scorable GT, veh-only): registered now wins both — recall
+0.654 vs 0.505 and F1 0.672 vs 0.602** (south keeps a small precision edge, 0.745 vs 0.691).
+Fusion's payoff is the **+15 pts of recall** (vehicles a single sensor can't see), which is
+what matters for not missing a wrong-way driver. Full tables + the negative/Pareto results
+in [`RESULTS.md`](RESULTS.md). (Detection is deterministic: identical settings → identical
+results.)
 
-> **⚠️ Evaluator matching fix.** The Hungarian matcher applied the distance gate *after*
-> the global assignment; in dense scenes that stranded genuinely-close detection/GT pairs,
-> scoring a real in-box detection as *both* a miss and a false positive. Fixed (gate before
-> assigning). This raises absolute F1 ≈ 4 pts (both precision **and** recall); the corrected
-> registered/cropped baseline is **P 0.559 / R 0.652 / F1 0.602**. Numbers measured before
-> this fix understate F1; see [`RESULTS.md`](RESULTS.md).
+> **Evaluator matching fix (applied throughout).** The Hungarian matcher applied the distance
+> gate *after* the global assignment; in dense scenes that stranded genuinely-close
+> detection/GT pairs, scoring a real in-box detection as *both* a miss and a false positive.
+> Fixed (gate before assigning), which raised absolute F1 ≈ 4 pts. All numbers in `RESULTS.md`
+> and the baseline above use the fixed matcher.
 
 > **Full ablation tables → [`RESULTS.md`](RESULTS.md)** — the paper-ready evidence base
 > (registration A/B, BG-filter ablation, cropped≫full, static-suppression, and the
