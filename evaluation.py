@@ -79,10 +79,18 @@ def _match_frame(pred, gt, match_dist):
     (pred_index, gt_index, distance)."""
     if not pred or not gt:
         return [], len(pred), len(gt), 0.0
-    cost = np.zeros((len(pred), len(gt)), dtype=np.float64)
+    # GATE BEFORE ASSIGNING: out-of-gate pairs get an effectively-infinite cost so the
+    # Hungarian optimum never prefers a far pairing. Without this, the global assignment
+    # runs over the ungated matrix and the gate is applied only afterwards — in dense
+    # scenes that can pair a detection with a FAR gt to minimise the total, stranding a
+    # genuinely-close pair so BOTH are dropped (a real detection scored as miss + FP).
+    BIG = float(match_dist) + 1e6
+    cost = np.full((len(pred), len(gt)), BIG, dtype=np.float64)
     for i, p in enumerate(pred):
         for j, g in enumerate(gt):
-            cost[i, j] = np.hypot(p['cx'] - g['cx'], p['cy'] - g['cy'])
+            d = float(np.hypot(p['cx'] - g['cx'], p['cy'] - g['cy']))
+            if d <= match_dist:
+                cost[i, j] = d
     row, col = linear_sum_assignment(cost)
     matches, dist_sum = [], 0.0
     matched_pred, matched_gt = set(), set()
