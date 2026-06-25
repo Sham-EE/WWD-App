@@ -105,7 +105,9 @@ def create_filtered_figure(foreground_pts, original_pts, margin=12.0, zoom=1.25,
     # Sensor split (registered only): colour the original cloud by source LiDAR —
     # south vs north — like the registration tab, so you can see fusion coverage /
     # which sensor a region's points come from. Overrides the plain/height original.
-    if show_original and split is not None:
+    # Split shows whenever it's supplied (independent of the ⚪ Original toggle — it IS
+    # the original cloud, just coloured by source LiDAR).
+    if split is not None:
         s_pts, n_pts = _clip(split[0]), _clip(split[1])
         # Match the Registration tab's by-sensor palette exactly (reg.SENSOR_COLORS).
         if s_pts is not None and len(s_pts):
@@ -567,6 +569,12 @@ if st.session_state.bg_model:
                                              "coverage. Registered only."
                                              if _sensor == "registered"
                                              else "Only for the Registered (fused) cloud.")
+                off_buf = r4[1].number_input("🟡 box buffer (m)", 0.0, 2.0, 0.3, 0.1,
+                                             key="bf_offbuf", disabled=not offfg_on,
+                                             help="Grow each GT box by this margin before deciding which "
+                                                  "foreground is 'off-object' (yellow), so real returns "
+                                                  "spilling just past a tight / mis-placed box aren't flagged "
+                                                  "as clutter. Overlay only — the FG-quality metric is unbuffered.")
                 h_span = st.slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="bf_hspan",
                                    help="Colour spreads over this many metres above ground.") \
                     if color_h else 4.0
@@ -591,7 +599,7 @@ if st.session_state.bg_model:
             # metric q above stays unbuffered (honest off-object count in the caption).
             off_object_pts = None
             if gt_objs is not None and offfg_on and len(fg):
-                qb = foreground_quality(fg, pts, gt_objs, min_pts=1, box_buffer=0.3)
+                qb = foreground_quality(fg, pts, gt_objs, min_pts=1, box_buffer=float(off_buf))
                 off_object_pts = fg[~qb["fg_on_mask"]]
             # Per-frame south/north split for the registered cloud (on-the-fly re-fuse).
             split = reg.registered_split_for_frame(_ds, _frame_key(pcd_files[i])) \

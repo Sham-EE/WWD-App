@@ -372,6 +372,11 @@ with tab_geom:
                              help="Live foreground-vs-GT quality for this frame (needs a model + GT). "
                                   "Edit/Save geometry and watch the numbers move."
                                   if (model_path and gt_map) else "Needs a saved model AND ground truth.")
+    off_buf = st.number_input("🟡 Off-object box buffer (m)", 0.0, 2.0, 0.3, 0.1, key="geom_offbuf",
+                              help="Grow each GT box by this margin before flagging foreground as "
+                                   "off-object (yellow), so real returns spilling just past a tight / "
+                                   "mis-placed box aren't counted as clutter. Overlay only.") \
+        if show_off else 0.3
 
     # Compute foreground / GT if any of their consumers (overlay or metric) is on.
     geom_fg = None
@@ -514,7 +519,7 @@ with tab_geom:
         if show_off and geom_fg_kept is not None and len(geom_fg_kept) and geom_gt:
             # 0.3 m box buffer so real returns spilling just past a tight box aren't
             # flagged as clutter (overlay-only; the FG-quality metric stays unbuffered).
-            _q = dp.foreground_quality(geom_fg_kept, geom_bg, geom_gt, min_pts=1, box_buffer=0.3)
+            _q = dp.foreground_quality(geom_fg_kept, geom_bg, geom_gt, min_pts=1, box_buffer=float(off_buf))
             geom_off = geom_fg_kept[~_q["fg_on_mask"]]
         ev = st.plotly_chart(ge.preview_figure(geom_bg, geom, height=620,
                                                fg_points=geom_fg_kept if show_fg else None,
