@@ -403,41 +403,44 @@ with tab_geom:
     model_path = _g_model if (_g_model and os.path.exists(_g_model)) else _resolve_bg_model(geom_src)
     st.caption(f"🛰️ {_g_sensor.capitalize()} · {'Cropped' if _g_src=='cropped' else 'Full'}  ·  "
                f"model: `{os.path.basename(model_path) if model_path else 'none — build on Background Filtering'}`")
-    bc1, bc2, bc3, bc4, bc5 = st.columns([1.2, 1, 1, 1.1, 1.1])
-    step = bc1.select_slider("Stepper increment (m)", [0.5, 1.0, 2.0, 5.0], value=1.0, key="geom_step")
-    show_fg = bc2.toggle("🔴 Foreground", value=False, key="geom_show_fg", disabled=not model_path,
-                         help="Overlay what the background model classifies as foreground (red), so "
-                              "you can drop an exclusion rect over poles/clutter that leak through. "
-                              "Save geometry to see the effect." if model_path
-                              else "No saved background model — build one on the Background Filtering page.")
-    show_gt = bc3.toggle("🏷️ GT boxes", value=False, key="geom_show_gt", disabled=not gt_map,
-                         help="Overlay this frame's ground-truth boxes (category-coloured + labels)."
-                              if gt_map else "No ground truth for this dataset.")
-    show_off = bc4.toggle("🟡 Off-object FG", value=False, key="geom_show_off",
-                          disabled=not (model_path and gt_map),
-                          help="Recolour (yellow) the kept foreground that falls OUTSIDE every GT box — "
-                               "clutter / false-foreground. Use it to place crop / exclusion zones over the "
-                               "junk the filter keeps." if (model_path and gt_map)
-                               else "Needs a saved model AND ground truth.")
-    show_metric = bc5.toggle("📊 FG quality", value=False, key="geom_metric",
-                             disabled=not (model_path and gt_map),
-                             help="Live foreground-vs-GT quality for this frame (needs a model + GT). "
-                                  "Edit/Save geometry and watch the numbers move."
-                                  if (model_path and gt_map) else "Needs a saved model AND ground truth.")
-    off_buf = st.number_input("🟡 Off-object box buffer (m)", 0.0, 2.0, 0.3, 0.1, key="geom_offbuf",
-                              help="Grow each GT box by this margin before flagging foreground as "
-                                   "off-object (yellow), so a return spilling just past a tight / "
-                                   "mis-placed box counts as on-object, not clutter. Moves the yellow "
-                                   "overlay AND the FG-quality numbers together (set 0 for the strict count).") \
-        if (show_off or show_metric) else 0.3
-
+    step = st.select_slider("Stepper increment (m)", [0.5, 1.0, 2.0, 5.0], value=1.0, key="geom_step",
+                            help="Step size for the +/- vertex / box editors below.")
     _nframes = len(geom_clouds) if geom_clouds else 0
-    show_all = st.checkbox(f"🕒 Show ALL {_nframes} frames at once (whole-sequence foreground + off-object FG)",
-                           value=False, key="geom_allframes", disabled=not (model_path and geom_clouds),
-                           help="Accumulate the foreground (red) and off-object FG (yellow) across every "
-                                "frame into one view, so you can see persistent clutter and place exclusion "
-                                "zones over it. First run filters all frames (slow); then it's cached."
-                                if (model_path and geom_clouds) else "Needs a saved background model.")
+    _ov_keys = ["geom_show_fg", "geom_show_gt", "geom_show_off", "geom_metric", "geom_height", "geom_verts"]
+    vu.ensure_toggle_defaults({k: False for k in _ov_keys})
+    with st.expander("🎛️ Layers & overlays", expanded=True):
+        vu.bulk_toggle_buttons(_ov_keys, "geom_bulk", rerun_scope="app")
+        gr1 = st.columns(3)
+        show_fg = gr1[0].toggle("🔴 Foreground", key="geom_show_fg", disabled=not model_path,
+                                help="What the background model classifies as foreground (red) — drop an "
+                                     "exclusion rect over poles/clutter that leak through."
+                                     if model_path else "No saved background model.")
+        show_gt = gr1[1].toggle("🏷️ GT boxes", key="geom_show_gt", disabled=not gt_map,
+                                help="This frame's ground-truth boxes (category-coloured + labels)."
+                                     if gt_map else "No ground truth for this dataset.")
+        show_off = gr1[2].toggle("🟡 Off-object FG", key="geom_show_off", disabled=not (model_path and gt_map),
+                                 help="Foreground OUTSIDE every GT box (yellow) — clutter to place exclusion "
+                                      "zones over." if (model_path and gt_map) else "Needs a model AND ground truth.")
+        gr2 = st.columns(3)
+        show_metric = gr2[0].toggle("📊 FG quality", key="geom_metric", disabled=not (model_path and gt_map),
+                                    help="Live foreground-vs-GT quality for this frame (model + GT)."
+                                         if (model_path and gt_map) else "Needs a model AND ground truth.")
+        color_h = gr2[1].toggle("🌈 Height", key="geom_height",
+                                help="Colour the backdrop cloud by z (Turbo) — spot clutter in 2D.")
+        show_verts = gr2[2].toggle("🔖 Vertex labels", key="geom_verts",
+                                   help="Tag every vertex (ROIn / R<road>.<v> / X<rect>.<v>) while editing.")
+        off_buf = st.number_input("🟡 Off-object box buffer (m)", 0.0, 2.0, 0.3, 0.1, key="geom_offbuf",
+                                  help="Grow each GT box by this margin before flagging foreground as off-object "
+                                       "(yellow). Moves the yellow overlay AND the FG-quality numbers together "
+                                       "(0 = strict).") if (show_off or show_metric) else 0.3
+        h_span = st.slider("🌈 Height span (m)", 1.5, 12.0, 4.0, 0.5, key="geom_hspan",
+                           help="Colour spreads over this many metres above the ground.") if color_h else 4.0
+        show_all = st.checkbox(f"🕒 Show ALL {_nframes} frames at once (whole-sequence FG + off-object)",
+                               value=False, key="geom_allframes", disabled=not (model_path and geom_clouds),
+                               help="Accumulate foreground (red) + off-object FG (yellow) across every frame so "
+                                    "you can place exclusion zones over persistent clutter. First run filters all "
+                                    "frames (slow); then cached." if (model_path and geom_clouds)
+                                    else "Needs a saved background model.")
 
     _gmt = os.path.getmtime(ds.site_geometry_path) if os.path.exists(ds.site_geometry_path) else 0.0
     fg_all = off_all = None
@@ -563,24 +566,12 @@ with tab_geom:
             else:
                 st.info("No exclusion rectangles.")
     with g_right:
-        pv1, pv2, pv3, pv4 = st.columns([1, 1, 1, 1])
+        pv1, pv2 = st.columns([1, 1.6])
         pv1.markdown("**👁 Live preview**")
         mode = pv2.radio("Mouse", ["🖐 Pan", "⬛ Draw box"], horizontal=True, key="geom_drawmode",
                          label_visibility="collapsed",
                          help="Draw box: drag a rectangle on the plot, then add it as an exclusion "
-                              "zone or set it as the ROI.")
-        show_verts = pv3.toggle("🔖 Vertex labels", value=False, key="geom_verts",
-                                help="Tag every vertex (ROIn / R<road>.<v> / X<rect>.<v>) so you know "
-                                     "which polygon and vertex you're editing.")
-        color_h = pv4.toggle("🌈 Color by height", value=False, key="geom_height",
-                             help="Colour the backdrop cloud by z (Turbo) like the dev-kit — ground vs "
-                                  "poles/vehicles separate by hue (great for spotting clutter in 2D).")
-        h_span = 4.0
-        if color_h:
-            h_span = st.slider("Height span (m)", 1.5, 12.0, 4.0, 0.5, key="geom_hspan",
-                               help="Colour spreads over this many metres above the ground. Smaller = "
-                                    "more colour detail on short objects (cars show a gradient too); "
-                                    "taller things saturate at the top colour.")
+                              "zone or set it as the ROI. (Overlay toggles are in 🎛️ Layers & overlays.)")
         dm_mode = "select" if mode.startswith("⬛") else "pan"
         # Off-object foreground = kept foreground outside every GT box (yellow).
         geom_off = None
@@ -699,19 +690,19 @@ with tab_reg:
 
     # --- ICP refine ---
     st.divider()
-    st.markdown("**🔧 ICP refinement** — the bundled extrinsics align the ground plane but carry a "
-                "relative **yaw + translation** error between the two sensors. Coarse-to-fine "
-                "point-to-plane ICP measures and corrects it; the rig is static, so one correction "
-                "applies to every frame.")
-    ic1, ic2, ic3, ic4 = st.columns([1.4, 1, 1, 1])
-    use_refine = ic1.toggle("Apply ICP correction", value=True, key="reg_use_icp",
-                            help="On = north corrected by ICP on top of the calibration (recommended — "
-                                 "the raw calibration is visibly off). Off = pure calibration only.")
-    icp_dist = ic2.slider("ICP fine dist (m)", 0.2, 2.0, 0.5, 0.1, key="reg_icp_dist",
-                          help="Finest correspondence distance (coarse-to-fine starts at 5 m).")
-    icp_iter = ic3.slider("ICP iters/level", 10, 100, 60, 10, key="reg_icp_iter")
-    icp_voxel = ic4.slider("ICP voxel (m)", 0.0, 1.0, 0.25, 0.05, key="reg_icp_voxel",
-                           help="Downsample before ICP for speed (0 = full resolution).")
+    with st.expander("🔧 ICP refinement", expanded=False):
+        st.caption("The bundled extrinsics align the ground plane but carry a relative **yaw + "
+                   "translation** error between the two sensors. Coarse-to-fine point-to-plane ICP "
+                   "measures and corrects it; the rig is static, so one correction applies to every frame.")
+        ic1, ic2, ic3, ic4 = st.columns([1.4, 1, 1, 1])
+        use_refine = ic1.toggle("Apply ICP correction", value=True, key="reg_use_icp",
+                                help="On = north corrected by ICP on top of the calibration (recommended — "
+                                     "the raw calibration is visibly off). Off = pure calibration only.")
+        icp_dist = ic2.slider("ICP fine dist (m)", 0.2, 2.0, 0.5, 0.1, key="reg_icp_dist",
+                              help="Finest correspondence distance (coarse-to-fine starts at 5 m).")
+        icp_iter = ic3.slider("ICP iters/level", 10, 100, 60, 10, key="reg_icp_iter")
+        icp_voxel = ic4.slider("ICP voxel (m)", 0.0, 1.0, 0.25, 0.05, key="reg_icp_voxel",
+                               help="Downsample before ICP for speed (0 = full resolution).")
 
     st.session_state.setdefault("reg_frame", 0)
     st.session_state.setdefault("reg_delta", None)
@@ -768,23 +759,28 @@ with tab_reg:
         zoom = vc1.slider("🔍 Zoom", 0.35, 2.0, 0.9, 0.05, key="reg_zoom")
         az = vc2.slider("🔄 Rotate", 0, 360, 45, key="reg_az")
         el = vc3.slider("📐 Tilt", 5, 88, 35, key="reg_el")
-        rc1, rc2, rc3, rc4, rc5, rc6 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.3])
-        show_s = rc1.toggle("🔵 South", value=True, key="reg_show_s")
-        show_n = rc2.toggle("🟠 North", value=True, key="reg_show_n")
-        crop_road = rc6.toggle("✂️ Crop", value=True, key="reg_crop",
-                               help="Clip the fused cloud to the road region (same window used to make "
-                                    "the cropped clouds). Off = show the full scene incl. background "
-                                    "structures. Applies in both frames.")
-        show_road = rc3.toggle("🟢 Road", value=False, key="reg_road",
-                               help="Road outline (defined in the south frame — Registered + South-frame "
-                                    "view only).")
-        show_roi = rc4.toggle("🔵 ROI", value=False, key="reg_roi",
-                              help="Research region (defined in the south frame — Registered + South-frame "
-                                   "view only).")
-        show_sensors = rc5.toggle("📍 Sensors", value=True, key="reg_sensors",
-                                  help="Mark the LiDAR positions + a plumb line to each nadir "
-                                       "(blank spot) — Registered view only.")
-        hspan = st.slider("🌈 Height span (m)", 1.0, 12.0, 4.0, 0.5, key="reg_hspan")
+        _reg_ov = ["reg_show_s", "reg_show_n", "reg_road", "reg_roi", "reg_sensors"]
+        vu.ensure_toggle_defaults({"reg_show_s": True, "reg_show_n": True, "reg_road": False,
+                                   "reg_roi": False, "reg_sensors": True, "reg_crop": True})
+        with st.expander("🎛️ Layers & overlays", expanded=True):
+            vu.bulk_toggle_buttons(_reg_ov, "reg_bulk")  # fragment-scoped rerun
+            rr1 = st.columns(3)
+            show_s = rr1[0].toggle("🔵 South", key="reg_show_s", help="South cloud (blue).")
+            show_n = rr1[1].toggle("🟠 North", key="reg_show_n", help="North cloud (orange).")
+            show_sensors = rr1[2].toggle("📍 Sensors", key="reg_sensors",
+                                         help="Mark the LiDAR positions + a plumb line to each nadir "
+                                              "(blank spot) — Registered view only.")
+            rr2 = st.columns(3)
+            show_road = rr2[0].toggle("🟢 Road", key="reg_road",
+                                      help="Road outline (south frame — Registered + South-frame view only).")
+            show_roi = rr2[1].toggle("🔵 ROI", key="reg_roi",
+                                     help="Research region (south frame — Registered + South-frame view only).")
+            crop_road = rr2[2].toggle("✂️ Crop", key="reg_crop",
+                                      help="Clip the fused cloud to the road region (same window used to make "
+                                           "the cropped clouds). Off = full scene incl. background structures. "
+                                           "Not part of All/None (it's a clip, not an overlay).")
+            hspan = st.slider("🌈 Height span (m)", 1.0, 12.0, 4.0, 0.5, key="reg_hspan",
+                              help="For 'By height' colour: metres above ground the Turbo ramp spans.")
 
         # ICP correction for this pair (auto-computed + cached). Always measured
         # so the read-out quantifies the calibration error; applied only if the
