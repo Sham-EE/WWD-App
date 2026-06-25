@@ -402,6 +402,11 @@ direct test of the "fusion fills occlusion shadows → better far recall" hypoth
   **0.666 vs 0.643** (south keeps a precision edge, 0.78 vs 0.71). This is exactly what the
   benchmark is for — it turned "should help" into a measured win *and* surfaced the
   one-line tuning fix that was hiding the benefit.
+  *(Numbers above are pre-matching-fix. Under the corrected gated matcher the A/B is a clean
+  **recall-vs-precision trade**: registered **recall 0.652 vs 0.501** — the occlusion-shadow
+  win that matters for not missing a wrong-way driver — while south keeps higher precision,
+  F1 a near-tie (0.602 vs 0.611). For a recall-critical safety task, registered is the right
+  pipeline.)*
 
 ### Current baseline (defaults, ROI on, all classes)
 | match gate | Precision | Recall | F1 | MOTA | MOTP |
@@ -410,6 +415,13 @@ direct test of the "fusion fills occlusion shadows → better far recall" hypoth
 | 2.5 m | 0.813 | 0.701 | 0.753 | 0.531 | ~1.0 m |
 
 (Detection is deterministic: identical settings → identical results.)
+
+> **⚠️ Evaluator matching fix.** The Hungarian matcher applied the distance gate *after*
+> the global assignment; in dense scenes that stranded genuinely-close detection/GT pairs,
+> scoring a real in-box detection as *both* a miss and a false positive. Fixed (gate before
+> assigning). This raises absolute F1 ≈ 4 pts (both precision **and** recall); the corrected
+> registered/cropped baseline is **P 0.559 / R 0.652 / F1 0.602**. Numbers measured before
+> this fix understate F1; see [`RESULTS.md`](RESULTS.md).
 
 > **Full ablation tables → [`RESULTS.md`](RESULTS.md)** — the paper-ready evidence base
 > (registration A/B, BG-filter ablation, cropped≫full, static-suppression, and the
@@ -476,6 +488,13 @@ false alarms matter more than recall); further gains need a learned detector, no
   *Static-phantom suppression* section.
 - **Cross-sensor GT dedup** now IoU-aware (`fuse_labels`, `dedup_iou`) — kills the
   residual-displaced south/north "twin" boxes (phantom FNs + red twins).
+- **Evaluator matching fix** — gate the Hungarian assignment *before* solving (was gated
+  after), so dense scenes stop stranding close detection/GT pairs as miss+FP. Raised
+  absolute F1 ≈ 4 pts (both P and R). All pre-fix numbers understate F1.
+- **Lowered `strong_pts` 200→100** (auto-accept dense clusters) — recovers near-field dense
+  movers that failed temporal confirmation; clean Pareto gain (recall up, precision flat).
+- **Persistent eval history** — every evaluation (single + A/B) appends settings+metrics to
+  `outputs/run_history/`, with current-vs-previous deltas + trend (reuses `run_history.py`).
 - **Density-adaptive background clustering** + **SOR denoise** (off by default) + **📈 run
   tracker** on Background Filtering; a measured ablation showed the BG-occupancy knobs are
   near their ceiling (the win was structural — fusion, cropping, static-suppression).

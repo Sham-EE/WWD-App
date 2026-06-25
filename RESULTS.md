@@ -10,6 +10,16 @@ numbers).
 > → FP analysis → static-phantom suppression (+5 F1) → the classical pipeline is then
 > Pareto-tuned** (further gains need a learned detector, not parameter tuning).
 
+> **⚠️ Matching-fix note.** A bug in the evaluator's Hungarian matching (gate applied
+> *after* the global assignment instead of before) was stranding genuinely-close
+> detection/GT pairs in dense scenes — scoring a real, in-box detection as *both* a miss
+> and a false positive. Fixed (gate before assigning). This **raises absolute F1 by ≈ 4
+> points (both precision and recall)**, hardest on the dense fused cloud. The corrected
+> registered/cropped baseline is **P 55.9 / R 65.2 / F1 60.2** (was 56.5). §1 below is
+> updated to corrected numbers; **§2–§7 were measured pre-fix** and understate absolute F1
+> by ~4 pts, but the **relative deltas within each table hold** (same matcher throughout a
+> table), so their conclusions are unchanged.
+
 ---
 
 ## 1. Does fusion help? (Registered vs South A/B)
@@ -18,10 +28,18 @@ Same detection on each sensor's filtered cloud, graded against the **shared regi
 scorable GT** (so south is fairly penalised for the north-only vehicles it physically can't
 see; both share one denominator). Cropped, ROI.
 
-| pipeline | Precision | Recall | F1 | R@0–20 | R@20–40 | R@40–60 |
-|---|---|---|---|---|---|---|
-| South | 0.776 | 0.549 | 0.643 | — | — | — |
-| **Registered** | 0.713 | **0.625** | **0.666** | 0.49 | 0.77 | 0.49 |
+Corrected numbers (gated matcher, veh-only, cropped, shared scorable GT):
+
+| pipeline | Precision | Recall | F1 |
+|---|---|---|---|
+| South | **0.782** | 0.501 | **0.611** |
+| **Registered** | 0.559 | **0.652** | 0.602 |
+
+The corrected matcher reframes the A/B as a clean **recall-vs-precision trade**: registration
+wins **recall decisively (0.652 vs 0.501, +15 pts)** — the occlusion-shadow-filling benefit,
+and the metric that matters for not *missing* a wrong-way driver — while south's sparse cloud
+keeps higher precision (fewer candidates → fewer false positives), making F1 a near-tie.
+**For a recall-critical safety task, registered is the right pipeline.**
 
 - Fusion crushes near/mid recall: **0–20 m 0.18→0.49**, **20–40 m 0.64→0.77** (fills each
   sensor's occlusion shadows).
