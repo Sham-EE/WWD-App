@@ -411,6 +411,10 @@ direct test of the "fusion fills occlusion shadows → better far recall" hypoth
 
 (Detection is deterministic: identical settings → identical results.)
 
+> **Full ablation tables → [`RESULTS.md`](RESULTS.md)** — the paper-ready evidence base
+> (registration A/B, BG-filter ablation, cropped≫full, static-suppression, and the
+> precision Pareto analysis below).
+
 ### Static-phantom suppression (detection FP analysis)
 
 A false-positive breakdown on registered/cropped found that **~70 % of FPs come from
@@ -437,6 +441,16 @@ but they never move). Two things follow:
   Big win on the fused/registered pipeline (+5 F1, −30 % FP); near-neutral on the
   already-clean single south sensor (it has few phantoms) — consistent with the leak being
   a fusion artifact. Same gate applied to both, so the A/B stays fair.
+
+**Precision is then Pareto-capped.** With static-suppression on, the registered/cropped
+baseline is **P 52.4 / R 60.8 / F1 56.3**. Every remaining precision lever was swept —
+`min_cluster_pts` (flat and range-aware), `min_hits`, `merge_dist`, static aggressiveness,
+and an NMS duplicate-suppression pass — and **all are pure precision↔recall trades; none
+beats the baseline F1** (full table in [`RESULTS.md`](RESULTS.md)). The leftover FPs are
+tiny clusters (median 5 pts) in the mid-field, irreducibly ambiguous against real sparse
+vehicles; near-duplicates within ≤2.5 m are already merged by the tracker. So the defaults
+are kept (the `min_cluster_pts` slider already lets you dial toward precision when fewer
+false alarms matter more than recall); further gains need a learned detector, not tuning.
 
 ---
 

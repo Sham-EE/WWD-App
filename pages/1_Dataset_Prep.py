@@ -512,7 +512,9 @@ with tab_geom:
         # Off-object foreground = kept foreground outside every GT box (yellow).
         geom_off = None
         if show_off and geom_fg_kept is not None and len(geom_fg_kept) and geom_gt:
-            _q = dp.foreground_quality(geom_fg_kept, geom_bg, geom_gt, min_pts=1)
+            # 0.3 m box buffer so real returns spilling just past a tight box aren't
+            # flagged as clutter (overlay-only; the FG-quality metric stays unbuffered).
+            _q = dp.foreground_quality(geom_fg_kept, geom_bg, geom_gt, min_pts=1, box_buffer=0.3)
             geom_off = geom_fg_kept[~_q["fg_on_mask"]]
         ev = st.plotly_chart(ge.preview_figure(geom_bg, geom, height=620,
                                                fg_points=geom_fg_kept if show_fg else None,

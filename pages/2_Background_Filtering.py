@@ -586,7 +586,13 @@ if st.session_state.bg_model:
             if gt_objs is not None and (metric_on or uncov_on or offfg_on):
                 q = foreground_quality(fg, pts, gt_objs, min_pts=int(min_pts))
             uncovered_objs = q["uncovered"] if (q and uncov_on) else None
-            off_object_pts = fg[~q["fg_on_mask"]] if (q and offfg_on and len(fg)) else None
+            # Off-object overlay uses a 0.3 m box buffer so truck-edge returns just
+            # outside a tight/mis-placed box aren't painted yellow — overlay only; the
+            # metric q above stays unbuffered (honest off-object count in the caption).
+            off_object_pts = None
+            if gt_objs is not None and offfg_on and len(fg):
+                qb = foreground_quality(fg, pts, gt_objs, min_pts=1, box_buffer=0.3)
+                off_object_pts = fg[~qb["fg_on_mask"]]
             # Per-frame south/north split for the registered cloud (on-the-fly re-fuse).
             split = reg.registered_split_for_frame(_ds, _frame_key(pcd_files[i])) \
                 if (split_on and _sensor == "registered") else None

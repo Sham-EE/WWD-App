@@ -31,8 +31,14 @@ _sensor = _sensor_label.lower()
 _src_label = _ic.radio("Input cloud", ["Cropped (road)", "Full (uncropped)"],
                        key="pipeline_source", horizontal=True,
                        help="Must match what you ran in Background Filtering. Each source has its own "
-                            "filtered/detection folders so you can compare eval metrics.")
+                            "filtered/detection folders so you can compare eval metrics. **Cropped is "
+                            "recommended for detection** — the full research-region cloud's off-road "
+                            "clutter roughly doubles false positives (measured F1 ≈0.52 cropped vs ≈0.36 full).")
 _src = "cropped" if _src_label.startswith("Cropped") else "full"
+if _src == "full":
+    st.warning("⚠️ Running detection on the **full** cloud — off-road clutter inflates false positives. "
+               "**Cropped (road)** scores markedly higher (F1 ≈0.52 vs ≈0.36). Switch unless you "
+               "specifically need the full research region.", icon="⚠️")
 
 output_dir = _ds.detection_dir_for_sensor(_sensor, _src)
 # Folder paths default from the Sensor/Input toggles; tuck them into a collapsible
