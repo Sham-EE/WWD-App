@@ -170,6 +170,64 @@ with right:
                    f"{int(conf_frames)} frames. Lower the confirmation frames, increase speed/length, "
                    "or check lane calibration.")
 
+# ---------------- Live geo map (native, real-time — the real intersection) ----------------
+st.divider()
+st.subheader("🗺️ Live geo map — real intersection")
+st.caption(f"**{geo.SITE_NAME}** — the driver moves here in real time as the sim plays "
+           "(no broadcast needed).")
+try:
+    import pydeck as pdk
+    # lane rings (sensor frame) → projector reference + map polygons
+    _rings, _verts = [], []
+    for ln in lanes:
+        xs, ys = ln["polygon"].exterior.xy
+        ring = list(zip([float(x) for x in xs], [float(y) for y in ys]))
+        _rings.append((ln["lane_id"], ring))
+        _verts.extend(ring)
+    _proj = geo.make_projector("south", ref_points_xy=_verts)
+
+    def _ll(x, y):                      # → [lon, lat] for pydeck
+        lat, lon = _proj(x, y)
+        return [lon, lat]
+
+    _lls = [_proj(x, y) for x, y in _verts]
+    _clat = sum(p[0] for p in _lls) / len(_lls)
+    _clon = sum(p[1] for p in _lls) / len(_lls)
+    _lane_data = [{"polygon": [_ll(x, y) for x, y in ring], "name": lid} for lid, ring in _rings]
+
+    _k = min(step, len(sim_track) - 1)
+    _path = [_ll(d["cx"], d["cy"]) for d in sim_track[:_k + 1]]
+    _dpos = _ll(sim_track[_k]["cx"], sim_track[_k]["cy"])
+    _dcol = [255, 43, 43] if flagged_now else [255, 165, 0]
+    _layers = [
+        pdk.Layer("PolygonLayer", _lane_data, get_polygon="polygon",
+                  get_fill_color=[56, 132, 255, 35], get_line_color=[56, 132, 255, 200],
+                  line_width_min_pixels=2, stroked=True, filled=True, pickable=True),
+        pdk.Layer("PathLayer", [{"path": _path}] if len(_path) > 1 else [],
+                  get_path="path", get_color=_dcol, width_min_pixels=3),
+        pdk.Layer("ScatterplotLayer", [{"position": _dpos}], get_position="position",
+                  get_fill_color=_dcol, get_line_color=[255, 255, 255], get_radius=4,
+                  radius_min_pixels=7, radius_max_pixels=16, stroked=True, line_width_min_pixels=1),
+    ]
+    if mix_real and base_dets:
+        _rt = [{"position": _ll(d["cx"], d["cy"])} for d in base_dets]
+        _layers.append(pdk.Layer("ScatterplotLayer", _rt, get_position="position",
+                                 get_fill_color=[150, 150, 150, 170], get_radius=3,
+                                 radius_min_pixels=4))
+    _deck = pdk.Deck(layers=_layers, map_provider="carto", map_style="road",
+                     initial_view_state=pdk.ViewState(latitude=_clat, longitude=_clon,
+                                                      zoom=17, pitch=0),
+                     tooltip={"text": "{name}"})
+    st.pydeck_chart(_deck, use_container_width=True)
+    st.caption(("🛰️ **Exact georeferenced position.**" if _proj.exact else
+                "📍 **Approximate placement** — true shape & orientation (from the real sensor→map "
+                "rotation), centred on the site. Set the HD-map UTM anchor in `geo_reference.py` "
+                "for survey-grade absolute coordinates.")
+               + f"  Driver: {'🔴 wrong-way (alerting)' if flagged_now else '🟠 tracking'}.")
+except Exception as e:
+    st.info(f"Live map unavailable ({type(e).__name__}: {e}). The view above and the V2X "
+            "dashboard below still work.")
+
 # ---------------- V2X broadcast (external dashboard) ----------------
 st.divider()
 st.subheader("📡 V2X broadcast — WWD V2X Dashboard")

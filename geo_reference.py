@@ -19,6 +19,7 @@ lat/lon helpers return None and callers fall back to the approximate site centro
 import functools
 import glob
 import json
+import math
 import os
 
 import numpy as np
@@ -125,3 +126,46 @@ def sensor_xy_to_latlon(x, y, sensor="south"):
     tr = Transformer.from_crs(HD_MAP_ORIGIN_UTM_EPSG, "EPSG:4326", always_xy=True)
     lon, lat = tr.transform(e0 + mp[0], n0 + mp[1])
     return float(lat), float(lon)
+
+
+def _enu_offset_latlon(east_m, north_m, center):
+    """Flat-earth: ENU metre offset from a centre (lat, lon) → (lat, lon)."""
+    lat0, lon0 = center
+    lat = lat0 + north_m / 111320.0
+    lon = lon0 + east_m / (111320.0 * math.cos(math.radians(lat0)))
+    return lat, lon
+
+
+def make_projector(sensor="south", ref_points_xy=None, center=None):
+    """Build a function mapping a sensor-frame (x, y) → (lat, lon) for map display.
+
+    - If the Tier-2 anchor (HD_MAP_ORIGIN_UTM) is set → exact WGS84 (survey-grade,
+      absolutely positioned).
+    - Otherwise → APPROXIMATE placement: the scene's map-frame metres are centred on
+      `center` (default the site centroid) using `ref_points_xy`'s centroid as local
+      origin. Shape + orientation are correct (from the real sensor→map rotation);
+      only the absolute position is approximate until the anchor is provided.
+
+    Returns a `proj(x, y) -> (lat, lon)` closure, plus a bool `exact`.
+    """
+    M = sensor_to_map_transform(sensor)
+    c = tuple(center) if center else SITE_LATLON_APPROX
+    exact = HD_MAP_ORIGIN_UTM is not None and M is not None
+    ref = np.zeros(2)
+    if M is not None and ref_points_xy is not None and len(ref_points_xy):
+        rp = np.asarray(ref_points_xy, dtype=float)
+        hom = np.column_stack([rp[:, 0], rp[:, 1], np.zeros(len(rp)), np.ones(len(rp))])
+        ref = (M @ hom.T).T[:, :2].mean(axis=0)
+
+    def proj(x, y):
+        if exact:
+            ll = sensor_xy_to_latlon(x, y, sensor)
+            if ll is not None:
+                return ll
+        if M is None:                       # no georef at all (last-resort scatter)
+            return _enu_offset_latlon(float(x), float(y), c)
+        p = M @ np.array([float(x), float(y), 0.0, 1.0])
+        return _enu_offset_latlon(p[0] - ref[0], p[1] - ref[1], c)
+
+    proj.exact = exact
+    return proj
