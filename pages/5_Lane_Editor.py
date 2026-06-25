@@ -87,6 +87,17 @@ left, right = st.columns(2, gap="large")
 lanes = st.session_state.le_lanes
 v = st.session_state.le_v
 
+# Default lanes keyed by lane_id, so each lane can be individually reset to its
+# calibrated baseline (config/defaults/lanes.geojson).
+_def_lanes_by_id = {}
+if os.path.exists(_ds.default_lanes_path):
+    try:
+        with open(_ds.default_lanes_path) as _f:
+            for _dl in geojson_to_lanes(json.load(_f)):
+                _def_lanes_by_id[str(_dl['lane_id'])] = _dl
+    except Exception:
+        pass
+
 with left:
     st.markdown("##### Lanes")
     box = st.container(height=PREVIEW_H, border=False)
@@ -94,8 +105,10 @@ with left:
         if not lanes:
             st.info("No lanes yet — use ✨ Auto-generate above, or ➕ Add lane below.")
         delete_idx = None
+        reset_action = None  # (idx, default_lane) — applied after the loop
         for i, l in enumerate(lanes):
-            with st.container(border=True):
+            dft = _def_lanes_by_id.get(str(l['lane_id']))
+            with st.expander(f"🛣️ {l['lane_id']}  ·  {float(l['heading_deg']):.0f}°", expanded=False):
                 a = st.columns([3, 2, 0.8])
                 l['lane_id'] = a[0].text_input("Lane", value=str(l['lane_id']), key=f"id_{i}_{v}")
                 l['heading_deg'] = a[1].number_input("Heading°", value=float(l['heading_deg']),
@@ -114,8 +127,20 @@ with left:
                                                format="%.1f", key=f"ymin_{i}_{v}")
                 l['ymax'] = yc[1].number_input("Y max", value=float(l['ymax']), step=1.0,
                                                format="%.1f", key=f"ymax_{i}_{v}")
+                if st.button("↺ Reset this lane to default", key=f"rst_{i}_{v}",
+                             use_container_width=True, disabled=dft is None,
+                             help=("Restore just this lane's box + heading from "
+                                   "config/defaults/lanes.geojson." if dft is not None
+                                   else "No default with this lane name to restore from.")):
+                    reset_action = (i, dft)
         if delete_idx is not None:
             lanes.pop(delete_idx)
+            st.session_state.le_v += 1
+            st.rerun()
+        if reset_action is not None:
+            idx, dft = reset_action
+            lanes[idx].update(xmin=dft['xmin'], xmax=dft['xmax'], ymin=dft['ymin'],
+                              ymax=dft['ymax'], heading_deg=dft['heading_deg'])
             st.session_state.le_v += 1
             st.rerun()
 
