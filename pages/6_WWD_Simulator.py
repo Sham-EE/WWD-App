@@ -8,6 +8,7 @@ from wwd_simulator import (wrong_way_options, make_wrong_way_track,
                            build_sim_det_frames, simulator_figure, SIM_TID,
                            v2x_dashboard_html, math_heading_to_compass)
 import viewer_ui as vu
+import geo_reference as geo
 
 st.set_page_config(layout="wide", page_title="WWD Simulator")
 st.title("🚨 Wrong-Way Driver Simulator")
@@ -172,6 +173,21 @@ with right:
 # ---------------- V2X broadcast (external dashboard) ----------------
 st.divider()
 st.subheader("📡 V2X broadcast — WWD V2X Dashboard")
+# Georeferenced site: the heading below is a TRUE compass bearing derived from the
+# dataset's OpenLABEL sensor→map transform chain (not the old +y=north assumption).
+_geo_ok = geo.has_georef("south")
+_d = sim_track[step]
+_true_bearing = geo.heading_to_true_bearing(_d["heading"], "south") if _geo_ok \
+    else math_heading_to_compass(_d["heading"])
+_latlon = geo.sensor_xy_to_latlon(_d["cx"], _d["cy"], "south")  # None until Tier-2 anchor set
+_loc = _latlon if _latlon is not None else geo.SITE_LATLON_APPROX
+st.caption(f"📍 **{geo.SITE_NAME}**  ·  "
+           + (f"driver @ {_latlon[0]:.6f}, {_latlon[1]:.6f} (exact)"
+              if _latlon is not None else
+              f"~{geo.SITE_LATLON_APPROX[0]:.4f}, {geo.SITE_LATLON_APPROX[1]:.4f} "
+              "(approx site — add the HD-map UTM anchor in geo_reference.py for exact per-driver lat/lon)")
+           + (f"  ·  bearing **{_true_bearing:.0f}°** (true)" if _geo_ok
+              else "  ·  bearing assumes +y=north (no georef found)"))
 st.session_state.setdefault("v2x_armed", False)
 st.session_state.setdefault("v2x_event", None)
 
@@ -182,11 +198,13 @@ else:
     if bc1.button("📡 Broadcast detection to the V2X Dashboard", type="primary",
                   disabled=not flagged_now,
                   help="Fires your dashboard's full J2735 TIM / C-V2X / nav-push pipeline with the "
-                       "detected speed & heading. Play to the detection step to enable."):
-        compass = math_heading_to_compass(sim_track[step]["heading"])
+                       "detected speed, true compass heading & geo-location. Play to the detection "
+                       "step to enable."):
         st.session_state.v2x_event = {
-            "speed": round(float(speed), 1), "heading": round(float(compass)),
+            "speed": round(float(speed), 1), "heading": round(float(_true_bearing)),
             "lane": opt["lane_id"], "direction": opt["wrong_name"],
+            "lat": round(float(_loc[0]), 6), "lon": round(float(_loc[1]), 6),
+            "lat_exact": _latlon is not None, "site": geo.SITE_NAME,
         }
         st.session_state.v2x_armed = True
         st.rerun()
@@ -204,8 +222,11 @@ if st.session_state.v2x_armed and st.session_state.v2x_event:
                    "`assets/wwd_v2x_dashboard.html` (see assets/README.md), then broadcast again.")
     else:
         ev = st.session_state.v2x_event
+        _loc_txt = (f"{ev['lat']:.6f}, {ev['lon']:.6f}"
+                    + ("" if ev.get("lat_exact") else " (approx)"))
         st.success(f"🚨 Broadcasting: {ev['direction']}-bound in the {ev['lane']} lane · "
-                   f"{ev['speed']} m/s · heading {ev['heading']}° — the dashboard fired its alert pipeline below.")
+                   f"{ev['speed']} m/s · heading {ev['heading']}° (true) · 📍 {_loc_txt} — "
+                   "the dashboard fired its alert pipeline below.")
         components.html(html, height=1500, scrolling=True)
 
 # auto-advance (paused while the dashboard is embedded to avoid re-render churn)
