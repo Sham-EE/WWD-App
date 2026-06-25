@@ -64,6 +64,42 @@ def _geom_foreground(cloud_path, model_path, model_mtime, geom_mtime):
         return None
 
 
+@st.cache_data(show_spinner="Aggregating foreground over ALL frames…", max_entries=3)
+def _geom_foreground_all(pcd_dir, gt_dir, model_path, model_mtime, geom_mtime, box_buffer, voxel=0.25):
+    """Foreground (and off-object foreground) accumulated over EVERY frame of pcd_dir,
+    voxel-downsampled for display. Lets the editor show all clutter across the whole
+    sequence at once, so you can place exclusion zones over persistent off-object FG.
+    Cached by model/geometry/buffer so it only recomputes when those change."""
+    import bg_filter_core as bf
+    import label_projection as lp
+    from dataset_prep import foreground_quality
+    try:
+        model = _load_bg_model(model_path, model_mtime)
+    except Exception:
+        return None, None, 0
+    gtmap = {}
+    if gt_dir and os.path.isdir(gt_dir):
+        for f in glob.glob(os.path.join(gt_dir, "*.json")):
+            gtmap["_".join(os.path.basename(f).split("_")[:2])] = f
+    files = rv.list_by_frame(pcd_dir, [".pcd"])
+    fg_list, off_list = [], []
+    for cp in files:
+        pts = _load_raw(cp)
+        fg, _ = bf.filter_points_with_model(pts, model, _GEOM_FILTER_CFG)
+        if not len(fg):
+            continue
+        fg_list.append(fg[:, :3])
+        gp = gtmap.get("_".join(os.path.basename(cp).split("_")[:2]))
+        if gp:
+            q = foreground_quality(fg, pts, lp.load_objects(gp), box_buffer=box_buffer)
+            off_list.append(fg[~q["fg_on_mask"]][:, :3])
+        else:
+            off_list.append(fg[:, :3])  # no GT this frame -> all foreground is "off-object"
+    def _vox(lst):
+        return bf.voxel_downsample_numpy(np.vstack(lst), voxel) if lst else None
+    return _vox(fg_list), _vox(off_list), len(files)
+
+
 def _resolve_bg_model(src):
     """Saved model path matching `src`, else the other source's, else None."""
     for p in (ds.model_path_for(src), ds.model_path_for("cropped" if src == "full" else "full")):
@@ -395,10 +431,24 @@ with tab_geom:
                                    "overlay AND the FG-quality numbers together (set 0 for the strict count).") \
         if (show_off or show_metric) else 0.3
 
+    _nframes = len(geom_clouds) if geom_clouds else 0
+    show_all = st.checkbox(f"🕒 Show ALL {_nframes} frames at once (whole-sequence foreground + off-object FG)",
+                           value=False, key="geom_allframes", disabled=not (model_path and geom_clouds),
+                           help="Accumulate the foreground (red) and off-object FG (yellow) across every "
+                                "frame into one view, so you can see persistent clutter and place exclusion "
+                                "zones over it. First run filters all frames (slow); then it's cached."
+                                if (model_path and geom_clouds) else "Needs a saved background model.")
+
+    _gmt = os.path.getmtime(ds.site_geometry_path) if os.path.exists(ds.site_geometry_path) else 0.0
+    fg_all = off_all = None
+    if show_all and model_path and geom_clouds:
+        fg_all, off_all, _ = _geom_foreground_all(
+            _g_pcd_dir, ds.gt_dir_for_input(_g_pcd_dir), model_path,
+            os.path.getmtime(model_path), _gmt, float(off_buf))
+
     # Compute foreground / GT if any of their consumers (overlay or metric) is on.
     geom_fg = None
     if (show_fg or show_metric or show_off) and model_path and geom_clouds:
-        _gmt = os.path.getmtime(ds.site_geometry_path) if os.path.exists(ds.site_geometry_path) else 0.0
         geom_fg = _geom_foreground(geom_clouds[gfi], model_path, os.path.getmtime(model_path), _gmt)
     geom_gt = None
     if (show_gt or show_metric or show_off) and gt_map and geom_clouds:
@@ -539,11 +589,23 @@ with tab_geom:
             # flagged as clutter (overlay-only; the FG-quality metric stays unbuffered).
             _q = dp.foreground_quality(geom_fg_kept, geom_bg, geom_gt, min_pts=1, box_buffer=float(off_buf))
             geom_off = geom_fg_kept[~_q["fg_on_mask"]]
+        # All-frames mode shows the whole-sequence aggregates instead of the current frame's
+        # foreground, so every persistent clutter point is visible for exclusion-zone placement.
+        if show_all:
+            _fg_disp, _fgx_disp, _off_disp = fg_all, None, off_all
+            if fg_all is not None:
+                st.caption(f"🕒 All-frames view: {len(fg_all):,} foreground voxels"
+                           + (f" · {len(off_all):,} off-object" if off_all is not None else "")
+                           + " (downsampled). Yellow = persistent clutter to exclude.")
+        else:
+            _fg_disp = geom_fg_kept if show_fg else None
+            _fgx_disp = geom_fg_excl if show_fg else None
+            _off_disp = geom_off
         ev = st.plotly_chart(ge.preview_figure(geom_bg, geom, height=620,
-                                               fg_points=geom_fg_kept if show_fg else None,
-                                               fg_excluded_points=geom_fg_excl if show_fg else None,
+                                               fg_points=_fg_disp,
+                                               fg_excluded_points=_fgx_disp,
                                                gt_objs=geom_gt if show_gt else None,
-                                               off_object_points=geom_off,
+                                               off_object_points=_off_disp,
                                                dragmode=dm_mode, show_vertex_labels=show_verts,
                                                color_by_height=color_h, height_span=h_span),
                              use_container_width=True, config={"scrollZoom": True},
