@@ -155,30 +155,35 @@ def _box_corners(cx, cy, yaw, l, w):
 
 
 def simulator_figure(lanes, sim_track, frame_idx, flagged, base_dets=None,
-                     x_range=None, y_range=None, height=620):
+                     x_range=None, y_range=None, height=620, *, show_lanes=True,
+                     show_legal_arrows=True, show_path=True, show_heading=True,
+                     show_real=True, show_grid=False, show_legend=True):
     """Top-down view: lane boxes + legal-direction arrows, the wrong-way driver's
-    path and current position (red when flagged), and optional real traffic."""
+    path and current position (red when flagged), and optional real traffic.
+    The `show_*` flags gate each overlay so the page can expose display toggles."""
     import plotly.graph_objects as go
     fig = go.Figure()
 
     # lanes: outline coloured by the lane's LEGAL travel direction (so the legend
     # is just the lanes, each in its direction colour) + a matching legal arrow.
-    for ln in lanes:
-        lcol = cardinal_color(np.radians(ln["heading_deg"]))
-        xs, ys = ln["polygon"].exterior.xy
-        fig.add_trace(go.Scatter(x=list(xs), y=list(ys), mode="lines",
-                                 line=dict(color=lcol, width=2),
-                                 name=f"{ln['lane_id']} (legal {cardinal_name(ln['heading_deg'])})",
-                                 hoverinfo="skip"))
-        cx, cy = ln["polygon"].centroid.x, ln["polygon"].centroid.y
-        hd = np.radians(ln["heading_deg"])
-        L = 8.0
-        fig.add_annotation(x=cx + L * np.cos(hd), y=cy + L * np.sin(hd), ax=cx, ay=cy,
-                           xref="x", yref="y", axref="x", ayref="y", showarrow=True,
-                           arrowhead=2, arrowsize=1.4, arrowwidth=2, arrowcolor=lcol)
+    if show_lanes:
+        for ln in lanes:
+            lcol = cardinal_color(np.radians(ln["heading_deg"]))
+            xs, ys = ln["polygon"].exterior.xy
+            fig.add_trace(go.Scatter(x=list(xs), y=list(ys), mode="lines",
+                                     line=dict(color=lcol, width=2),
+                                     name=f"{ln['lane_id']} (legal {cardinal_name(ln['heading_deg'])})",
+                                     hoverinfo="skip"))
+            if show_legal_arrows:
+                cx, cy = ln["polygon"].centroid.x, ln["polygon"].centroid.y
+                hd = np.radians(ln["heading_deg"])
+                L = 8.0
+                fig.add_annotation(x=cx + L * np.cos(hd), y=cy + L * np.sin(hd), ax=cx, ay=cy,
+                                   xref="x", yref="y", axref="x", ayref="y", showarrow=True,
+                                   arrowhead=2, arrowsize=1.4, arrowwidth=2, arrowcolor=lcol)
 
     # real traffic backdrop (optional), spheres coloured by cardinal travel direction
-    if base_dets:
+    if base_dets and show_real:
         cols = [cardinal_color(d.get("heading")) for d in base_dets]
         fig.add_trace(go.Scatter(x=[d["cx"] for d in base_dets], y=[d["cy"] for d in base_dets],
                                  mode="markers", marker=dict(size=7, color=cols,
@@ -192,11 +197,12 @@ def simulator_figure(lanes, sim_track, frame_idx, flagged, base_dets=None,
         k = min(frame_idx, len(sim_track) - 1)
         d = sim_track[k]
         ccol = cardinal_color(d["heading"])   # the driver's (wrong-way) direction colour
-        fig.add_trace(go.Scatter(x=px, y=py, mode="lines", line=dict(color="#ddd", width=1, dash="dot"),
-                                 name="planned path", showlegend=False, hoverinfo="skip"))
-        fig.add_trace(go.Scatter(x=px[:k + 1], y=py[:k + 1], mode="lines",
-                                 line=dict(color=ccol, width=2),
-                                 name="driver path", showlegend=False, hoverinfo="skip"))
+        if show_path:
+            fig.add_trace(go.Scatter(x=px, y=py, mode="lines", line=dict(color="#ddd", width=1, dash="dot"),
+                                     name="planned path", showlegend=False, hoverinfo="skip"))
+            fig.add_trace(go.Scatter(x=px[:k + 1], y=py[:k + 1], mode="lines",
+                                     line=dict(color=ccol, width=2),
+                                     name="driver path", showlegend=False, hoverinfo="skip"))
         corners = _box_corners(d["cx"], d["cy"], d["yaw"], d["l"], d["w"])
         # cardinal fill; red outline (thicker) once flagged wrong-way
         fig.add_trace(go.Scatter(x=[c[0] for c in corners], y=[c[1] for c in corners],
@@ -205,20 +211,24 @@ def simulator_figure(lanes, sim_track, frame_idx, flagged, base_dets=None,
                                            width=4 if flagged else 2),
                                  name="⚠ wrong-way driver" if flagged else "driver",
                                  showlegend=False, hoverinfo="skip"))
-        hd = d["heading"]; L = 6.0
-        fig.add_annotation(x=d["cx"] + L * np.cos(hd), y=d["cy"] + L * np.sin(hd),
-                           ax=d["cx"], ay=d["cy"], xref="x", yref="y", axref="x", ayref="y",
-                           showarrow=True, arrowhead=3, arrowsize=2, arrowwidth=3, arrowcolor=ccol)
+        if show_heading:
+            hd = d["heading"]; L = 6.0
+            fig.add_annotation(x=d["cx"] + L * np.cos(hd), y=d["cy"] + L * np.sin(hd),
+                               ax=d["cx"], ay=d["cy"], xref="x", yref="y", axref="x", ayref="y",
+                               showarrow=True, arrowhead=3, arrowsize=2, arrowwidth=3, arrowcolor=ccol)
 
     if x_range:
         fig.update_xaxes(range=list(x_range))
     if y_range:
         fig.update_yaxes(range=list(y_range))
-    fig.update_yaxes(scaleanchor="x", scaleratio=1, title="Y (m)")
-    fig.update_xaxes(title="X (m)")
+    grid = dict(showgrid=True, gridcolor="#2a2a2a", zeroline=False) if show_grid else \
+        dict(showgrid=False, zeroline=False)
+    fig.update_yaxes(scaleanchor="x", scaleratio=1, title="Y (m)", **grid)
+    fig.update_xaxes(title="X (m)", **grid)
     fig.update_layout(height=height, margin=dict(l=0, r=0, t=30, b=0),
                       plot_bgcolor="#111", dragmode="pan", uirevision="sim",
                       title="Wrong-way driver simulation (top-down)",
+                      showlegend=show_legend,
                       legend=dict(orientation="h", y=-0.06))
     return fig
 

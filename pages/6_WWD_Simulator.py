@@ -37,38 +37,65 @@ m = 6.0
 x_range = (min(allx) - m, max(allx) + m)
 y_range = (min(ally) - m, max(ally) + m)
 
-# ---------------- Scenario controls ----------------
-st.subheader("1. Define the wrong-way driver")
-c1, c2 = st.columns([3, 2])
-labels = [o["label"] for o in opts]
-choice = c1.selectbox("Wrong-way scenario (only illegal directions are offered)", labels,
-                      help="Each option drives a vehicle OPPOSITE to a lane's legal heading.")
-opt = opts[labels.index(choice)]
-speed = c2.slider("Driver speed (m/s)", 1.0, 25.0, 9.0, 0.5)
-c3, c4, c5 = st.columns(3)
-start_frac = c3.slider("Entry point along lane", 0.0, 0.8, 0.0, 0.05,
-                       help="Where along the lane the driver enters (0 = far end).")
-lateral_frac = c4.slider("Lane position (across)", 0.0, 1.0, 0.5, 0.05)
-fps = c5.number_input("FPS", 1.0, 30.0, 10.0, 1.0, help="Simulation frame rate.")
-
-st.markdown("##### Detector settings")
-d1, d2, d3 = st.columns(3)
-conf_frames = d1.slider("Confirmation frames", 1, 30, 5, 1,
-                        help="Consecutive wrong-way frames required before the detector confirms it "
-                             "(WWD min_frames). Higher = more cautious, later detection.")
-min_speed_wwd = d2.slider("Min speed (m/s)", 0.5, 10.0, 1.0, 0.5,
-                          help="Below this the heading is treated as unreliable.")
-angle_thresh = d3.slider("Angle vs. flow (deg)", 90, 180, 120, 5,
-                         help="How far against the lane's legal direction counts as wrong-way.")
-
-mix_real = False
+# ---------------- Setup panel: one collapsible card, tabbed inside ----------------
+# Display-toggle keys are seeded first so the figure + the bulk All/None buttons share them.
+vu.ensure_toggle_defaults({
+    "sim_show_lanes": True, "sim_show_legal_arrows": True, "sim_show_path": True,
+    "sim_show_heading": True, "sim_show_real": True, "sim_show_grid": False,
+    "sim_show_legend": True,
+})
 have_real = bool(st.session_state.get("detection_results"))
-if have_real:
-    mix_real = st.checkbox("🚗 Overlay real traffic (animates frame-by-frame from the last detection run)",
-                           value=True, help="Shows the actual detected vehicles moving alongside the "
-                                            "simulated wrong-way driver, colored by direction.")
-else:
-    st.caption("Run **Object Detection and Tracking** first to overlay real moving traffic here.")
+
+with st.expander("⚙️ Simulation setup", expanded=True):
+    t_scn, t_det, t_disp = st.tabs(["🚗 Scenario", "🛡️ Detector", "🎛️ Display"])
+
+    with t_scn:
+        labels = [o["label"] for o in opts]
+        c1, c2 = st.columns([3, 2])
+        choice = c1.selectbox("Wrong-way scenario (only illegal directions are offered)", labels,
+                              help="Each option drives a vehicle OPPOSITE to a lane's legal heading.")
+        opt = opts[labels.index(choice)]
+        speed = c2.slider("Driver speed (m/s)", 1.0, 25.0, 9.0, 0.5)
+        c3, c4, c5 = st.columns(3)
+        start_frac = c3.slider("Entry point along lane", 0.0, 0.8, 0.0, 0.05,
+                               help="Where along the lane the driver enters (0 = far end).")
+        lateral_frac = c4.slider("Lane position (across)", 0.0, 1.0, 0.5, 0.05)
+        fps = c5.number_input("FPS", 1.0, 30.0, 10.0, 1.0, help="Simulation frame rate.")
+
+    with t_det:
+        d1, d2, d3 = st.columns(3)
+        conf_frames = d1.slider("Confirmation frames", 1, 30, 5, 1,
+                                help="Consecutive wrong-way frames required before the detector confirms it "
+                                     "(WWD min_frames). Higher = more cautious, later detection.")
+        min_speed_wwd = d2.slider("Min speed (m/s)", 0.5, 10.0, 1.0, 0.5,
+                                  help="Below this the heading is treated as unreliable.")
+        angle_thresh = d3.slider("Angle vs. flow (deg)", 90, 180, 120, 5,
+                                 help="How far against the lane's legal direction counts as wrong-way.")
+
+    with t_disp:
+        st.caption("Show / hide overlays on the simulation view.")
+        _disp_keys = ["sim_show_lanes", "sim_show_legal_arrows", "sim_show_path",
+                      "sim_show_heading", "sim_show_grid", "sim_show_legend"]
+        if have_real:
+            _disp_keys.insert(4, "sim_show_real")
+        vu.bulk_toggle_buttons(_disp_keys, "sim_disp", rerun_scope="app")
+        tc1, tc2 = st.columns(2)
+        tc1.toggle("🛣️ Lane boxes", key="sim_show_lanes")
+        tc1.toggle("➡️ Legal-direction arrows", key="sim_show_legal_arrows",
+                   help="Per-lane arrow showing the legal flow direction.")
+        tc1.toggle("〰️ Driver path", key="sim_show_path",
+                   help="Planned + travelled path of the simulated driver.")
+        tc2.toggle("🧭 Driver heading arrow", key="sim_show_heading")
+        tc2.toggle("▦ Grid", key="sim_show_grid")
+        tc2.toggle("🏷️ Legend", key="sim_show_legend")
+        if have_real:
+            st.toggle("🚗 Overlay real traffic", key="sim_show_real",
+                      help="Animate the actual detected vehicles (from the last detection run) "
+                           "alongside the simulated driver, colored by direction.")
+        else:
+            st.caption("Run **Object Detection and Tracking** first to overlay real moving traffic.")
+
+mix_real = have_real and st.session_state.sim_show_real
 
 # ---------------- Build + detect ----------------
 sim_track = make_wrong_way_track(opt["lane"], fps=fps, speed=speed,
@@ -92,7 +119,7 @@ is_flagged = SIM_TID in ww["wrong_way_tids"]
 first_flag = sim_res.get("first_flag_frame")  # det-frame index
 
 # ---------------- Playback + view ----------------
-st.subheader("2. Run the simulation")
+st.subheader("▶️ Run the simulation")
 n_steps = len(sim_track)
 step, playing, play_delay = vu.nav_row("sim_step", n_steps, "sim", label="🎞️ Step")
 
@@ -108,7 +135,14 @@ with left:
     if base_dets:
         base_dets = [d for d in base_dets if d.get("tid") != SIM_TID]
     fig = simulator_figure(lanes, sim_track, step, flagged_now, base_dets=base_dets,
-                           x_range=x_range, y_range=y_range)
+                           x_range=x_range, y_range=y_range,
+                           show_lanes=st.session_state.sim_show_lanes,
+                           show_legal_arrows=st.session_state.sim_show_legal_arrows,
+                           show_path=st.session_state.sim_show_path,
+                           show_heading=st.session_state.sim_show_heading,
+                           show_real=st.session_state.sim_show_real,
+                           show_grid=st.session_state.sim_show_grid,
+                           show_legend=st.session_state.sim_show_legend)
     st.plotly_chart(fig, use_container_width=True, key="sim_fig",
                     config={"scrollZoom": True})
 
@@ -137,7 +171,7 @@ with right:
 
 # ---------------- V2X broadcast (external dashboard) ----------------
 st.divider()
-st.subheader("3. V2X broadcast — WWD V2X Dashboard")
+st.subheader("📡 V2X broadcast — WWD V2X Dashboard")
 st.session_state.setdefault("v2x_armed", False)
 st.session_state.setdefault("v2x_event", None)
 
