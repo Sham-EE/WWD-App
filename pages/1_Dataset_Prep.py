@@ -26,16 +26,19 @@ def _load_raw(path):
     return np.asarray(o3d.io.read_point_cloud(path).points)
 
 
-# Filter-time config (matches the Background Filtering page defaults) — lets the
-# geometry editor reuse a saved background model to show foreground classification.
+# Filter-time config — must mirror the Background Filtering page DEFAULTS so the geometry
+# editor's foreground matches what that page would produce (density clusterer, 5x5 on, SOR
+# off). Keep in sync if those defaults change.
 _GEOM_FILTER_CFG = {
     "ground_grid": 0.5, "dz_thresh": 0.3, "bg_voxel": 1.0, "bg_ratio": 0.98,
-    "cell_size": 1.0, "cell_ratio": 0.9,
-    "cluster": {"ds_voxel": 0.15, "eps0": 0.35, "eps_k": 0.008, "eps_min": 0.35,
-                "eps_max": 2.0, "min_samples": 16},
+    "cell_size": 1.0, "cell_ratio": 0.9, "inward_buffer_m": 2.0,
+    "cluster": {"mode": "density", "ds_voxel": 0.15, "eps0": 0.35, "eps_k": 0.008,
+                "eps_min": 0.35, "eps_max": 2.0, "min_samples": 16,
+                "eps_scale": 2.5, "n_tiers": 3, "min_samples_far": 8},
     "enable_pole_filter": True, "pole_min_height": 1.5, "pole_min_aspect_xy": 6.0,
     "pole_max_xy_area": 1.0, "pole_min_linearity": 0.75, "pole_min_points": 8,
-    "pole_max_points": 80,
+    "pole_max_points": 80, "enable_5x5": True, "enable_sor": False,
+    "coarse_5x5": {"NX": 5, "NY": 5},
 }
 
 
@@ -341,16 +344,29 @@ with tab_geom:
         st.session_state.geom_edit = copy.deepcopy(default_geom)
         st.rerun()
 
-    geom_clouds = rv.list_by_frame(ds.raw_lidar_south_dir, [".pcd"])
-    geom_src = "full"
-    if not geom_clouds:
-        geom_clouds = rv.list_by_frame(ds.pcd_dir, [".pcd"]); geom_src = "cropped"
+    # Follow the SAME sensor/source the rest of the app uses (shared pipeline_* state),
+    # so the foreground / FG-quality here matches Background Filtering & Detection — not a
+    # hardcoded south/full reference. Resolve the cloud, model and GT for that selection.
+    gsc, gic = st.columns(2)
+    _g_sensor = gsc.radio("Sensor", ["Registered", "South", "North"], key="pipeline_sensor",
+                          horizontal=True, help="Which LiDAR's cloud + background model to show the "
+                          "foreground for. Shared with Background Filtering / Detection.").lower()
+    _g_src = "cropped" if gic.radio("Input cloud", ["Cropped (road)", "Full (uncropped)"],
+                                    key="pipeline_source", horizontal=True).startswith("Cropped") else "full"
+    geom_src = _g_src
+    _g_pcd_dir = ds.input_pcd_for_sensor(_g_sensor, _g_src)
+    geom_clouds = rv.list_by_frame(_g_pcd_dir, [".pcd"])
+    if not geom_clouds:  # fallback so the editor still works if that selection isn't built
+        geom_clouds = rv.list_by_frame(ds.raw_lidar_south_dir, [".pcd"]) or rv.list_by_frame(ds.pcd_dir, [".pcd"])
     geom_bg = None
     if geom_clouds:
         gfi = st.slider("Backdrop frame", 0, len(geom_clouds) - 1, 0, key="geom_bg_frame")
         geom_bg = _load_raw(geom_clouds[gfi])
-    gt_map = _gt_map(ds.raw_labels_south_dir) or _gt_map(ds.gt_dir)
-    model_path = _resolve_bg_model(geom_src)
+    gt_map = _gt_map(ds.gt_dir_for_input(_g_pcd_dir)) or _gt_map(ds.raw_labels_south_dir) or _gt_map(ds.gt_dir)
+    _g_model = ds.model_path_for_sensor(_g_sensor, _g_src)
+    model_path = _g_model if (_g_model and os.path.exists(_g_model)) else _resolve_bg_model(geom_src)
+    st.caption(f"🛰️ {_g_sensor.capitalize()} · {'Cropped' if _g_src=='cropped' else 'Full'}  ·  "
+               f"model: `{os.path.basename(model_path) if model_path else 'none — build on Background Filtering'}`")
     bc1, bc2, bc3, bc4, bc5 = st.columns([1.2, 1, 1, 1.1, 1.1])
     step = bc1.select_slider("Stepper increment (m)", [0.5, 1.0, 2.0, 5.0], value=1.0, key="geom_step")
     show_fg = bc2.toggle("🔴 Foreground", value=False, key="geom_show_fg", disabled=not model_path,
