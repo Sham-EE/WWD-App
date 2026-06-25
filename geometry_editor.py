@@ -115,11 +115,14 @@ def apply_geometry_crop(fg, geom):
 
 def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=None,
                    dragmode="pan", show_vertex_labels=False, fg_excluded_points=None,
-                   color_by_height=False, height_span=4.0):
+                   color_by_height=False, height_span=4.0, off_object_points=None):
     """BEV: point cloud + research (cyan dotted), road (green), exclusion (magenta).
     `fg_points` (kept foreground) is drawn red; `fg_excluded_points` (foreground that
     the current geometry crops out) is drawn grey. If `gt_objs` is given, overlay GT
     box footprints + TYPE_id labels, category-coloured like the Visualizer.
+    `off_object_points` (kept foreground outside every GT box) is drawn yellow — the
+    same clutter/false-foreground cue as the Background-Filtering viewer, so you can
+    place crop/exclusion zones over the points the filter wrongly keeps.
     `color_by_height` colours the backdrop cloud by z (Turbo) like the dev-kit."""
     import numpy as np
     import plotly.graph_objects as go
@@ -142,6 +145,12 @@ def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=N
     if fg_points is not None and len(fg_points):
         fig.add_trace(go.Scattergl(x=fg_points[:, 0], y=fg_points[:, 1], mode="markers",
                                    marker=dict(size=3, color="red"), name="foreground (kept)",
+                                   hoverinfo="skip"))
+    # Off-object foreground (outside every GT box) — yellow, on top of the red, so
+    # clutter the filter keeps stands out where you'd draw an exclusion rect.
+    if off_object_points is not None and len(off_object_points):
+        fig.add_trace(go.Scattergl(x=off_object_points[:, 0], y=off_object_points[:, 1], mode="markers",
+                                   marker=dict(size=3.5, color="#ffd400"), name="off-object FG",
                                    hoverinfo="skip"))
     if gt_objs:
         import label_projection as lp

@@ -351,7 +351,7 @@ with tab_geom:
         geom_bg = _load_raw(geom_clouds[gfi])
     gt_map = _gt_map(ds.raw_labels_south_dir) or _gt_map(ds.gt_dir)
     model_path = _resolve_bg_model(geom_src)
-    bc1, bc2, bc3, bc4 = st.columns([1.2, 1, 1, 1.1])
+    bc1, bc2, bc3, bc4, bc5 = st.columns([1.2, 1, 1, 1.1, 1.1])
     step = bc1.select_slider("Stepper increment (m)", [0.5, 1.0, 2.0, 5.0], value=1.0, key="geom_step")
     show_fg = bc2.toggle("🔴 Foreground", value=False, key="geom_show_fg", disabled=not model_path,
                          help="Overlay what the background model classifies as foreground (red), so "
@@ -361,7 +361,13 @@ with tab_geom:
     show_gt = bc3.toggle("🏷️ GT boxes", value=False, key="geom_show_gt", disabled=not gt_map,
                          help="Overlay this frame's ground-truth boxes (category-coloured + labels)."
                               if gt_map else "No ground truth for this dataset.")
-    show_metric = bc4.toggle("📊 FG quality", value=False, key="geom_metric",
+    show_off = bc4.toggle("🟡 Off-object FG", value=False, key="geom_show_off",
+                          disabled=not (model_path and gt_map),
+                          help="Recolour (yellow) the kept foreground that falls OUTSIDE every GT box — "
+                               "clutter / false-foreground. Use it to place crop / exclusion zones over the "
+                               "junk the filter keeps." if (model_path and gt_map)
+                               else "Needs a saved model AND ground truth.")
+    show_metric = bc5.toggle("📊 FG quality", value=False, key="geom_metric",
                              disabled=not (model_path and gt_map),
                              help="Live foreground-vs-GT quality for this frame (needs a model + GT). "
                                   "Edit/Save geometry and watch the numbers move."
@@ -369,11 +375,11 @@ with tab_geom:
 
     # Compute foreground / GT if any of their consumers (overlay or metric) is on.
     geom_fg = None
-    if (show_fg or show_metric) and model_path and geom_clouds:
+    if (show_fg or show_metric or show_off) and model_path and geom_clouds:
         _gmt = os.path.getmtime(ds.site_geometry_path) if os.path.exists(ds.site_geometry_path) else 0.0
         geom_fg = _geom_foreground(geom_clouds[gfi], model_path, os.path.getmtime(model_path), _gmt)
     geom_gt = None
-    if (show_gt or show_metric) and gt_map and geom_clouds:
+    if (show_gt or show_metric or show_off) and gt_map and geom_clouds:
         import label_projection as lp
         _gp = gt_map.get("_".join(os.path.basename(geom_clouds[gfi]).split("_")[:2]))
         if _gp:
@@ -503,10 +509,16 @@ with tab_geom:
                                     "more colour detail on short objects (cars show a gradient too); "
                                     "taller things saturate at the top colour.")
         dm_mode = "select" if mode.startswith("⬛") else "pan"
+        # Off-object foreground = kept foreground outside every GT box (yellow).
+        geom_off = None
+        if show_off and geom_fg_kept is not None and len(geom_fg_kept) and geom_gt:
+            _q = dp.foreground_quality(geom_fg_kept, geom_bg, geom_gt, min_pts=1)
+            geom_off = geom_fg_kept[~_q["fg_on_mask"]]
         ev = st.plotly_chart(ge.preview_figure(geom_bg, geom, height=620,
                                                fg_points=geom_fg_kept if show_fg else None,
                                                fg_excluded_points=geom_fg_excl if show_fg else None,
                                                gt_objs=geom_gt if show_gt else None,
+                                               off_object_points=geom_off,
                                                dragmode=dm_mode, show_vertex_labels=show_verts,
                                                color_by_height=color_h, height_span=h_span),
                              use_container_width=True, config={"scrollZoom": True},

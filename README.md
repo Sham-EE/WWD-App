@@ -120,12 +120,14 @@ by file mtime, so a save updates the whole app with no restart).
   - **Reset any component (or all) to the dataset default**, derive the ROI from the
     data extent, or set **ROI = road bounds + margin**.
   - **Live overlays:** colour the cloud **by height** (Turbo, like the dev-kit),
-    overlay the **background-filter foreground** (red) and **GT boxes**
-    (category-coloured), and a **live FG-quality readout** (objects covered / on-object
-    recall / off-object foreground). Crucially the foreground is split by the *current,
-    unsaved* geometry — points your exclusion rects / road crop would remove turn
-    **grey** and drop out of the metric, so you can tune exclusions and watch the
-    numbers move **before** saving or rebuilding the model.
+    overlay the **background-filter foreground** (red), **GT boxes** (category-coloured),
+    a **🟡 off-object foreground** layer (kept foreground outside every GT box — the same
+    clutter / false-foreground cue as the Background-Filtering viewer, so you can drop a
+    crop / exclusion zone right over the junk the filter keeps), and a **live FG-quality
+    readout** (objects covered / on-object recall / off-object foreground). Crucially the
+    foreground is split by the *current, unsaved* geometry — points your exclusion rects /
+    road crop would remove turn **grey** and drop out of the metric, so you can tune
+    exclusions and watch the numbers move **before** saving or rebuilding the model.
 - **🧭 Registration** — fuse the **south + north** LiDARs into one cloud (calibration-init
   + ICP refinement), written in the **south LiDAR frame** so it reuses the south GT /
   calibration / polygons. One cohesive 3D viewer with a **Raw ↔ Registered** toggle,
@@ -175,6 +177,11 @@ collapsible expanders (📁 Folder paths & model · 🧹 Ground removal · 🧱 
   to the nadir (the blank-spot under each LiDAR). Frame-aware: sensor at the origin for
   south/north; for registered (south frame) the south LiDAR sits at the origin and the
   north LiDAR at its calibrated offset (with the ICP delta applied).
+- **🔵🟠 S/N split** (registered only) — colour the original cloud by **source LiDAR**
+  (south / north, using the Registration tab's exact palette) so you can see fusion
+  coverage and which sensor a region's points come from. The saved registered cloud is
+  XYZ-only, so the split is re-derived on the fly from the raw clouds + the manifest
+  matrices/ICP (`registration.registered_split_for_frame`) — no cloud rebuild needed.
 - **🏷️ GT boxes** (category-coloured + `TYPE_id` labels, matched per frame) and a
   **📊 FG quality** metric (objects covered ≥N pts / on-object recall / off-object
   foreground) — a fast *proxy* for detectability so you can tune filter params without
@@ -197,6 +204,50 @@ The same **compact controls, bulk toggles, height colouring and LiDAR markers** 
 shared (via `viewer_ui.py`) across **every** preview with a play/next control —
 **Object Detection & Tracking**, the **Visualizer**, and the **Dataset Prep**,
 **Evaluation** and **WWD Simulator** viewers.
+
+### Filter quality / tuning knobs (with a measured ablation)
+
+- **Density-adaptive clustering** (🔗 Clustering → *Clusterer* = Density-adaptive, default).
+  The legacy "adaptive" DBSCAN built a per-point range-scaled eps then collapsed it to a
+  single median, so `eps0`/`eps_k` only nudged one number — and the range→eps law is
+  *inverted* for the fused cloud (far-from-south is dense-near-north). The density path
+  splits the cloud into range tiers and sets `eps = eps_scale × measured k-NN spacing`
+  **per tier**, easing `min_samples` for sparse tiers. It yields far fewer, cleaner
+  clusters (≈62 vs 170, ≈2% vs 12% noise) — but on the **detection ablation it is
+  metrically neutral** (F1 within noise of global; see table). Kept as the default because
+  it's better-principled and cleaner for the detection-stage work to come; global is
+  retained for A/B.
+- **Statistical outlier removal** (🧽 Denoise, default **off**). A post-subtraction SOR
+  pass drops isolated points whose mean k-NN distance is an outlier (`sor_k`, `sor_std`).
+  The point-level proxy made it look like a free precision win, but the **detection
+  ablation shows it is a pure precision↔recall dial** — it raises precision by removing
+  real on-object points, costing mid-field (20-40 m) recall. Default off because wrong-way
+  detection is recall-critical.
+- **5×5 coarse stage toggle** (⚙️ Misc). The blunt macro-grid background stage can now be
+  disabled to A/B whether it adds anything over the fine voxel mask.
+
+**Ablation (registered/full, shared scorable GT, ROI on, all classes, identical detector):**
+
+| BG-filter variant | Precision | Recall | F1 | R@0-20 | R@20-40 | R@40-60 |
+|---|---|---|---|---|---|---|
+| Global clusterer (baseline) | 28.3 | **65.2** | 39.5 | 52.3 | 80.8 | 50.5 |
+| Density clusterer | 27.0 | 65.9 | 38.3 | 53.0 | 81.7 | 50.9 |
+| Global + SOR (std 2.0) | 35.6 | 49.2 | 41.3 | 47.0 | 52.2 | 46.3 |
+| Density + SOR (std 2.0) | **36.3** | 51.9 | **42.7** | 49.1 | 54.2 | 49.9 |
+| Global + SOR (std 3.0) | 30.2 | 58.5 | 39.9 | 50.2 | 70.0 | 47.4 |
+
+Findings: (1) the **clusterer choice is metrically neutral** — cleaner clusters don't move
+detection F1; (2) **SOR trades recall for precision monotonically** (F1 stays ≈39-43 across
+the range) rather than adding net quality. The real bottleneck is the very low precision
+(~28%, FP-dominated), which is a **detection-stage** problem, not a denoising one — the next
+optimization target. A negative/ablation result, but a useful one for the paper.
+- **📈 Run tracker — "is it getting better?"** Scores the *current* model+config over a
+  frame sample with the foreground-quality proxy and **logs each run** to
+  `outputs/run_history/<sensor>_<source>.jsonl`. The panel shows current-vs-previous
+  **deltas** (covered %, on-object recall, off-object FG — with green/red arrows), a
+  **trend line** across runs, and a **"changed since last run"** parameter diff — so you
+  can see immediately whether a tuning change actually helped instead of trying to
+  remember last run's numbers (`run_history.py`).
 
 ## Running
 
@@ -360,6 +411,33 @@ direct test of the "fusion fills occlusion shadows → better far recall" hypoth
 
 (Detection is deterministic: identical settings → identical results.)
 
+### Static-phantom suppression (detection FP analysis)
+
+A false-positive breakdown on registered/cropped found that **~70 % of FPs come from
+tracks that persist ≥ 20 frames** — the worst offenders appear in *every one* of the 282
+frames. These are the static-leak phantoms (barriers/poles/vegetation the occupancy
+background model can't remove because they're geometrically identical to parked cars —
+but they never move). Two things follow:
+
+- **Detection on CROPPED clouds ≫ FULL.** The full research-region cloud's off-road
+  clutter dominates FPs; clipping to the road lifts F1 from ≈0.36 to ≈0.52 (veh-only).
+  Use cropped clouds for detection.
+- **Track motion gate** (`suppress_static`, default on): drop tracks that **both** persist
+  ≥ `static_min_frames` (30) **and** never exceed `static_max_speed` (0.5 m/s, lifetime
+  max). Real vehicles always break the floor, so recall is barely touched; a never-moving
+  object is never a wrong-way driver anyway. Measured (real pipeline, veh-only, ROI):
+
+  | input | suppress | P | R | F1 |
+  |---|---|---|---|---|
+  | registered/cropped | off | 43.8 | 61.5 | 51.1 |
+  | registered/cropped | **on** | **52.3** | 60.6 | **56.2** |
+  | south/cropped | off | 73.2 | 51.2 | 60.2 |
+  | south/cropped | on | 75.6 | 49.3 | 59.7 |
+
+  Big win on the fused/registered pipeline (+5 F1, −30 % FP); near-neutral on the
+  already-clean single south sensor (it has few phantoms) — consistent with the leak being
+  a fusion artifact. Same gate applied to both, so the A/B stays fair.
+
 ---
 
 ## Changelog (highlights since the pipeline came together)
@@ -378,6 +456,17 @@ direct test of the "fusion fills occlusion shadows → better far recall" hypoth
 - Recall bug-fixes: pole filter no longer deletes dense **trucks**
   (`pole_max_points`); fast dense clusters bypass temporal confirmation
   (`strong_pts`).
+- **Static-phantom suppression** (`suppress_static`, default on) — drops tracks that
+  both persist and never move (the static-leak signature); FP analysis showed ~70 % of
+  registered FPs came from these. **registered/cropped F1 51.1 → 56.2**. See the
+  *Static-phantom suppression* section.
+- **Cross-sensor GT dedup** now IoU-aware (`fuse_labels`, `dedup_iou`) — kills the
+  residual-displaced south/north "twin" boxes (phantom FNs + red twins).
+- **Density-adaptive background clustering** + **SOR denoise** (off by default) + **📈 run
+  tracker** on Background Filtering; a measured ablation showed the BG-occupancy knobs are
+  near their ceiling (the win was structural — fusion, cropping, static-suppression).
+- **Sensor-split (S/N) view** on Background Filtering and an **off-object (yellow)
+  foreground overlay** in the Geometry Editor for placing crop / exclusion zones.
 
 **Datasets**
 - **Multi-dataset workspaces** (`datasets/<id>/`): switch the active dataset or
@@ -517,11 +606,17 @@ tab):
 6. **Fused GT** (`fuse_labels`) — each sensor only annotates what *it* sees, so the south
    GT alone misses the objects only north saw (~2.3 boxes/frame here). The Registration tab
    builds a **union GT**: north boxes are transformed into the south frame and the ones
-   south didn't annotate are appended (shared objects de-duplicated by centre distance).
-   Every box's **`num_points` is recomputed against the fused cloud** (the stored counts are
-   south-only, which would unfairly drop objects sparse for south but dense once fused —
-   ~10% of boxes at `min_points=10`), so the scorable gate is honest for registered.
-   Registered detection/eval then resolve to this fused GT.
+   south didn't annotate are appended. Shared objects are **de-duplicated by centre distance
+   _or BEV-IoU overlap_** — the IoU check (`dedup_iou=0.10`) catches the same vehicle whose
+   south/north boxes are pushed apart by the residual ~8° yaw / ~2 m calibration error (up to
+   ~5 m at range, beyond the 2.5 m centre gate); without it those twins were emitted twice,
+   double-counting GT into a phantom false-negative + a confusing "red twin" in the overlay.
+   Measured 94→52 residual twins; small metric effect (it only removes a handful of scored
+   duplicates) but a real correctness/visual fix. Every box's **`num_points` is recomputed
+   against the fused cloud** (the stored counts are south-only, which would unfairly drop
+   objects sparse for south but dense once fused — ~10% of boxes at `min_points=10`), so the
+   scorable gate is honest for registered. Registered detection/eval then resolve to this
+   fused GT.
 7. **Propagates** through the **Registered (south + north)** source in the Crop-to-road
    and Scorable-GT tabs (and the per-sensor toggles on Filtering / Detection / Evaluation /
    Visualizer) end-to-end.

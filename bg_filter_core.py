@@ -96,12 +96,109 @@ def remove_ground_grid_minz(points_xyz: np.ndarray, grid=0.5, dz_thresh=0.35):
     return z_flat > (minz[inverse] + float(dz_thresh))
 
 def adaptive_dbscan(points_xy, distances, eps0=0.35, eps_k=0.008, eps_min=0.35, eps_max=2.0, min_samples=16):
+    """Legacy 'global' clusterer. NOTE: despite the name, this is NOT genuinely
+    adaptive — it builds a per-point eps from range then collapses it to a single
+    median value, so eps0/eps_k only shift that one number. Kept for backward
+    compatibility / A-B; the density-aware path below is the real adaptive one."""
     if points_xy.shape[0] == 0: return np.empty((0,), dtype=int)
     eps = eps0 + eps_k * distances
     eps = np.clip(eps, eps_min, eps_max)
     eps_global = float(np.median(eps))
     ms = int(max(8, min_samples))
     return DBSCAN(eps=eps_global, min_samples=ms).fit(points_xy).labels_
+
+
+def _knn_spacing(points_xy, k=6, sample=3000, seed=0):
+    """Median distance to the k-th nearest neighbour — a robust estimate of the
+    local point spacing (inverse density). Sampled for speed on big clouds."""
+    n = points_xy.shape[0]
+    if n <= k:
+        return None
+    from sklearn.neighbors import NearestNeighbors
+    fit_pts = points_xy
+    if n > sample:
+        idx = np.random.default_rng(seed).choice(n, size=sample, replace=False)
+        fit_pts = points_xy[idx]
+    nbrs = NearestNeighbors(n_neighbors=min(k + 1, fit_pts.shape[0])).fit(fit_pts)
+    d, _ = nbrs.kneighbors(fit_pts)
+    return float(np.median(d[:, -1]))
+
+
+def density_adaptive_dbscan(points_xy, eps_scale=2.5, eps_min=0.35, eps_max=2.0,
+                            min_samples=16, min_samples_far=8, n_tiers=3, k=6):
+    """Genuinely density-aware DBSCAN. Splits the cloud into range tiers, and within
+    each tier sets eps from THAT tier's measured point spacing (k-NN) and eases
+    min_samples for sparse tiers. This fixes the inverted assumption in the fused
+    cloud: 'far from south' is actually DENSE (near north), so a flat range->eps law
+    over-merges there. Measuring spacing per tier adapts either way. Labels from the
+    tiers are merged with an offset so they stay globally unique."""
+    n = points_xy.shape[0]
+    if n == 0:
+        return np.empty((0,), dtype=int)
+    if n < max(4, min(min_samples, min_samples_far)):
+        return np.full(n, -1, dtype=int)
+    rng = np.hypot(points_xy[:, 0], points_xy[:, 1])
+    g_spacing = _knn_spacing(points_xy, k=k) or (eps_min / max(eps_scale, 1e-6))
+    edges = np.quantile(rng, np.linspace(0.0, 1.0, n_tiers + 1))
+    edges[0], edges[-1] = -np.inf, np.inf
+    labels = np.full(n, -1, dtype=int)
+    nxt = 0
+    for t in range(n_tiers):
+        m = (rng >= edges[t]) & (rng < edges[t + 1])
+        c = int(m.sum())
+        if c == 0:
+            continue
+        sub = points_xy[m]
+        sp = _knn_spacing(sub, k=k) or g_spacing
+        eps = float(np.clip(eps_scale * sp, eps_min, eps_max))
+        # Sparser-than-global tiers (large spacing) need fewer points to form a
+        # cluster; denser tiers keep the full min_samples.
+        frac = float(np.clip((sp - g_spacing) / max(g_spacing, 1e-6), 0.0, 1.0))
+        ms = int(round(min_samples + (min_samples_far - min_samples) * frac))
+        ms = max(4, min(ms, c))
+        sl = DBSCAN(eps=eps, min_samples=ms).fit(sub).labels_
+        v = sl >= 0
+        lab = labels[m]
+        lab[v] = sl[v] + nxt
+        labels[m] = lab
+        if v.any():
+            nxt += int(sl[v].max()) + 1
+    return labels
+
+
+def run_cluster(points_xy, cfg):
+    """Dispatch to the configured clusterer. cfg is the 'cluster' sub-dict (the
+    ds_voxel key, if present, is ignored here). mode='density' uses the genuinely
+    adaptive path; anything else falls back to the legacy global clusterer."""
+    if points_xy.shape[0] == 0:
+        return np.empty((0,), dtype=int)
+    if cfg.get("mode", "global") == "density":
+        return density_adaptive_dbscan(
+            points_xy,
+            eps_scale=cfg.get("eps_scale", 2.5),
+            eps_min=cfg.get("eps_min", 0.35), eps_max=cfg.get("eps_max", 2.0),
+            min_samples=cfg.get("min_samples", 16),
+            min_samples_far=cfg.get("min_samples_far", 8),
+            n_tiers=cfg.get("n_tiers", 3))
+    d = np.hypot(points_xy[:, 0], points_xy[:, 1])
+    return adaptive_dbscan(points_xy, d, eps0=cfg.get("eps0", 0.35),
+                           eps_k=cfg.get("eps_k", 0.008), eps_min=cfg.get("eps_min", 0.35),
+                           eps_max=cfg.get("eps_max", 2.0), min_samples=cfg.get("min_samples", 16))
+
+
+def statistical_outlier_removal(pts, k=12, std_ratio=2.0):
+    """Drop isolated points whose mean distance to their k nearest neighbours is an
+    outlier (> mean + std_ratio*std). Standard SOR denoise — cleans the scattered
+    false-foreground that survives subtraction and hurts detection precision."""
+    n = pts.shape[0]
+    if n <= k + 1:
+        return pts
+    from sklearn.neighbors import NearestNeighbors
+    nbrs = NearestNeighbors(n_neighbors=k + 1).fit(pts[:, :3])
+    d, _ = nbrs.kneighbors(pts[:, :3])
+    mean_d = d[:, 1:].mean(axis=1)
+    thr = float(mean_d.mean() + std_ratio * mean_d.std())
+    return pts[mean_d <= thr]
 
 def voxel_downsample_numpy(points, voxel_size=0.15):
     if points.shape[0] == 0: return points
@@ -178,9 +275,7 @@ def cluster_shape_metrics(cluster_pts: np.ndarray):
 def geometry_filter_pole(points_xyz, params, z_ceiling=None):
     if not params['enable_pole_filter'] or points_xyz.shape[0] == 0:
         return points_xyz
-    dists = np.linalg.norm(points_xyz[:,:2], axis=1)
-    cluster_args = {k: v for k, v in params['cluster'].items() if k != 'ds_voxel'}
-    labels = adaptive_dbscan(points_xyz[:,:2], dists, **cluster_args)
+    labels = run_cluster(points_xyz[:,:2], params['cluster'])
     keep_mask = np.ones(points_xyz.shape[0], dtype=bool)
     for lbl in set(labels) - {-1}:
         inds = np.where(labels == lbl)[0]
@@ -271,8 +366,7 @@ def build_background_model(config: dict, pcd_files: list, gt_dir: str, progress_
 
         ds = voxel_downsample_numpy(pre_pts, voxel_size=config['cluster']['ds_voxel'])
         if ds.shape[0] >= config['cluster']['min_samples']:
-            cluster_args = {k: v for k, v in config['cluster'].items() if k != 'ds_voxel'}
-            labels = adaptive_dbscan(ds[:,:2], np.linalg.norm(ds[:,:2], axis=1), **cluster_args)
+            labels = run_cluster(ds[:,:2], config['cluster'])
             for lbl in set(labels) - {-1}:
                 cen = ds[labels == lbl,:2].mean(axis=0)
                 cx, cy = int(np.floor((cen[0] - rminx) / config['cell_size'])), int(np.floor((cen[1] - rminy) / config['cell_size']))
@@ -323,8 +417,7 @@ def filter_points_with_model(points: np.ndarray, bg_model: dict, config: dict):
         pre_pts = pre_pts[~inside_mask]
 
     # Filtering stage 1: Cluster persistence
-    cluster_args = {k: v for k, v in config['cluster'].items() if k != 'ds_voxel'}
-    labels = adaptive_dbscan(pre_pts[:,:2], np.linalg.norm(pre_pts[:,:2], axis=1), **cluster_args)
+    labels = run_cluster(pre_pts[:,:2], config['cluster'])
     keep_mask = np.ones(pre_pts.shape[0], dtype=bool)
     Cx, Cy = bg_model['cell_mask'].shape
     for lbl in set(labels) - {-1}:
@@ -346,8 +439,9 @@ def filter_points_with_model(points: np.ndarray, bg_model: dict, config: dict):
     keep_v[valid] = ~bg_model['voxel_mask'][vx[valid], vy[valid], vz[valid]]
     fpts = remained[keep_v]
 
-    # Filtering stage 4: 5x5 coarse background
-    if fpts.shape[0] > 0:
+    # Filtering stage 4: 5x5 coarse background (optional — blunt macro-grid; can be
+    # disabled to A/B whether it adds anything over the fine voxel mask)
+    if config.get('enable_5x5', True) and fpts.shape[0] > 0:
         NX5, NY5 = bg_model['5x5_mask'].shape
         ix5, iy5 = (np.floor((fpts[:,i] - offset) / size).astype(np.int32) for i,(offset,size) in enumerate([(bg_model['rminx'], (bg_model['rmaxx']-bg_model['rminx'])/NX5), (bg_model['rminy'], (bg_model['rmaxy']-bg_model['rminy'])/NY5)]))
         valid5 = (ix5 >= 0) & (ix5 < NX5) & (iy5 >= 0) & (iy5 < NY5)
@@ -356,5 +450,11 @@ def filter_points_with_model(points: np.ndarray, bg_model: dict, config: dict):
             f_keep = np.ones(fpts.shape[0], dtype=bool)
             f_keep[np.where(valid5)[0]] = ~rm_mask
             fpts = fpts[f_keep]
+
+    # Filtering stage 5: statistical outlier removal (denoise the surviving
+    # foreground — cuts scattered false-foreground that hurts detection precision)
+    if config.get('enable_sor', False) and fpts.shape[0] > 0:
+        fpts = statistical_outlier_removal(fpts, k=int(config.get('sor_k', 12)),
+                                           std_ratio=float(config.get('sor_std', 2.0)))
 
     return fpts, np.array([]) # Second return is background points, not implemented here
