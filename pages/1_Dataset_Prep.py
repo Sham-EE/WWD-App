@@ -396,7 +396,7 @@ with tab_geom:
     geom = st.session_state.geom_edit
 
     default_geom = ge.load_default_geometry(ds)
-    gt1, gt2, gt3 = st.columns([1, 1, 1])
+    gt1, gt2, gt3, gt4 = st.columns([1.2, 1, 1, 1.2])
     if gt1.button("💾 Save (updates everything)", type="primary", use_container_width=True, key="geom_save"):
         ge.save_site_geometry(ds, geom)
         st.success(f"Saved → `{ds.site_geometry_path}`. The whole pipeline now uses this geometry.")
@@ -408,6 +408,12 @@ with tab_geom:
         import copy
         st.session_state.geom_edit = copy.deepcopy(default_geom)
         st.rerun()
+    if gt4.button("📌 Set as new default", use_container_width=True, key="geom_set_default",
+                  help="Snapshot the CURRENT geometry as this dataset's default — what every "
+                       "'Reset to default' button restores from here on."):
+        ge.save_default_geometry(ds, geom)
+        st.success(f"Default updated → `{ds.default_site_geometry_path}`. "
+                   "'Reset to default' now restores this geometry.")
 
     # Follow the SAME sensor/source the rest of the app uses (shared pipeline_* state),
     # so the foreground / FG-quality here matches Background Filtering & Detection — not a
@@ -471,6 +477,9 @@ with tab_geom:
                                   help="Grow each GT box by this margin before flagging foreground as off-object "
                                        "(yellow). Moves the yellow overlay AND the FG-quality numbers together "
                                        "(0 = strict).") if (show_off or show_metric) else 0.3
+        mpts = st.number_input("📊 Covered if ≥ pts", 1, 200, 10, 1, key="geom_minpts",
+                               help="A GT object counts as 'covered' with at least this many surviving "
+                                    "foreground points.") if show_metric else 10
         h_span = st.slider("🌈 Height span (m)", 1.5, 12.0, 4.0, 0.5, key="geom_hspan",
                            help="Colour spreads over this many metres above the ground.") if color_h else 4.0
         show_all = st.checkbox(f"🕒 Show ALL {_nframes} frames at once (whole-sequence FG + off-object)",
@@ -514,9 +523,6 @@ with tab_geom:
         geom_fg_kept, geom_fg_excl = ge.apply_geometry_crop(geom_fg, geom)
 
     if show_metric and geom_fg_kept is not None and geom_gt is not None:
-        mpts = st.number_input("Covered if ≥ pts", 1, 200, 10, 1, key="geom_minpts",
-                               help="A GT object counts as 'covered' with at least this many "
-                                    "surviving foreground points.")
         q = dp.foreground_quality(geom_fg_kept, geom_bg, geom_gt, min_pts=int(mpts),
                                   box_buffer=float(off_buf))
         n_excl = int(len(geom_fg_excl)) if geom_fg_excl is not None else 0
@@ -613,13 +619,10 @@ with tab_geom:
             else:
                 st.info("No exclusion rectangles.")
     with g_right:
-        pv1, pv2 = st.columns([1, 1.6])
-        pv1.markdown("**👁 Live preview**")
-        mode = pv2.radio("Mouse", ["🖐 Pan", "⬛ Draw box"], horizontal=True, key="geom_drawmode",
-                         label_visibility="collapsed",
-                         help="Draw box: drag a rectangle on the plot, then add it as an exclusion "
-                              "zone or set it as the ROI. (Overlay toggles are in 🎛️ Layers & overlays.)")
-        dm_mode = "select" if mode.startswith("⬛") else "pan"
+        st.markdown("**👁 Live preview** — **drag to pan**, scroll to zoom. To draw a road / exclusion / "
+                    "ROI box, click the ⬚ **Box Select** tool in the chart's top-right toolbar, then drag "
+                    "a rectangle. (Overlay toggles are in 🎛️ Layers & overlays.)")
+        dm_mode = "pan"  # left-drag pans; drawing uses the modebar Box-Select tool
         # Off-object foreground = kept foreground outside every GT box (yellow).
         geom_off = None
         if show_off and geom_fg_kept is not None and len(geom_fg_kept) and geom_gt:
@@ -655,7 +658,9 @@ with tab_geom:
                                                det_objs=det_objs, det_scatter=det_scatter,
                                                dragmode=dm_mode, show_vertex_labels=show_verts,
                                                color_by_height=color_h, height_span=h_span),
-                             use_container_width=True, config={"scrollZoom": True},
+                             use_container_width=True,
+                             config={"scrollZoom": True, "displayModeBar": True, "displaylogo": False,
+                                     "modeBarButtonsToRemove": ["lasso2d", "autoScale2d"]},
                              on_select="rerun", key="geom_preview")
 
         # Read a drawn box from the selection and let the user apply it.
@@ -682,8 +687,9 @@ with tab_geom:
             if db3.button("🔵 Set as ROI", use_container_width=True, key="geom_box_roi"):
                 geom["research_polygon"] = rect
                 st.session_state.geom_edit = geom; st.rerun()
-        elif dm_mode == "select":
-            st.caption("Drag a rectangle on the plot to draw a box.")
+        else:
+            st.caption("Tip: click the ⬚ Box Select tool (top-right of the chart), then drag a "
+                       "rectangle to draw a road / exclusion / ROI box.")
 
     st.session_state.geom_edit = geom
 

@@ -60,10 +60,8 @@ def has_defaults(ds):
     return os.path.exists(ds.default_site_geometry_path)
 
 
-def save_site_geometry(ds, geom):
-    """Write geometry to the dataset's site_geometry.json (updates everything)."""
-    os.makedirs(ds.config_dir, exist_ok=True)
-    out = {
+def _geom_payload(geom):
+    return {
         "_comment": "Edited via the Geometry Editor. Coordinates in the sensor frame (metres). "
                     "Used by Background Filtering / cropping / scorable GT across the app.",
         "research_polygon": [[float(x), float(y)] for x, y in geom.get("research_polygon", [])],
@@ -72,8 +70,21 @@ def save_site_geometry(ds, geom):
                                        for r in geom.get("foreground_exclusion_rects", [])],
         "coarse_grid": geom.get("coarse_grid", {"NX": 5, "NY": 5}),
     }
+
+
+def save_site_geometry(ds, geom):
+    """Write geometry to the dataset's site_geometry.json (updates everything)."""
+    os.makedirs(ds.config_dir, exist_ok=True)
     with open(ds.site_geometry_path, "w", encoding="utf-8") as f:
-        json.dump(out, f, indent=2)
+        json.dump(_geom_payload(geom), f, indent=2)
+
+
+def save_default_geometry(ds, geom):
+    """Snapshot the current geometry as the dataset's DEFAULT (what 'Reset to default'
+    restores). Lets the user redefine the baseline once they've tuned it."""
+    os.makedirs(ds.defaults_dir, exist_ok=True)
+    with open(ds.default_site_geometry_path, "w", encoding="utf-8") as f:
+        json.dump(_geom_payload(geom), f, indent=2)
 
 
 def _rect_corners(cx0, cy0, cx1, cy1):
