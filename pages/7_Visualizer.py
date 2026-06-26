@@ -1,6 +1,7 @@
 import os
 import time
 
+import numpy as np
 import streamlit as st
 
 import dataset_manager as dm
@@ -328,6 +329,57 @@ def render_lidar_tab():
             hdmap_lanes = [[[x + dx, y + dy] for x, y in poly] for poly in hdmap_lanes]
             st.caption(f"HD-map shifted by ({dx:+.1f}, {dy:+.1f}) m. If a non-zero shift makes it line "
                        "up, that's the real offset — tell me the numbers.")
+    _frame = "north" if _sensor == "north" else "south"
+    gps_mode = st.toggle("🛰️ GPS terrain (satellite) — swap perspective to debug against real "
+                         "landmarks", key="lv_gps",
+                         help="Put the HD-map on the REAL roads (satellite imagery) and project the "
+                              "point cloud + boxes through the transform. Offsets show up against "
+                              "real-world landmarks (e.g. the Jägerhof).")
+
+    def _render_gps(pts, objs):
+        if not geo.has_exact_georef(_frame):
+            st.info("GPS terrain needs the exact georef (HD map + pyproj). Falling back to BEV.")
+            st.plotly_chart(lv.build_figure(pts, objs if show_boxes else [], color_mode, view_key,
+                                            height=820, hdmap_lanes=hdmap_lanes),
+                            use_container_width=True, key="lv_main")
+            return
+        import pydeck as pdk
+        center = geo.sensor_position_latlon(_frame)
+        # project cloud (downsample) + box centres through the transform
+        cl = pts
+        if len(cl) > 15000:
+            cl = cl[np.random.default_rng(0).choice(len(cl), 15000, replace=False)]
+        cll = geo.sensor_points_to_latlon(cl[:, :2], _frame)
+        cloud = [{"position": [float(lo), float(la)]} for la, lo in cll]
+        bcs = np.array([lp.cuboid_corners(o["val"])[:, :2].mean(0) for o in objs]) if objs else None
+        boxes = []
+        if bcs is not None and len(bcs):
+            bll = geo.sensor_points_to_latlon(bcs, _frame)
+            boxes = [{"position": [float(lo), float(la)]} for la, lo in bll]
+        roads = geo.hdmap_paths_near(center, 130.0)  # real-world lat/lon, on the satellite roads
+        layers = [
+            pdk.Layer("TileLayer", data="https://server.arcgisonline.com/ArcGIS/rest/services/"
+                      "World_Imagery/MapServer/tile/{z}/{y}/{x}", min_zoom=0, max_zoom=19, tile_size=256),
+            pdk.Layer("PathLayer", [{"path": p} for p in roads], get_path="path",
+                      get_color=[255, 230, 80, 200], width_min_pixels=2),
+            pdk.Layer("ScatterplotLayer", cloud, get_position="position",
+                      get_fill_color=[120, 200, 255, 110], get_radius=1, radius_min_pixels=1),
+        ]
+        if boxes:
+            layers.append(pdk.Layer("ScatterplotLayer", boxes, get_position="position",
+                                    get_fill_color=[255, 60, 60], get_radius=2, radius_min_pixels=5,
+                                    stroked=True, get_line_color=[255, 255, 255], line_width_min_pixels=1))
+        # the gantry origin
+        layers.append(pdk.Layer("ScatterplotLayer", [{"position": [center[1], center[0]]}],
+                                get_position="position", get_fill_color=[0, 255, 0], get_radius=2,
+                                radius_min_pixels=6, stroked=True, get_line_color=[0, 0, 0]))
+        st.pydeck_chart(pdk.Deck(layers=layers, map_provider=None,
+                                 initial_view_state=pdk.ViewState(latitude=center[0], longitude=center[1],
+                                                                  zoom=17, pitch=0)),
+                        use_container_width=True)
+        st.caption("🟡 HD-map (real roads) · 🔵 projected cloud · 🔴 box centres · 🟢 gantry. If the blue "
+                   "cloud lands OFF the yellow roads/satellite, that gap is the real transform error.")
+
     st.session_state.setdefault("lidar_frame", 0)
 
     @st.fragment
@@ -336,11 +388,14 @@ def render_lidar_tab():
 
         pts = _load_pts(pcds[i], int(max_pts))
         objs = lp.load_objects(labels[i])
-        st.plotly_chart(lv.build_figure(pts, objs if show_boxes else [], color_mode, view_key,
-                                        height=820, road_poly=road,
-                                        sensors=sensors if show_boxes else None,
-                                        hdmap_lanes=hdmap_lanes),
-                        use_container_width=True, key="lv_main")
+        if gps_mode:
+            _render_gps(pts, objs)
+        else:
+            st.plotly_chart(lv.build_figure(pts, objs if show_boxes else [], color_mode, view_key,
+                                            height=820, road_poly=road,
+                                            sensors=sensors if show_boxes else None,
+                                            hdmap_lanes=hdmap_lanes),
+                            use_container_width=True, key="lv_main")
         st.caption(f"Frame {i+1}/{n} · {len(objs)} shown ({_box_count_str(labels[i])}) · "
                    f"{len(pts):,} points")
 

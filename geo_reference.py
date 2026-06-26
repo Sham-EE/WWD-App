@@ -272,6 +272,25 @@ def sensor_position_latlon(sensor="south"):
     return sensor_xy_to_latlon(0.0, 0.0, sensor)
 
 
+def sensor_points_to_latlon(xy, sensor="south"):
+    """Batch: sensor-frame (N,2) array → (N,2) [lat, lon] via the HD-map anchor.
+    None if the exact chain is unavailable."""
+    gr = _hdmap_georef()
+    T = sensor_to_s110_base(sensor)
+    if gr is None or T is None:
+        return None
+    tr = _transformer(gr[0])
+    if tr is None:
+        return None
+    xy = np.asarray(xy, dtype=float)
+    n = len(xy)
+    hom = np.column_stack([xy[:, 0], xy[:, 1], np.zeros(n), np.ones(n)])
+    base = (T @ hom.T).T[:, :3]
+    mp = (_MAP2BASE_R.T @ (base - _MAP2BASE_T).T).T
+    lon, lat = tr.transform(gr[1][0] + mp[:, 0], gr[1][1] + mp[:, 1])
+    return np.column_stack([lat, lon])
+
+
 def circle_latlon(center_latlon, radius_m, n=72):
     """A closed ring of [lon, lat] points at radius_m around center (for FOV/range
     rings on the map)."""
