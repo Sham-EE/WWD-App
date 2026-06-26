@@ -305,6 +305,25 @@ def render_lidar_tab():
                    if show_hdmap else None)
     if show_hdmap and not hdmap_lanes:
         st.caption("ℹ️ HD-map overlay needs `map/lane_samples.json` (from the dev-kit's src/map/map.zip).")
+
+    va, vb = st.columns([1.2, 3])
+    view_key = "bev" if va.radio("View", ["Bird's Eye", "Side"], horizontal=True,
+                                 key="lv_view").startswith("Bird") else "side"
+    with vb.expander("🎚️ HD-map manual nudge (Δx / Δy, metres) — if it looks offset, shift it here"):
+        c_dx, c_dy, c_rs = st.columns([2, 2, 1])
+        dx = c_dx.number_input("Δx (m, +east)", value=float(st.session_state.get("lv_hdmap_dx", 0.0)),
+                               step=0.5, format="%.1f", key="lv_hdmap_dx")
+        dy = c_dy.number_input("Δy (m, +north)", value=float(st.session_state.get("lv_hdmap_dy", 0.0)),
+                               step=0.5, format="%.1f", key="lv_hdmap_dy")
+        c_rs.markdown("<div style='height:1.7rem'></div>", unsafe_allow_html=True)
+        if c_rs.button("↺ 0", help="Reset nudge to zero"):
+            st.session_state.lv_hdmap_dx = 0.0
+            st.session_state.lv_hdmap_dy = 0.0
+            st.rerun()
+        if hdmap_lanes and (dx or dy):
+            hdmap_lanes = [[[x + dx, y + dy] for x, y in poly] for poly in hdmap_lanes]
+            st.caption(f"HD-map shifted by ({dx:+.1f}, {dy:+.1f}) m. If a non-zero shift makes it line "
+                       "up, that's the real offset — tell me the numbers.")
     st.session_state.setdefault("lidar_frame", 0)
 
     @st.fragment
@@ -313,20 +332,10 @@ def render_lidar_tab():
 
         pts = _load_pts(pcds[i], int(max_pts))
         objs = lp.load_objects(labels[i])
-        with st.container(height=600):
-            cbev, cside = st.columns(2)
-            with cbev:
-                st.markdown("**Bird's Eye View**")
-                st.plotly_chart(lv.build_figure(pts, objs, color_mode, "bev", height=520,
-                                                road_poly=road, sensors=sensors,
-                                                hdmap_lanes=hdmap_lanes),
-                                use_container_width=True, key="lv_bev")
-            with cside:
-                st.markdown("**Side View**")
-                st.plotly_chart(lv.build_figure(pts, objs, color_mode, "side", height=520,
-                                                road_poly=road, sensors=sensors,
-                                                hdmap_lanes=hdmap_lanes),
-                                use_container_width=True, key="lv_side")
+        st.plotly_chart(lv.build_figure(pts, objs, color_mode, view_key, height=820,
+                                        road_poly=road, sensors=sensors,
+                                        hdmap_lanes=hdmap_lanes),
+                        use_container_width=True, key="lv_main")
         st.caption(f"Frame {i+1}/{n} · {len(objs)} shown ({_box_count_str(labels[i])}) · "
                    f"{len(pts):,} points")
 
