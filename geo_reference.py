@@ -285,17 +285,10 @@ def circle_latlon(center_latlon, radius_m, n=72):
 
 
 @functools.lru_cache(maxsize=1)
-def _hdmap_lanes_latlon():
-    """Every HD-map lane centerline as a lat/lon polyline. Returns a list of
-    np.ndarray([[lat, lon], ...]) (one per lane with ≥2 samples), or []. Parses the
-    48 MB file and batch-projects all samples to WGS84 once (cached)."""
-    gr = _hdmap_georef()
-    if gr is None:
-        return []
-    proj_str, origin = gr
-    tr = _transformer(proj_str)
-    if tr is None:
-        return []
+def _hdmap_lanes_raw():
+    """Every HD-map lane centerline as a map-frame np.ndarray([[x, y, z], ...]) (lanes
+    with ≥2 samples). Parses the 48 MB file once (cached). [] if unavailable. Needs
+    only the file — no pyproj."""
     path = next((p for p in _HDMAP_CANDIDATES if os.path.exists(p)), None)
     if path is None:
         return []
@@ -304,24 +297,61 @@ def _hdmap_lanes_latlon():
             d = json.load(f)
     except Exception:
         return []
-    chunks, bounds = [], []
-    n = 0
+    out = []
     for road in d.get("roads", []):
         for ls in road.get("laneSections", []):
             for ln in ls.get("lanes", []):
                 s = ln.get("samples") or []
-                if len(s) < 2:
-                    continue
-                arr = np.asarray(s, dtype=float)[:, :2]
-                bounds.append((n, n + len(arr)))
-                chunks.append(arr)
-                n += len(arr)
-    if not chunks:
+                if len(s) >= 2:
+                    out.append(np.asarray(s, dtype=float)[:, :3])
+    return out
+
+
+@functools.lru_cache(maxsize=1)
+def _hdmap_lanes_latlon():
+    """Every HD-map lane centerline as a lat/lon polyline. Returns a list of
+    np.ndarray([[lat, lon], ...]), or []. Batch-projects all samples to WGS84 once."""
+    gr = _hdmap_georef()
+    lanes = _hdmap_lanes_raw()
+    if gr is None or not lanes:
         return []
-    allp = np.vstack(chunks)
+    tr = _transformer(gr[0])
+    if tr is None:
+        return []
+    origin = gr[1]
+    bounds, n = [], 0
+    for arr in lanes:
+        bounds.append((n, n + len(arr)))
+        n += len(arr)
+    allp = np.vstack([a[:, :2] for a in lanes])
     lon, lat = tr.transform(origin[0] + allp[:, 0], origin[1] + allp[:, 1])
     latlon = np.column_stack([lat, lon])
     return [latlon[a:b] for a, b in bounds]
+
+
+@functools.lru_cache(maxsize=4)
+def hdmap_lanes_sensor_frame(sensor="south", radius_m=130.0):
+    """HD-map lane centerlines in the SENSOR frame (metres), as polylines
+    [[x, y], ...] clipped to radius_m around the sensor origin. For BEV digital-twin
+    overlays. Needs only the HD map + OpenLABEL labels (no pyproj). [] if unavailable.
+
+    Chain: map sample → s110_base (dev-kit map→base) → sensor (inverse OpenLABEL pose).
+    """
+    lanes = _hdmap_lanes_raw()
+    Ts2b = sensor_to_s110_base(sensor)
+    if not lanes or Ts2b is None:
+        return []
+    Tb2s = np.linalg.inv(Ts2b)
+    r2 = radius_m * radius_m
+    out = []
+    for arr in lanes:
+        base = (_MAP2BASE_R @ arr.T).T + _MAP2BASE_T          # map → s110_base
+        hom = np.column_stack([base, np.ones(len(base))])
+        sxy = (Tb2s @ hom.T).T[:, :2]                         # s110_base → sensor
+        mask = (sxy[:, 0] ** 2 + sxy[:, 1] ** 2) < r2
+        if int(mask.sum()) >= 2:
+            out.append(sxy[mask].tolist())
+    return out
 
 
 def hdmap_paths_near(center_latlon, radius_m=130.0):

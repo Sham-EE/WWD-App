@@ -43,7 +43,7 @@ y_range = (min(ally) - m, max(ally) + m)
 vu.ensure_toggle_defaults({
     "sim_show_lanes": True, "sim_show_legal_arrows": True, "sim_show_path": True,
     "sim_show_heading": True, "sim_show_real": True, "sim_show_grid": False,
-    "sim_show_legend": True,
+    "sim_show_legend": True, "sim_show_hdmap_bev": True,
 })
 have_real = bool(st.session_state.get("detection_results"))
 
@@ -82,6 +82,9 @@ with st.expander("⚙️ Simulation setup", expanded=True):
         vu.bulk_toggle_buttons(_disp_keys, "sim_disp", rerun_scope="app")
         tc1, tc2 = st.columns(2)
         tc1.toggle("🛣️ Lane boxes", key="sim_show_lanes")
+        tc1.toggle("🗺️ HD-map roads (BEV)", key="sim_show_hdmap_bev",
+                   help="Overlay the dataset's real HD-map road network on the BEV view "
+                        "(the dev-kit 'digital twin' look).")
         tc1.toggle("➡️ Legal-direction arrows", key="sim_show_legal_arrows",
                    help="Per-lane arrow showing the legal flow direction.")
         tc1.toggle("〰️ Driver path", key="sim_show_path",
@@ -135,6 +138,8 @@ with left:
     base_dets = det_frames[cur_frame_idx] if (base and cur_frame_idx < len(det_frames)) else None
     if base_dets:
         base_dets = [d for d in base_dets if d.get("tid") != SIM_TID]
+    _hdmap_bev = geo.hdmap_lanes_sensor_frame("south", 130.0) \
+        if st.session_state.sim_show_hdmap_bev else None
     fig = simulator_figure(lanes, sim_track, step, flagged_now, base_dets=base_dets,
                            x_range=x_range, y_range=y_range,
                            show_lanes=st.session_state.sim_show_lanes,
@@ -143,7 +148,8 @@ with left:
                            show_heading=st.session_state.sim_show_heading,
                            show_real=st.session_state.sim_show_real,
                            show_grid=st.session_state.sim_show_grid,
-                           show_legend=st.session_state.sim_show_legend)
+                           show_legend=st.session_state.sim_show_legend,
+                           hdmap_lanes=_hdmap_bev)
     st.plotly_chart(fig, use_container_width=True, key="sim_fig",
                     config={"scrollZoom": True})
 

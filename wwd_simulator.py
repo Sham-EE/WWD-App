@@ -157,12 +157,26 @@ def _box_corners(cx, cy, yaw, l, w):
 def simulator_figure(lanes, sim_track, frame_idx, flagged, base_dets=None,
                      x_range=None, y_range=None, height=620, *, show_lanes=True,
                      show_legal_arrows=True, show_path=True, show_heading=True,
-                     show_real=True, show_grid=False, show_legend=True):
+                     show_real=True, show_grid=False, show_legend=True, hdmap_lanes=None):
     """Top-down view: lane boxes + legal-direction arrows, the wrong-way driver's
     path and current position (red when flagged), and optional real traffic.
-    The `show_*` flags gate each overlay so the page can expose display toggles."""
+    The `show_*` flags gate each overlay so the page can expose display toggles.
+    `hdmap_lanes` (sensor-frame polylines) draws the real HD-map road network under
+    everything — the dev-kit 'digital twin' look."""
     import plotly.graph_objects as go
     fig = go.Figure()
+
+    # HD-map road network (under everything): all polylines in ONE Scattergl trace,
+    # separated by None, so the metric BEV reads like the dev-kit visualizer.
+    if hdmap_lanes:
+        hx, hy = [], []
+        for poly in hdmap_lanes:
+            for px, py in poly:
+                hx.append(px); hy.append(py)
+            hx.append(None); hy.append(None)
+        fig.add_trace(go.Scattergl(x=hx, y=hy, mode="lines",
+                                   line=dict(color="rgba(200,200,210,0.35)", width=1),
+                                   name="HD map", hoverinfo="skip", showlegend=False))
 
     # lanes: outline coloured by the lane's LEGAL travel direction (so the legend
     # is just the lanes, each in its direction colour) + a matching legal arrow.
