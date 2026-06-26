@@ -10,6 +10,7 @@ import lidar_viewer as lv
 import dataset_prep as dp
 import registration as reg
 import viewer_ui as vu
+import geo_reference as geo
 
 st.set_page_config(layout="wide", page_title="Visualizer")
 
@@ -286,16 +287,24 @@ def render_lidar_tab():
     if n == 0:
         st.warning("Need both OpenLABEL labels and point clouds (set them in **Input folders** above).")
         return
-    o1, o2, o3, o4 = st.columns(4)
+    o1, o2, o3, o4, o5 = st.columns(5)
     color_mode = o1.radio("Box colour", ["by_category", "by_track_id"], horizontal=True, key="lv_color")
     max_pts = o2.select_slider("Points shown", [10000, 20000, 30000, 50000], value=20000, key="lv_pts")
     show_road = o3.checkbox("🛣️ Road outline", value=True, key="lv_road",
                             help="Green road boundary from site_geometry.json.")
     show_sensors = o4.checkbox("📍 LiDAR", value=True, key="lv_sensors",
                                help="Mark the LiDAR position + nadir for the selected sensor.")
+    show_hdmap = o5.checkbox("🗺️ HD map", value=True, key="lv_hdmap",
+                             help="Overlay the dataset's real HD-map road network (lane_samples.json) "
+                                  "at ground level — the dev-kit digital-twin look.")
     road = dp.road_polygon(0.0) if show_road else None
     # markers follow the Sensor toggle (registered = both LiDARs in the south frame)
     sensors = reg.lidar_markers(ds, _sensor) if show_sensors else None
+    # registered cloud is written in the SOUTH frame, so HD-map lanes use south unless north.
+    hdmap_lanes = (geo.hdmap_lanes_sensor_frame("north" if _sensor == "north" else "south", 130.0)
+                   if show_hdmap else None)
+    if show_hdmap and not hdmap_lanes:
+        st.caption("ℹ️ HD-map overlay needs `map/lane_samples.json` (from the dev-kit's src/map/map.zip).")
     st.session_state.setdefault("lidar_frame", 0)
 
     @st.fragment
@@ -309,12 +318,14 @@ def render_lidar_tab():
             with cbev:
                 st.markdown("**Bird's Eye View**")
                 st.plotly_chart(lv.build_figure(pts, objs, color_mode, "bev", height=520,
-                                                road_poly=road, sensors=sensors),
+                                                road_poly=road, sensors=sensors,
+                                                hdmap_lanes=hdmap_lanes),
                                 use_container_width=True, key="lv_bev")
             with cside:
                 st.markdown("**Side View**")
                 st.plotly_chart(lv.build_figure(pts, objs, color_mode, "side", height=520,
-                                                road_poly=road, sensors=sensors),
+                                                road_poly=road, sensors=sensors,
+                                                hdmap_lanes=hdmap_lanes),
                                 use_container_width=True, key="lv_side")
         st.caption(f"Frame {i+1}/{n} · {len(objs)} shown ({_box_count_str(labels[i])}) · "
                    f"{len(pts):,} points")

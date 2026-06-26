@@ -74,13 +74,25 @@ def _dashed_xyz(coords, z, dash=2.5, gap=1.8, step=0.4):
 
 def build_figure(points, objs, color_mode="by_category", view="side",
                  height=560, line_width=4, show_labels=True, road_poly=None, bounds=None,
-                 sensors=None):
+                 sensors=None, hdmap_lanes=None):
     """Plotly 3D figure: grey points + category-coloured GT boxes, with a preset
     camera ('bev' = top-down, 'side' = angled). If `road_poly` is given, its
-    boundary is drawn as a green dashed outline at ground level. `bounds`
-    (xmin, xmax, ymin, ymax) locks the x/y view extent (keeps a stable zoom)."""
+    boundary is drawn as a green dashed outline at ground level. `hdmap_lanes`
+    (sensor-frame polylines [[x, y], ...]) draws the real HD-map road network at
+    ground level — the dev-kit 'digital twin' look. `bounds` (xmin, xmax, ymin, ymax)
+    locks the x/y view extent (keeps a stable zoom)."""
     import plotly.graph_objects as go
     fig = go.Figure()
+    _z0 = float(np.percentile(points[:, 2], 2)) if (points is not None and len(points)) else -7.5
+    if hdmap_lanes:
+        hx, hy, hz = [], [], []
+        for poly in hdmap_lanes:
+            for p in poly:
+                hx.append(p[0]); hy.append(p[1]); hz.append(_z0)
+            hx.append(None); hy.append(None); hz.append(None)
+        fig.add_trace(go.Scatter3d(x=hx, y=hy, z=hz, mode="lines",
+                                   line=dict(color="#c2c8d2", width=1),
+                                   opacity=0.55, hoverinfo="skip", showlegend=False))
     if points is not None and len(points):
         fig.add_trace(go.Scatter3d(
             x=points[:, 0], y=points[:, 1], z=points[:, 2], mode="markers",
