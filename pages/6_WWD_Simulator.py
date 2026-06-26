@@ -175,14 +175,28 @@ st.divider()
 st.subheader("🗺️ Live geo map — real intersection")
 st.caption(f"**{geo.SITE_NAME}** — the driver moves here in real time as the sim plays "
            "(no broadcast needed).")
+# Map layer toggles
+vu.ensure_toggle_defaults({"map_satellite": True, "map_hdmap": True,
+                           "map_sensors": True, "map_compass": True})
+_mt = st.columns(4)
+_mt[0].toggle("🛰️ Satellite", key="map_satellite", help="Esri World Imagery vs street map.")
+_mt[1].toggle("🛣️ HD-map roads", key="map_hdmap",
+              help="The dataset's real HD-map lane network, laid on the imagery.")
+_mt[2].toggle("📡 LiDAR stations", key="map_sensors", help="The two gantry LiDARs + 120 m range rings.")
+_mt[3].toggle("🧭 Compass + cardinals", key="map_compass", help="True-north rose + per-lane cardinal labels.")
 try:
+    import math as _math
     import pydeck as pdk
+
+    def _card(b):                       # true bearing (deg) → cardinal letter
+        return ["N", "E", "S", "W"][int(((b + 45.0) % 360.0) // 90.0)]
+
     # lane rings (sensor frame) → projector reference + map polygons
     _rings, _verts = [], []
     for ln in lanes:
         xs, ys = ln["polygon"].exterior.xy
         ring = list(zip([float(x) for x in xs], [float(y) for y in ys]))
-        _rings.append((ln["lane_id"], ring))
+        _rings.append((ln, ring))
         _verts.extend(ring)
     _proj = geo.make_projector("south", ref_points_xy=_verts)
 
@@ -193,15 +207,27 @@ try:
     _lls = [_proj(x, y) for x, y in _verts]
     _clat = sum(p[0] for p in _lls) / len(_lls)
     _clon = sum(p[1] for p in _lls) / len(_lls)
-    _lane_data = [{"polygon": [_ll(x, y) for x, y in ring], "name": lid} for lid, ring in _rings]
+    _center = (_clat, _clon)
+    _lane_data = [{"polygon": [_ll(x, y) for x, y in ring], "name": ln["lane_id"]}
+                  for ln, ring in _rings]
 
     _k = min(step, len(sim_track) - 1)
     _path = [_ll(d["cx"], d["cy"]) for d in sim_track[:_k + 1]]
     _dpos = _ll(sim_track[_k]["cx"], sim_track[_k]["cy"])
     _dcol = [255, 43, 43] if flagged_now else [255, 165, 0]
-    _layers = [
+
+    _layers = []
+    # --- HD-map real road network (under everything) ---
+    if st.session_state.map_hdmap and _proj.exact:
+        _roads = geo.hdmap_paths_near(_center, 130.0)
+        if _roads:
+            _layers.append(pdk.Layer("PathLayer", [{"path": p} for p in _roads],
+                                     get_path="path", get_color=[255, 255, 255, 110],
+                                     width_min_pixels=1))
+    # --- sim lanes + driver ---
+    _layers += [
         pdk.Layer("PolygonLayer", _lane_data, get_polygon="polygon",
-                  get_fill_color=[56, 132, 255, 35], get_line_color=[56, 132, 255, 200],
+                  get_fill_color=[56, 132, 255, 35], get_line_color=[56, 132, 255, 220],
                   line_width_min_pixels=2, stroked=True, filled=True, pickable=True),
         pdk.Layer("PathLayer", [{"path": _path}] if len(_path) > 1 else [],
                   get_path="path", get_color=_dcol, width_min_pixels=3),
@@ -214,15 +240,68 @@ try:
         _layers.append(pdk.Layer("ScatterplotLayer", _rt, get_position="position",
                                  get_fill_color=[150, 150, 150, 170], get_radius=3,
                                  radius_min_pixels=4))
-    _deck = pdk.Deck(layers=_layers, map_provider="carto", map_style="road",
-                     initial_view_state=pdk.ViewState(latitude=_clat, longitude=_clon,
-                                                      zoom=17, pitch=0),
-                     tooltip={"text": "{name}"})
+    # --- LiDAR stations + 120 m range rings ---
+    if st.session_state.map_sensors and _proj.exact:
+        _sens, _ringp, _slbl = [], [], []
+        for _sn, _col in (("south", [0, 200, 255]), ("north", [255, 122, 89])):
+            _p = geo.sensor_position_latlon(_sn)
+            if _p is None:
+                continue
+            _sens.append({"position": [_p[1], _p[0]], "color": _col})
+            _slbl.append({"position": [_p[1], _p[0]], "text": f"LiDAR {_sn}"})
+            _ringp.append({"path": geo.circle_latlon(_p, 120.0), "color": _col})
+        if _ringp:
+            _layers.append(pdk.Layer("PathLayer", _ringp, get_path="path",
+                                     get_color="color", width_min_pixels=1, opacity=0.5))
+        if _sens:
+            _layers.append(pdk.Layer("ScatterplotLayer", _sens, get_position="position",
+                                     get_fill_color="color", get_line_color=[0, 0, 0],
+                                     get_radius=5, radius_min_pixels=8, stroked=True,
+                                     line_width_min_pixels=2))
+            _layers.append(pdk.Layer("TextLayer", _slbl, get_position="position",
+                                     get_text="text", get_size=13, get_color=[255, 255, 255],
+                                     get_alignment_baseline="'top'", get_pixel_offset=[0, 10]))
+    # --- compass rose + per-lane cardinal labels ---
+    if st.session_state.map_compass:
+        _rose = []
+        for _name, _ang in (("N", 0.0), ("E", 90.0), ("S", 180.0), ("W", 270.0)):
+            _la, _lo = geo._enu_offset_latlon(90.0 * _math.sin(_math.radians(_ang)),
+                                              90.0 * _math.cos(_math.radians(_ang)), _center)
+            _rose.append({"position": [_lo, _la], "text": _name})
+        _layers.append(pdk.Layer("TextLayer", _rose, get_position="position", get_text="text",
+                                 get_size=20, get_color=[255, 235, 120],
+                                 get_alignment_baseline="'center'"))
+        _clbl = []
+        for ln, ring in _rings:
+            cx = sum(p[0] for p in ring) / len(ring)
+            cy = sum(p[1] for p in ring) / len(ring)
+            _b = geo.bearing_at(cx, cy, _math.radians(float(ln["heading_deg"])), "south")
+            _clbl.append({"position": _ll(cx, cy), "text": f"{_card(_b)} {_b:.0f}°"})
+        _layers.append(pdk.Layer("TextLayer", _clbl, get_position="position", get_text="text",
+                                 get_size=12, get_color=[120, 230, 255],
+                                 get_alignment_baseline="'center'"))
+
+    # --- basemap: token-free Esri satellite, or carto street ---
+    if st.session_state.map_satellite:
+        _layers.insert(0, pdk.Layer(
+            "TileLayer",
+            data="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+            min_zoom=0, max_zoom=19, tile_size=256))
+        _deck = pdk.Deck(layers=_layers, map_provider=None,
+                         initial_view_state=pdk.ViewState(latitude=_clat, longitude=_clon,
+                                                          zoom=17, pitch=0),
+                         tooltip={"text": "{name}"})
+    else:
+        _deck = pdk.Deck(layers=_layers, map_provider="carto", map_style="road",
+                         initial_view_state=pdk.ViewState(latitude=_clat, longitude=_clon,
+                                                          zoom=17, pitch=0),
+                         tooltip={"text": "{name}"})
     st.pydeck_chart(_deck, use_container_width=True)
-    st.caption(("🛰️ **Exact georeferenced position.**" if _proj.exact else
-                "📍 **Approximate placement** — true shape & orientation (from the real sensor→map "
-                "rotation), centred on the site. Set the HD-map UTM anchor in `geo_reference.py` "
-                "for survey-grade absolute coordinates.")
+    st.caption(("🛰️ **Exact georeferenced position** — HD-map roads, LiDAR stations and "
+                "lanes are placed from the dataset's surveyed HD-map anchor."
+                if _proj.exact else
+                "📍 **Approximate placement** (no exact georef — install pyproj + place the HD "
+                "map). Correct shape & orientation, centred on the site.")
                + f"  Driver: {'🔴 wrong-way (alerting)' if flagged_now else '🟠 tracking'}.")
 except Exception as e:
     st.info(f"Live map unavailable ({type(e).__name__}: {e}). The view above and the V2X "

@@ -264,3 +264,80 @@ def make_projector(sensor="south", ref_points_xy=None, center=None):
 def has_georef(sensor="south"):
     """Any georef at all (exact or approximate)."""
     return has_exact_georef(sensor) or sensor_to_map_transform(sensor) is not None
+
+
+def sensor_position_latlon(sensor="south"):
+    """(lat, lon) of a LiDAR station (its frame origin) on the gantry. None if no
+    exact georef."""
+    return sensor_xy_to_latlon(0.0, 0.0, sensor)
+
+
+def circle_latlon(center_latlon, radius_m, n=72):
+    """A closed ring of [lon, lat] points at radius_m around center (for FOV/range
+    rings on the map)."""
+    out = []
+    for i in range(n + 1):
+        th = 2.0 * math.pi * i / n
+        lat, lon = _enu_offset_latlon(radius_m * math.cos(th), radius_m * math.sin(th),
+                                      center_latlon)
+        out.append([lon, lat])
+    return out
+
+
+@functools.lru_cache(maxsize=1)
+def _hdmap_lanes_latlon():
+    """Every HD-map lane centerline as a lat/lon polyline. Returns a list of
+    np.ndarray([[lat, lon], ...]) (one per lane with ≥2 samples), or []. Parses the
+    48 MB file and batch-projects all samples to WGS84 once (cached)."""
+    gr = _hdmap_georef()
+    if gr is None:
+        return []
+    proj_str, origin = gr
+    tr = _transformer(proj_str)
+    if tr is None:
+        return []
+    path = next((p for p in _HDMAP_CANDIDATES if os.path.exists(p)), None)
+    if path is None:
+        return []
+    try:
+        with open(path, "r") as f:
+            d = json.load(f)
+    except Exception:
+        return []
+    chunks, bounds = [], []
+    n = 0
+    for road in d.get("roads", []):
+        for ls in road.get("laneSections", []):
+            for ln in ls.get("lanes", []):
+                s = ln.get("samples") or []
+                if len(s) < 2:
+                    continue
+                arr = np.asarray(s, dtype=float)[:, :2]
+                bounds.append((n, n + len(arr)))
+                chunks.append(arr)
+                n += len(arr)
+    if not chunks:
+        return []
+    allp = np.vstack(chunks)
+    lon, lat = tr.transform(origin[0] + allp[:, 0], origin[1] + allp[:, 1])
+    latlon = np.column_stack([lat, lon])
+    return [latlon[a:b] for a, b in bounds]
+
+
+def hdmap_paths_near(center_latlon, radius_m=130.0):
+    """HD-map lane centerlines near `center_latlon`, as polylines [[lon, lat], ...] for
+    pydeck. Each lane is clipped to the bbox of the given radius (≥2 pts kept). []
+    if the HD map is unavailable."""
+    lanes = _hdmap_lanes_latlon()
+    if not lanes:
+        return []
+    clat, clon = center_latlon
+    dlat = radius_m / 111320.0
+    dlon = radius_m / (111320.0 * math.cos(math.radians(clat)))
+    out = []
+    for arr in lanes:
+        mask = (np.abs(arr[:, 0] - clat) < dlat) & (np.abs(arr[:, 1] - clon) < dlon)
+        if int(mask.sum()) < 2:
+            continue
+        out.append([[float(lo), float(la)] for la, lo in arr[mask]])
+    return out
