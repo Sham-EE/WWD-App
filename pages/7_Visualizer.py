@@ -314,21 +314,30 @@ def render_lidar_tab():
                               help="Hide the 3D boxes + LiDAR markers to see JUST the point cloud "
                                    "on the HD-map — the cleanest alignment check (use Bird's Eye, "
                                    "reset rotation to true top-down).")
-    with vb.expander("🎚️ HD-map manual nudge (Δx / Δy, metres) — if it looks offset, shift it here"):
-        c_dx, c_dy, c_rs = st.columns([2, 2, 1])
+    with vb.expander("🎚️ HD-map manual align (rotate θ, then shift Δx/Δy) — dial it in, tell me the numbers"):
+        c_rot, c_dx, c_dy, c_rs = st.columns([2, 2, 2, 1])
+        rot = c_rot.number_input("θ rotate (°, CCW)", value=float(st.session_state.get("lv_hdmap_rot", 0.0)),
+                                 step=5.0, format="%.1f", key="lv_hdmap_rot",
+                                 help="Rotation about the sensor origin. Your Jägerhof check says ~180°.")
         dx = c_dx.number_input("Δx (m, +east)", value=float(st.session_state.get("lv_hdmap_dx", 0.0)),
                                step=0.5, format="%.1f", key="lv_hdmap_dx")
         dy = c_dy.number_input("Δy (m, +north)", value=float(st.session_state.get("lv_hdmap_dy", 0.0)),
                                step=0.5, format="%.1f", key="lv_hdmap_dy")
         c_rs.markdown("<div style='height:1.7rem'></div>", unsafe_allow_html=True)
-        if c_rs.button("↺ 0", help="Reset nudge to zero"):
+        if c_rs.button("↺ 0", help="Reset to zero"):
+            st.session_state.lv_hdmap_rot = 0.0
             st.session_state.lv_hdmap_dx = 0.0
             st.session_state.lv_hdmap_dy = 0.0
             st.rerun()
-        if hdmap_lanes and (dx or dy):
-            hdmap_lanes = [[[x + dx, y + dy] for x, y in poly] for poly in hdmap_lanes]
-            st.caption(f"HD-map shifted by ({dx:+.1f}, {dy:+.1f}) m. If a non-zero shift makes it line "
-                       "up, that's the real offset — tell me the numbers.")
+        if c_rot.button("Set θ = 180°"):
+            st.session_state.lv_hdmap_rot = 180.0
+            st.rerun()
+        if hdmap_lanes and (rot or dx or dy):
+            _t = np.radians(rot); _c, _s = np.cos(_t), np.sin(_t)
+            hdmap_lanes = [[[(x * _c - y * _s) + dx, (x * _s + y * _c) + dy] for x, y in poly]
+                           for poly in hdmap_lanes]
+            st.caption(f"HD-map: rotated {rot:+.1f}° then shifted ({dx:+.1f}, {dy:+.1f}) m. When it lines "
+                       "up against the Jägerhof / cloud, tell me these three numbers and I'll bake them in.")
     _frame = "north" if _sensor == "north" else "south"
     gps_mode = st.toggle("🛰️ GPS terrain (satellite) — swap perspective to debug against real "
                          "landmarks", key="lv_gps",
