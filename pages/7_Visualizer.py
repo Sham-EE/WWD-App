@@ -306,9 +306,13 @@ def render_lidar_tab():
     if show_hdmap and not hdmap_lanes:
         st.caption("ℹ️ HD-map overlay needs `map/lane_samples.json` (from the dev-kit's src/map/map.zip).")
 
-    va, vb = st.columns([1.2, 3])
+    va, vbx, vb = st.columns([1.2, 1, 2.6])
     view_key = "bev" if va.radio("View", ["Bird's Eye", "Side"], horizontal=True,
                                  key="lv_view").startswith("Bird") else "side"
+    show_boxes = vbx.checkbox("📦 Boxes", value=True, key="lv_boxes",
+                              help="Hide the 3D boxes + LiDAR markers to see JUST the point cloud "
+                                   "on the HD-map — the cleanest alignment check (use Bird's Eye, "
+                                   "reset rotation to true top-down).")
     with vb.expander("🎚️ HD-map manual nudge (Δx / Δy, metres) — if it looks offset, shift it here"):
         c_dx, c_dy, c_rs = st.columns([2, 2, 1])
         dx = c_dx.number_input("Δx (m, +east)", value=float(st.session_state.get("lv_hdmap_dx", 0.0)),
@@ -332,8 +336,9 @@ def render_lidar_tab():
 
         pts = _load_pts(pcds[i], int(max_pts))
         objs = lp.load_objects(labels[i])
-        st.plotly_chart(lv.build_figure(pts, objs, color_mode, view_key, height=820,
-                                        road_poly=road, sensors=sensors,
+        st.plotly_chart(lv.build_figure(pts, objs if show_boxes else [], color_mode, view_key,
+                                        height=820, road_poly=road,
+                                        sensors=sensors if show_boxes else None,
                                         hdmap_lanes=hdmap_lanes),
                         use_container_width=True, key="lv_main")
         st.caption(f"Frame {i+1}/{n} · {len(objs)} shown ({_box_count_str(labels[i])}) · "
