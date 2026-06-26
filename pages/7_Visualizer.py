@@ -1,7 +1,6 @@
 import os
 import time
 
-import numpy as np
 import streamlit as st
 
 import dataset_manager as dm
@@ -288,14 +287,16 @@ def render_lidar_tab():
     if n == 0:
         st.warning("Need both OpenLABEL labels and point clouds (set them in **Input folders** above).")
         return
-    o1, o2, o3, o4, o5 = st.columns(5)
+    o1, o2, o3, o4, o5, o6 = st.columns(6)
     color_mode = o1.radio("Box colour", ["by_category", "by_track_id"], horizontal=True, key="lv_color")
     max_pts = o2.select_slider("Points shown", [10000, 20000, 30000, 50000], value=20000, key="lv_pts")
-    show_road = o3.checkbox("🛣️ Road outline", value=True, key="lv_road",
+    show_boxes = o3.checkbox("📦 Boxes", value=True, key="lv_boxes",
+                             help="Show the 3D boxes + LiDAR markers.")
+    show_road = o4.checkbox("🛣️ Road outline", value=True, key="lv_road",
                             help="Green road boundary from site_geometry.json.")
-    show_sensors = o4.checkbox("📍 LiDAR", value=True, key="lv_sensors",
+    show_sensors = o5.checkbox("📍 LiDAR", value=True, key="lv_sensors",
                                help="Mark the LiDAR position + nadir for the selected sensor.")
-    show_hdmap = o5.checkbox("🗺️ HD map", value=True, key="lv_hdmap",
+    show_hdmap = o6.checkbox("🗺️ HD map", value=True, key="lv_hdmap",
                              help="Overlay the dataset's real HD-map road network (lane_samples.json) "
                                   "at ground level — the dev-kit digital-twin look.")
     road = dp.road_polygon(0.0) if show_road else None
@@ -307,88 +308,6 @@ def render_lidar_tab():
     if show_hdmap and not hdmap_lanes:
         st.caption("ℹ️ HD-map overlay needs `map/lane_samples.json` (from the dev-kit's src/map/map.zip).")
 
-    va, vbx, vb = st.columns([1.2, 1, 2.6])
-    view_key = "bev" if va.radio("View", ["Bird's Eye", "Side"], horizontal=True,
-                                 key="lv_view").startswith("Bird") else "side"
-    show_boxes = vbx.checkbox("📦 Boxes", value=True, key="lv_boxes",
-                              help="Hide the 3D boxes + LiDAR markers to see JUST the point cloud "
-                                   "on the HD-map — the cleanest alignment check (use Bird's Eye, "
-                                   "reset rotation to true top-down).")
-    with vb.expander("🎚️ HD-map manual align (rotate θ, then shift Δx/Δy) — dial it in, tell me the numbers"):
-        c_rot, c_dx, c_dy, c_rs = st.columns([2, 2, 2, 1])
-        rot = c_rot.number_input("θ rotate (°, CCW)", value=float(st.session_state.get("lv_hdmap_rot", 0.0)),
-                                 step=5.0, format="%.1f", key="lv_hdmap_rot",
-                                 help="Rotation about the sensor origin. Your Jägerhof check says ~180°.")
-        dx = c_dx.number_input("Δx (m, +east)", value=float(st.session_state.get("lv_hdmap_dx", 0.0)),
-                               step=0.5, format="%.1f", key="lv_hdmap_dx")
-        dy = c_dy.number_input("Δy (m, +north)", value=float(st.session_state.get("lv_hdmap_dy", 0.0)),
-                               step=0.5, format="%.1f", key="lv_hdmap_dy")
-        c_rs.markdown("<div style='height:1.7rem'></div>", unsafe_allow_html=True)
-        if c_rs.button("↺ 0", help="Reset to zero"):
-            st.session_state.lv_hdmap_rot = 0.0
-            st.session_state.lv_hdmap_dx = 0.0
-            st.session_state.lv_hdmap_dy = 0.0
-            st.rerun()
-        if c_rot.button("Set θ = 180°"):
-            st.session_state.lv_hdmap_rot = 180.0
-            st.rerun()
-        if hdmap_lanes and (rot or dx or dy):
-            _t = np.radians(rot); _c, _s = np.cos(_t), np.sin(_t)
-            hdmap_lanes = [[[(x * _c - y * _s) + dx, (x * _s + y * _c) + dy] for x, y in poly]
-                           for poly in hdmap_lanes]
-            st.caption(f"HD-map: rotated {rot:+.1f}° then shifted ({dx:+.1f}, {dy:+.1f}) m. When it lines "
-                       "up against the Jägerhof / cloud, tell me these three numbers and I'll bake them in.")
-    _frame = "north" if _sensor == "north" else "south"
-    gps_mode = st.toggle("🛰️ GPS terrain (satellite) — swap perspective to debug against real "
-                         "landmarks", key="lv_gps",
-                         help="Put the HD-map on the REAL roads (satellite imagery) and project the "
-                              "point cloud + boxes through the transform. Offsets show up against "
-                              "real-world landmarks (e.g. the Jägerhof).")
-
-    def _render_gps(pts, objs):
-        if not geo.has_exact_georef(_frame):
-            st.info("GPS terrain needs the exact georef (HD map + pyproj). Falling back to BEV.")
-            st.plotly_chart(lv.build_figure(pts, objs if show_boxes else [], color_mode, view_key,
-                                            height=820, hdmap_lanes=hdmap_lanes),
-                            use_container_width=True, key="lv_main")
-            return
-        import pydeck as pdk
-        center = geo.sensor_position_latlon(_frame)
-        # project cloud (downsample) + box centres through the transform
-        cl = pts
-        if len(cl) > 15000:
-            cl = cl[np.random.default_rng(0).choice(len(cl), 15000, replace=False)]
-        cll = geo.sensor_points_to_latlon(cl[:, :2], _frame)
-        cloud = [{"position": [float(lo), float(la)]} for la, lo in cll]
-        bcs = np.array([lp.cuboid_corners(o["val"])[:, :2].mean(0) for o in objs]) if objs else None
-        boxes = []
-        if bcs is not None and len(bcs):
-            bll = geo.sensor_points_to_latlon(bcs, _frame)
-            boxes = [{"position": [float(lo), float(la)]} for la, lo in bll]
-        roads = geo.hdmap_paths_near(center, 130.0)  # real-world lat/lon, on the satellite roads
-        layers = [
-            pdk.Layer("TileLayer", data="https://server.arcgisonline.com/ArcGIS/rest/services/"
-                      "World_Imagery/MapServer/tile/{z}/{y}/{x}", min_zoom=0, max_zoom=19, tile_size=256),
-            pdk.Layer("PathLayer", [{"path": p} for p in roads], get_path="path",
-                      get_color=[255, 230, 80, 200], width_min_pixels=2),
-            pdk.Layer("ScatterplotLayer", cloud, get_position="position",
-                      get_fill_color=[120, 200, 255, 110], get_radius=1, radius_min_pixels=1),
-        ]
-        if boxes:
-            layers.append(pdk.Layer("ScatterplotLayer", boxes, get_position="position",
-                                    get_fill_color=[255, 60, 60], get_radius=2, radius_min_pixels=5,
-                                    stroked=True, get_line_color=[255, 255, 255], line_width_min_pixels=1))
-        # the gantry origin
-        layers.append(pdk.Layer("ScatterplotLayer", [{"position": [center[1], center[0]]}],
-                                get_position="position", get_fill_color=[0, 255, 0], get_radius=2,
-                                radius_min_pixels=6, stroked=True, get_line_color=[0, 0, 0]))
-        st.pydeck_chart(pdk.Deck(layers=layers, map_provider=None,
-                                 initial_view_state=pdk.ViewState(latitude=center[0], longitude=center[1],
-                                                                  zoom=17, pitch=0)),
-                        use_container_width=True)
-        st.caption("🟡 HD-map (real roads) · 🔵 projected cloud · 🔴 box centres · 🟢 gantry. If the blue "
-                   "cloud lands OFF the yellow roads/satellite, that gap is the real transform error.")
-
     st.session_state.setdefault("lidar_frame", 0)
 
     @st.fragment
@@ -397,14 +316,11 @@ def render_lidar_tab():
 
         pts = _load_pts(pcds[i], int(max_pts))
         objs = lp.load_objects(labels[i])
-        if gps_mode:
-            _render_gps(pts, objs)
-        else:
-            st.plotly_chart(lv.build_figure(pts, objs if show_boxes else [], color_mode, view_key,
-                                            height=820, road_poly=road,
-                                            sensors=sensors if show_boxes else None,
-                                            hdmap_lanes=hdmap_lanes),
-                            use_container_width=True, key="lv_main")
+        st.plotly_chart(lv.build_figure(pts, objs if show_boxes else [], color_mode,
+                                        height=820, road_poly=road,
+                                        sensors=sensors if show_boxes else None,
+                                        hdmap_lanes=hdmap_lanes),
+                        use_container_width=True, key="lv_main")
         st.caption(f"Frame {i+1}/{n} · {len(objs)} shown ({_box_count_str(labels[i])}) · "
                    f"{len(pts):,} points")
 

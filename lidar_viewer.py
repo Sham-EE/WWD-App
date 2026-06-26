@@ -10,13 +10,10 @@ import numpy as np
 
 import label_projection as lp
 
-# Camera presets matching the dev-kit's two renders.
-_CAMERAS = {
-    "bev": dict(eye=dict(x=0, y=0, z=2.2), up=dict(x=0, y=1, z=0),
-                center=dict(x=0, y=0, z=0), projection=dict(type="orthographic")),
-    "side": dict(eye=dict(x=1.5, y=-1.5, z=0.9), up=dict(x=0, y=0, z=1),
-                 center=dict(x=0, y=0, z=0), projection=dict(type="perspective")),
-}
+# Oblique, z-up perspective — the same "horizontal angle" as the Background
+# Filtering viewer (azimuth 45°, elevation 35° → eye ≈ a (1,1,1) corner view).
+_OBLIQUE = dict(eye=dict(x=1.05, y=1.05, z=1.0), up=dict(x=0, y=0, z=1),
+                center=dict(x=0, y=0, z=0), projection=dict(type="perspective"))
 _BG = "#0e1117"
 _POINT_COLOR = "#8b929c"
 
@@ -72,15 +69,15 @@ def _dashed_xyz(coords, z, dash=2.5, gap=1.8, step=0.4):
     return xs, ys, zs
 
 
-def build_figure(points, objs, color_mode="by_category", view="side",
+def build_figure(points, objs, color_mode="by_category", view="oblique",
                  height=560, line_width=4, show_labels=True, road_poly=None, bounds=None,
                  sensors=None, hdmap_lanes=None):
-    """Plotly 3D figure: grey points + category-coloured GT boxes, with a preset
-    camera ('bev' = top-down, 'side' = angled). If `road_poly` is given, its
-    boundary is drawn as a green dashed outline at ground level. `hdmap_lanes`
-    (sensor-frame polylines [[x, y], ...]) draws the real HD-map road network at
-    ground level — the dev-kit 'digital twin' look. `bounds` (xmin, xmax, ymin, ymax)
-    locks the x/y view extent (keeps a stable zoom)."""
+    """Plotly 3D figure: grey points + category-coloured GT boxes, in an oblique
+    z-up perspective (the same horizontal angle as the Background Filtering viewer).
+    If `road_poly` is given, its boundary is drawn as a green dashed outline at
+    ground level. `hdmap_lanes` (cloud-frame polylines [[x, y], ...]) draws the real
+    HD-map road network at ground level — the dev-kit 'digital twin' look. `bounds`
+    (xmin, xmax, ymin, ymax) locks the x/y view extent (keeps a stable zoom)."""
     import plotly.graph_objects as go
     fig = go.Figure()
     _z0 = float(np.percentile(points[:, 2], 2)) if (points is not None and len(points)) else -7.5
@@ -130,7 +127,7 @@ def build_figure(points, objs, color_mode="by_category", view="side",
     yr = dict(visible=False, range=[bounds[2], bounds[3]]) if bounds else dict(visible=False)
     fig.update_layout(
         height=height, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor=_BG,
-        scene=dict(aspectmode="data", bgcolor=_BG, camera=_CAMERAS.get(view, _CAMERAS["side"]),
+        scene=dict(aspectmode="data", bgcolor=_BG, camera=_OBLIQUE,
                    xaxis=xr, yaxis=yr, zaxis=dict(visible=False)),
-        uirevision=view)   # keep the user's rotation/zoom across frame changes
+        uirevision="lidar_oblique")   # keep the user's rotation/zoom across frame changes
     return fig
