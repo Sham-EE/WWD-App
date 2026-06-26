@@ -18,3 +18,8 @@ datasets/registry.json
 datasets/*/data/
 datasets/*/outputs/
 
+# --- HD map (external dev-kit data, ~48 MB): place lane_samples.json (from the
+#     dev-kit's src/map/map.zip) in map/ to enable EXACT georeferencing.
+#     geo_reference.py falls back gracefully without it. Track code, not data. ---
+map/lane_samples.json
+
