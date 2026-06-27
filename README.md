@@ -21,11 +21,14 @@ clouds. The pages (in sidebar / usage order):
 5. **Lane Editor** — build/adjust the wrong-way lane geometry from data and
    export it.
 6. **WWD Simulator** — spawn a synthetic wrong-way driver through the real
-   detector and fire the V2X dashboard's messaging on detection.
+   detector and fire the V2X dashboard's messaging on detection. Includes a live,
+   **georeferenced** map of the real intersection (true compass bearings, exact
+   lat/lon — the site is the TUMTraf s110 junction in Garching-Hochbrück, Munich).
 7. **Visualizer** — two tabs: a **camera** viewer (both cameras side by side with
    generated bounding-box / point-cloud overlays + track-history trails + video),
-   and a **3D LiDAR** viewer (the scan + ground-truth boxes in Bird's-Eye and Side
-   views). A native, dependency-light replacement for the TUM Traffic dev-kit.
+   and a **3D LiDAR** viewer (the scan + ground-truth boxes + the **real HD-map
+   road network** in one oblique view — the dev-kit "digital twin"). A native,
+   dependency-light replacement for the TUM Traffic dev-kit.
 
 ## Datasets
 
@@ -75,8 +78,14 @@ so no dev-kit, no calibration files, and no extra dependencies.
   `outputs/rendered/`. Optional **track-history trails** (coloured per object,
   adjustable length/thickness). Exact dev-kit class colours + `TYPE_id` labels.
   **Generate** a side-by-side MP4 (GIF fallback) of any variant.
-- **3D LiDAR tab** — the point cloud + ground-truth 3D boxes in the sensor frame,
-  shown as **Bird's-Eye** and **Side** views (rotate/zoom), coloured by category.
+- **3D LiDAR tab** — the point cloud + ground-truth 3D boxes + the **real HD-map
+  road network** overlaid, in one big oblique (z-up) view coloured by category — the
+  dev-kit "digital twin." The HD map comes from the dev-kit's `lane_samples.json`
+  (place it in `map/`), transformed into the cloud frame with the dev-kit's own
+  recipe (`hd_map.py` map→`s110_base`, then its `visualize_point_cloud_with_3d_boxes`
+  `s110_base`→cloud transform — a 77.8° rotation + fixed translation, copied verbatim
+  so the lanes land exactly on the scan). Toggles: 📦 Boxes · 🛣️ Road outline ·
+  📍 LiDAR markers · 🗺️ HD map.
 - **Sensor / Input / GT toggles** drive **both** tabs: **Sensor** (Registered / South /
   North — registered reuses the south GT + camera calibration, since it's in the south
   frame), **Input cloud** (Cropped / Full), and **GT boxes** (**Scorable** = what
@@ -253,10 +262,15 @@ optimization target. A negative/ablation result, but a useful one for the paper.
 
 ```bash
 # From this folder, with your Python environment active (see requirements.txt:
-# shapely 2.x, scipy, scikit-learn, open3d, streamlit, plotly, pandas, matplotlib,
-# imageio + imageio-ffmpeg for MP4 export):
+# shapely 2.x, scipy, scikit-learn, open3d, streamlit, plotly, pydeck, pandas, matplotlib,
+# pyproj (georeferencing), imageio + imageio-ffmpeg for MP4 export):
 streamlit run Home.py
 ```
+
+> **HD-map / georeferencing data (optional):** the Visualizer's HD-map overlay and the
+> exact lat/lon features read `map/lane_samples.json` — extract it from the dev-kit's
+> `src/map/map.zip` and drop it in `map/` (it's gitignored; everything degrades gracefully
+> without it).
 
 ### End-to-end workflow
 0. **Dataset Prep** (first run / from scratch) → Crop to road, Registration, and
@@ -306,7 +320,9 @@ streamlit run Home.py
 | `lane_tools.py` | Lane Editor helpers (auto-cluster, geojson, 3D preview) |
 | `visualization.py` | 3D interactive view + matplotlib GIF (cardinal arrows) |
 | `label_projection.py` | OpenLABEL boxes/point-cloud → camera image (calibration from JSON) |
-| `lidar_viewer.py` | 3D LiDAR scan + GT boxes (BEV / side) via Plotly |
+| `lidar_viewer.py` | 3D LiDAR scan + GT boxes + HD-map overlay (oblique view) via Plotly |
+| `geo_reference.py` | Georeferencing: sensor↔WGS84 (true bearings, lat/lon) + HD-map road network (dev-kit transform) |
+| `map/lane_samples.json` | HD-map road network (from dev-kit `src/map/map.zip`; gitignored — place it here for the overlay) |
 | `viewer_ui.py` | Shared compact viewer controls (one-line nav + bulk overlay toggles) |
 | `road_viewer.py` | Camera browsing + side-by-side video helpers |
 | `wwd_simulator.py` | Synthetic wrong-way track + V2X dashboard integration |
@@ -469,6 +485,22 @@ false alarms matter more than recall); further gains need a learned detector, no
 ---
 
 ## Changelog (highlights since the pipeline came together)
+
+**Georeferencing + HD-map digital twin (latest)**
+- The dataset is the **real TUMTraf s110 intersection** (Schleißheimer Str. (B471) ×
+  Zeppelinstr., Garching-Hochbrück, Munich). `geo_reference.py` composes the OpenLABEL
+  + HD-map chain to convert sensor coordinates to **exact WGS84 lat/lon** and **true
+  compass bearings** (UTM 32N via `pyproj`; anchor from the HD map's `geoReference`/
+  `origin`).
+- **HD-map road network** (`map/lane_samples.json` from the dev-kit's `src/map/map.zip`)
+  is rendered in the **Visualizer 3D tab** on top of the point cloud + class-coloured
+  boxes — the dev-kit "digital twin," in one oblique z-up view.
+- **Alignment fix:** the HD-map→cloud transform is copied **verbatim from the dev-kit**
+  (`hd_map.py` map→`s110_base`, then `visualize_point_cloud_with_3d_boxes`'s 77.8°
+  rotation + translation `s110_base`→cloud) — reverse-engineering it via OpenLABEL
+  extrinsics produced a ~180° flip; the dev-kit's own recipe lands the lanes exactly.
+- **WWD Simulator** gained a live georeferenced map (satellite + HD-map + driver) and a
+  true-bearing, lat/lon-tagged V2X broadcast. Requires `pyproj` (added to requirements).
 
 **Core detection / WWD**
 - **WWD** implemented (Kalman velocity vs. lane direction) with junction
