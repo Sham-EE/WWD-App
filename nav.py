@@ -47,11 +47,26 @@ PIPELINE = [
 
 def render_sidebar():
     """Draw the custom collapsible sidebar. Call once near the top of every page
-    (after `st.set_page_config`)."""
+    (after `st.set_page_config`).
+
+    Sections are collapsible *and* their open/closed state persists across page
+    navigation (kept in `st.session_state["_nav_open"]`). `st.expander` can't
+    report its own state, so each section header is a toggle button that drives
+    the persisted set; the page links render only while the section is open. New
+    sessions start with everything collapsed."""
+    ss = st.session_state
+    if "_nav_open" not in ss:
+        ss["_nav_open"] = set()          # all sections collapsed on first load
+    open_sections = ss["_nav_open"]
     with st.sidebar:
         st.page_link("Home.py", label="🏠  Home")
         for title, tools in SECTIONS:
-            with st.expander(title, expanded=False):
+            is_open = title in open_sections
+            if st.button(f"{'▾' if is_open else '▸'}  {title}", key=f"nav_sec_{title}",
+                         use_container_width=True, type="tertiary"):
+                open_sections ^= {title}  # toggle membership, then re-render
+                st.rerun()
+            if is_open:
                 for path, icon, name, _desc, _subs in tools:
                     st.page_link(path, label=f"{icon}  {name}")
 
