@@ -173,11 +173,37 @@ def _vertex_editor(poly, label, step=1.0):
     return out
 
 
-tab_crop, tab_gt, tab_geom, tab_reg = st.tabs(
-    ["✂️ Crop to road (ROI)", "🏷️ Scorable GT (visible-only)", "🗺️ Geometry Editor",
-     "🧭 Registration (south + north)"])
+# ---------------- Prep pipeline (mirrors the Home stepper) ----------------
+# The four tabs below build on each other; this stepper shows the recommended
+# order and which steps are already done for the active dataset.
+def _has_pcd(d):
+    return bool(glob.glob(os.path.join(d, "*.pcd")))
 
-# ===================== Tab 1: Crop to road =====================
+_status = ds.status()
+# (icon, name, done?, optional?)
+_prep_steps = [
+    ("🧭", "Registration", _has_pcd(ds.registered_dir), True),
+    ("🗺️", "Geometry Editor", os.path.exists(ds.site_geometry_path), False),
+    ("✂️", "Crop to road", _status["pcd"], False),
+    ("🏷️", "Scorable GT", _status["gt"], False),
+]
+_prep_next = next((i for i, (_ic, _nm, dn, op) in enumerate(_prep_steps) if not dn and not op), None)
+
+st.markdown("##### 🧭 Prep order")
+nav.render_stepper([
+    (ic, nm, "done" if dn else ("next" if i == _prep_next else ("optional" if op else "todo")))
+    for i, (ic, nm, dn, op) in enumerate(_prep_steps)
+])
+st.caption("Registration is optional — only when fusing south + north. "
+           "Geometry Editor draws the road polygons, Crop clips the clouds to them, "
+           "then Scorable GT builds the visible-only ground truth.")
+
+# Tabs follow the recommended order; the `with` blocks keep their original
+# variable names, so only the labels + unpack order changed.
+tab_reg, tab_geom, tab_crop, tab_gt = st.tabs(
+    ["🧭 Registration", "🗺️ Geometry Editor", "✂️ Crop to road (ROI)", "🏷️ Scorable GT (visible-only)"])
+
+# ===================== Step 3: Crop to road =====================
 with tab_crop:
     st.caption("Clip a LiDAR's point clouds to the **road polygons** in `site_geometry.json`. "
                "Scales across sensors — crop the south, the north, or (later) the registered cloud. "
@@ -266,7 +292,7 @@ with tab_crop:
 
         _crop_preview()
 
-# ===================== Tab 2: Scorable GT =====================
+# ===================== Step 4: Scorable GT =====================
 with tab_gt:
     st.caption("Build a **scorable** ground-truth set: keep only objects inside the processed region "
                "(the eval ROI) that actually have LiDAR points. Transparent + reproducible — the basis "
@@ -386,7 +412,7 @@ with tab_gt:
         _gt_preview()
 
 
-# ===================== Tab 3: Geometry Editor =====================
+# ===================== Step 2: Geometry Editor =====================
 with tab_geom:
     st.caption("Edit the **site geometry** — research/ROI polygon, road polygons (used for cropping), "
                "and exclusion rectangles. **Saving updates the whole pipeline** (Background Filtering, "
@@ -696,7 +722,7 @@ with tab_geom:
     st.session_state.geom_edit = geom
 
 
-# ===================== Tab 4: Registration (south + north) =====================
+# ===================== Step 1: Registration (south + north) =====================
 with tab_reg:
     st.caption("Fuse the **south** and **north** Ouster LiDARs into one cloud. The sensor→base "
                "extrinsics are read straight from the OpenLABEL labels (static rig → constant 4×4), so "
