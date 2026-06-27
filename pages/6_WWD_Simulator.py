@@ -477,10 +477,12 @@ def render_real_map_tab():
     angle_thresh = cset[3].slider("Angle vs flow (deg)", 90, 180, 120, 5, key="rm_angle")
 
     # ---- the drawing map ----
-    fmap = folium.Map(location=[center[0], center[1]], zoom_start=18, tiles=None, control_scale=True)
+    fmap = folium.Map(location=[center[0], center[1]], zoom_start=19, max_zoom=22,
+                      tiles=None, control_scale=True)
     folium.TileLayer(
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        attr="Esri World Imagery", name="Satellite").add_to(fmap)
+        attr="Esri World Imagery", name="Satellite",
+        max_zoom=22, max_native_zoom=19).add_to(fmap)   # over-zoom (upscale) past native 19
     flagged = bool(ss.rm_result and ss.rm_result.get("flagged"))
     for ln in ss.rm_lanes:
         folium.PolyLine([[la, lo] for la, lo in ln["latlon"]], color="#3884ff", weight=5, opacity=.9,
