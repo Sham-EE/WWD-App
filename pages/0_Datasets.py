@@ -5,8 +5,10 @@ import glob
 import streamlit as st
 
 import dataset_manager as dm
+import nav
 
 st.set_page_config(layout="wide", page_title="Datasets")
+nav.render_sidebar()
 st.title("🗂️ Datasets")
 st.markdown(
     "Pick which dataset the whole app works on, or add your own. Each dataset keeps its **own** "

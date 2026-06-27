@@ -9,8 +9,10 @@ from wwd_simulator import (wrong_way_options, make_wrong_way_track,
                            v2x_dashboard_html, math_heading_to_compass)
 import viewer_ui as vu
 import geo_reference as geo
+import nav
 
 st.set_page_config(layout="wide", page_title="WWD Simulator")
+nav.render_sidebar()
 st.title("🚨 Wrong-Way Driver Simulator")
 st.markdown(
     "Real wrong-way events are rare and this dataset is all legal traffic, so this page "

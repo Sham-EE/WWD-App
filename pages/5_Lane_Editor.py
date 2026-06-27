@@ -9,7 +9,9 @@ from lane_tools import (
     lanes_to_geojson, geojson_to_lanes, build_preview, load_pcd_background,
 )
 
+import nav
 st.set_page_config(layout="wide", page_title="Lane Editor")
+nav.render_sidebar()
 
 
 @st.cache_data(show_spinner="Loading point-cloud background…")

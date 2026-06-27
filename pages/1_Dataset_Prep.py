@@ -12,8 +12,10 @@ import geometry_editor as ge
 import registration as reg
 import road_viewer as rv
 import viewer_ui as vu
+import nav
 
 st.set_page_config(layout="wide", page_title="Dataset Prep")
+nav.render_sidebar()
 st.title("🧰 Dataset Prep")
 st.markdown("Recreate the dataset's **derived** data from the raw TUM Traffic download, in-app — so "
             "everything the pipeline needs is reproducible, no external scripts.")

@@ -11,8 +11,10 @@ import dataset_prep as dp
 import registration as reg
 import viewer_ui as vu
 import geo_reference as geo
+import nav
 
 st.set_page_config(layout="wide", page_title="Visualizer")
+nav.render_sidebar()
 
 import re as _re
 def _short_cam(cam):

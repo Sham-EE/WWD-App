@@ -17,7 +17,9 @@ import viewer_ui as vu
 import run_history as rh
 
 # --- Page Configuration ---
+import nav
 st.set_page_config(layout="wide", page_title="Background Filtering")
+nav.render_sidebar()
 st.title("🔬 Background Filtering")
 logging.info("--- Background Filter Page Loaded ---")
 

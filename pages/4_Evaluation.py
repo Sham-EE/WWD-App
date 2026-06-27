@@ -69,7 +69,9 @@ def _pcd_xy(path, grid=0.3):
     return xy[idx]
 
 
+import nav
 st.set_page_config(layout="wide", page_title="Evaluation")
+nav.render_sidebar()
 st.title("📊 Quantitative Evaluation")
 
 _ds = dm.get_active()
