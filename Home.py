@@ -47,35 +47,18 @@ with ab2:
 
 st.write("")
 
-# ---------------- Dynamic pipeline (horizontal stepper) ----------------
-# One even-height card per workflow tool (in order) with its status badge. The
-# first not-done tool is "Next". (In-page tab order lives on each page itself.)
+# ---------------- Dynamic pipeline (compact stepper) ----------------
+# A single-line stepper (pills joined by arrows); the first not-done tool is
+# "Next". In-page tab order lives on each page itself.
 _states = nav.tool_states(_active)
 _next_page = next((p for p in nav.PIPELINE if _states[p] == "todo"), None)
 
 st.markdown("#### 🧭 Pipeline")
 st.caption("The recommended order — status updates as the active dataset progresses.")
-_cols = st.columns(len(nav.PIPELINE))
-for i, page in enumerate(nav.PIPELINE):
-    _p, icon, name, _desc, _subs = nav.TOOLS[page]
-    state = "next" if page == _next_page else _states[page]
-    if state == "done":
-        badge, color, bg, border = "✅ Done", "#4ade80", "#101a13", "#234a2c"
-    elif state == "next":
-        badge, color, bg, border = "🔵 Next", "#60a5fa", "#0f1722", "#2b4a78"
-    else:
-        badge, color, bg, border = "⬜ To do", "#6b7480", "#14181f", "#2a3340"
-    with _cols[i]:
-        st.markdown(
-            f"""<div style="background:{bg};border:1px solid {border};border-radius:12px;
-                        padding:10px 6px;text-align:center;min-height:118px">
-                  <div style="font-size:.7rem;color:#6b7480">STEP {i+1}</div>
-                  <div style="font-size:1.35rem;line-height:1.55rem">{icon}</div>
-                  <div style="font-weight:600;font-size:.84rem;margin-top:2px">{name}</div>
-                  <div style="color:{color};font-size:.74rem;margin-top:3px">{badge}</div>
-                </div>""",
-            unsafe_allow_html=True,
-        )
+nav.render_stepper([
+    (nav.TOOLS[p][1], nav.TOOLS[p][2], "next" if p == _next_page else _states[p])
+    for p in nav.PIPELINE
+])
 
 if _next_page is None:
     st.success("🎉 All set — every pipeline stage is complete. Jump into the **WWD Simulator** or **Evaluation**.")

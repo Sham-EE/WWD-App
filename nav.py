@@ -56,6 +56,40 @@ def render_sidebar():
                     st.page_link(path, label=f"{icon}  {name}")
 
 
+# state -> (bg, border, text, trailing glyph) for the compact stepper pills
+_STEP_STYLE = {
+    "done":     ("#101a13", "#2c5036", "#86d6a0", "✓"),
+    "next":     ("#13233a", "#3a6abf", "#bcd8ff", "●"),
+    "todo":     ("#14181f", "#2a3340", "#8b97a7", ""),
+    "optional": ("#1a1710", "#4a3c22", "#d2bd86", "○"),
+}
+
+
+def render_stepper(steps):
+    """Render a compact, single-line stepper: small pills joined by arrows.
+
+    `steps` is a list of (icon, name, state) where state is one of
+    done / next / todo / optional. Wraps gracefully on narrow screens."""
+    parts = []
+    for j, (icon, name, state) in enumerate(steps):
+        bg, border, txt, glyph = _STEP_STYLE.get(state, _STEP_STYLE["todo"])
+        weight = "600" if state in ("next", "done") else "500"
+        tail = f"&nbsp;<span style='opacity:.85'>{glyph}</span>" if glyph else ""
+        parts.append(
+            f"<span style='display:inline-flex;align-items:center;background:{bg};"
+            f"border:1px solid {border};border-radius:999px;padding:3px 12px;"
+            f"font-size:.8rem;font-weight:{weight};color:{txt};white-space:nowrap'>"
+            f"{icon}&nbsp;{name}{tail}</span>"
+        )
+        if j < len(steps) - 1:
+            parts.append("<span style='color:#3a4452;font-size:1rem;margin:0 1px'>→</span>")
+    st.markdown(
+        "<div style='display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:2px 0 6px'>"
+        + "".join(parts) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _has_files(d, ext=None):
     """True if `d` (recursively) holds at least one file (optionally ending in `ext`)."""
     for _root, _dirs, files in os.walk(d):
