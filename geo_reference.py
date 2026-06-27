@@ -32,24 +32,52 @@ import re
 
 import numpy as np
 
-# Human-readable site, for dashboard/UI display.
-SITE_NAME = "Schleißheimer Str. (B471) × Zeppelinstr., Garching-Hochbrück (Munich), DE"
-# Real crossroads centre (OSM Overpass nodes 860592919 / 1941137894). Used only as the
-# fallback map centre when the exact HD-map chain is unavailable.
-SITE_LATLON_APPROX = (48.2494, 11.6308)
+# Per-dataset georef config. These TUMTraf-s110 values are the built-in DEFAULT; a
+# dataset overrides them with its own `config/georef.json` (read via dataset_manager),
+# so the whole app retargets to a new site without touching this module. Keys:
+#   site_name, site_latlon, map_to_base{rotation,translation}, base_to_cloud{rotation_deg,translation}
+# The two transforms are lifted verbatim from the dev-kit (hd_map.py map→s110_base, and
+# visualize_point_cloud_with_3d_boxes.py s110_base→cloud: subtract T then `@ Rz(77.8°)`).
+_DEFAULT_GEOREF = {
+    "site_name": "Schleißheimer Str. (B471) × Zeppelinstr., Garching-Hochbrück (Munich), DE",
+    "site_latlon": [48.2494, 11.6308],   # OSM crossroads centre; fallback map centre
+    "map_to_base": {"rotation": [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+                    "translation": [-854.96568588, -631.98486299, 0.0]},
+    "base_to_cloud": {"rotation_deg": 77.8, "translation": [-15.87257873, 2.30019086, 7.48077521]},
+}
 
-# HD-map → s110_base rigid transform, lifted verbatim from the TUMTraf dev-kit
-# (src/map/hd_map.py, _get_transform_map2local("s110_base")). map_point → s110_base.
-_MAP2BASE_R = np.array([[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
-_MAP2BASE_T = np.array([-854.96568588, -631.98486299, 0.0])
 
-# s110_base → point-cloud (native LiDAR) frame, lifted verbatim from the dev-kit
-# (src/visualization/visualize_point_cloud_with_3d_boxes.py): it subtracts this
-# translation then rotates by 77.8° about z (applied as points @ Rz). This is the
-# transform that overlays the HD-map on the raw point cloud — copying it exactly
-# fixes the rotation/offset the OpenLABEL-extrinsic chain got wrong.
-_S110_TO_CLOUD_T = np.array([-15.87257873, 2.30019086, 7.48077521])
-_S110_TO_CLOUD_RZ_DEG = 77.8
+@functools.lru_cache(maxsize=1)
+def _georef():
+    """Active dataset's georef config (`<dataset>/config/georef.json`) merged over the
+    built-in TUMTraf defaults, with the transforms parsed to numpy. Cached per process."""
+    cfg = dict(_DEFAULT_GEOREF)
+    try:
+        import dataset_manager as dm
+        p = os.path.join(dm.get_active().config_dir, "georef.json")
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8") as f:
+                cfg.update(json.load(f))
+    except Exception:
+        pass
+    return {
+        "site_name": cfg["site_name"],
+        "site_latlon": tuple(cfg["site_latlon"]),
+        "map2base_R": np.array(cfg["map_to_base"]["rotation"], dtype=float),
+        "map2base_T": np.array(cfg["map_to_base"]["translation"], dtype=float),
+        "cloud_rz_deg": float(cfg["base_to_cloud"]["rotation_deg"]),
+        "cloud_T": np.array(cfg["base_to_cloud"]["translation"], dtype=float),
+    }
+
+
+def site_name():
+    """Human-readable site name (per active dataset)."""
+    return _georef()["site_name"]
+
+
+def site_latlon():
+    """Approx site centre (lat, lon) — fallback map centre when the exact chain is off."""
+    return _georef()["site_latlon"]
 
 
 def _rz(deg):
@@ -181,9 +209,10 @@ def sensor_to_projected(x, y, z=0.0, sensor="south"):
     if gr is None:
         return None
     _, origin = gr
+    g = _georef()
     cloud = np.array([float(x), float(y), float(z)])
-    s110 = _rz(_S110_TO_CLOUD_RZ_DEG) @ cloud + _S110_TO_CLOUD_T   # cloud → s110_base
-    mp = _MAP2BASE_R.T @ (s110 - _MAP2BASE_T)                      # s110_base → HD-map
+    s110 = _rz(g["cloud_rz_deg"]) @ cloud + g["cloud_T"]          # cloud → s110_base
+    mp = g["map2base_R"].T @ (s110 - g["map2base_T"])             # s110_base → HD-map
     return origin[0] + mp[0], origin[1] + mp[1]
 
 
@@ -259,13 +288,13 @@ def make_projector(sensor="south", ref_points_xy=None, center=None):
     if has_exact_georef(sensor):
         def proj(x, y):
             ll = sensor_xy_to_latlon(x, y, sensor)
-            return ll if ll is not None else SITE_LATLON_APPROX
+            return ll if ll is not None else site_latlon()
         proj.exact = True
         return proj
 
     # ---- approximate fallback ----
     M = sensor_to_map_transform(sensor)
-    c = tuple(center) if center else SITE_LATLON_APPROX
+    c = tuple(center) if center else site_latlon()
     ref = np.zeros(2)
     if M is not None and ref_points_xy is not None and len(ref_points_xy):
         rp = np.asarray(ref_points_xy, dtype=float)
@@ -302,10 +331,11 @@ def sensor_points_to_latlon(xy, sensor="south"):
     tr = _transformer(gr[0])
     if tr is None:
         return None
+    g = _georef()
     xy = np.asarray(xy, dtype=float)
     cloud = np.column_stack([xy[:, 0], xy[:, 1], np.zeros(len(xy))])
-    s110 = cloud @ _rz(_S110_TO_CLOUD_RZ_DEG).T + _S110_TO_CLOUD_T   # cloud → s110_base
-    mp = (s110 - _MAP2BASE_T) @ _MAP2BASE_R                          # s110_base → HD-map
+    s110 = cloud @ _rz(g["cloud_rz_deg"]).T + g["cloud_T"]           # cloud → s110_base
+    mp = (s110 - g["map2base_T"]) @ g["map2base_R"]                  # s110_base → HD-map
     lon, lat = tr.transform(gr[1][0] + mp[:, 0], gr[1][1] + mp[:, 1])
     return np.column_stack([lat, lon])
 
@@ -409,18 +439,20 @@ def hdmap_lanes_sensor_frame(sensor="south", radius_m=130.0):
     overlays. Needs only the HD-map file (no pyproj / no labels). [] if unavailable.
 
     Uses the dev-kit's exact recipe: map sample → s110_base (map→base) → cloud
-    (subtract _S110_TO_CLOUD_T, then `@ Rz(77.8°)`). Valid for the south / registered
+    (subtract the cloud translation, then `@ Rz`). Valid for the south / registered
     (south-anchored) clouds the app renders.
     """
     lanes = _hdmap_lanes_raw()
     if not lanes:
         return []
-    Rz = _rz(_S110_TO_CLOUD_RZ_DEG)
+    g = _georef()
+    Rz = _rz(g["cloud_rz_deg"])
+    R, T, cT = g["map2base_R"], g["map2base_T"], g["cloud_T"]
     r2 = radius_m * radius_m
     out = []
     for arr in lanes:
-        s110 = (_MAP2BASE_R @ arr.T).T + _MAP2BASE_T          # map → s110_base
-        cloud = (s110 - _S110_TO_CLOUD_T) @ Rz               # s110_base → point cloud
+        s110 = (R @ arr.T).T + T                             # map → s110_base
+        cloud = (s110 - cT) @ Rz                             # s110_base → point cloud
         xy = cloud[:, :2]
         mask = (xy[:, 0] ** 2 + xy[:, 1] ** 2) < r2
         if int(mask.sum()) >= 2:

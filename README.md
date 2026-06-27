@@ -328,6 +328,7 @@ streamlit run Home.py
 | `wwd_simulator.py` | Synthetic wrong-way track + V2X dashboard integration |
 | `datasets/<id>/config/site_geometry.json` | Per-dataset scene geometry (research/road/exclusion) |
 | `datasets/<id>/config/lanes.geojson` | Per-dataset **lane directions for WWD** |
+| `datasets/<id>/config/georef.json` | Per-dataset **georeference** (site name + map→base / base→cloud transforms) |
 | `datasets/<id>/config/defaults/` | Factory snapshot of geometry + lanes for **reset-to-default** |
 | `datasets/<id>/derived/` | Regenerated derived data (cropped clouds, scorable GT, registered) |
 
@@ -501,6 +502,14 @@ false alarms matter more than recall); further gains need a learned detector, no
   extrinsics produced a ~180° flip; the dev-kit's own recipe lands the lanes exactly.
 - **WWD Simulator** gained a live georeferenced map (satellite + HD-map + driver) and a
   true-bearing, lat/lon-tagged V2X broadcast. Requires `pyproj` (added to requirements).
+- **🛰️ Real intersection tab** in the Visualizer — an interactive Google Maps embed of the
+  exact junction (pan/zoom/Street View, click the Jägerhof) so you can confirm it's a real,
+  findable place.
+- **Per-dataset georef (multi-dataset-ready):** the site name + the two transforms live in
+  **`<dataset>/config/georef.json`** (read via `dataset_manager`, merged over built-in
+  defaults), and the HD map in **`<dataset>/map/lane_samples.json`** — so a new site retargets
+  the whole georef/HD-map/maps stack by shipping those two files, with **no code changes**.
+  Datasets without them fall back gracefully to the non-georeferenced views.
 
 **Core detection / WWD**
 - **WWD** implemented (Kalman velocity vs. lane direction) with junction
