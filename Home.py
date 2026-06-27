@@ -48,18 +48,16 @@ with ab2:
 st.write("")
 
 # ---------------- Dynamic pipeline (horizontal stepper) ----------------
-# One even-height card per workflow tool (in order) with its status badge. Tools
-# that have in-page tabs (e.g. Dataset Prep) get a click-to-reveal collapsible
-# below the card so the row stays even. The first not-done tool is "Next".
+# One even-height card per workflow tool (in order) with its status badge. The
+# first not-done tool is "Next". (In-page tab order lives on each page itself.)
 _states = nav.tool_states(_active)
 _next_page = next((p for p in nav.PIPELINE if _states[p] == "todo"), None)
 
 st.markdown("#### 🧭 Pipeline")
-st.caption("The recommended order — status updates as the active dataset progresses. "
-           "Steps with in-page tabs show a collapsible below them.")
+st.caption("The recommended order — status updates as the active dataset progresses.")
 _cols = st.columns(len(nav.PIPELINE))
 for i, page in enumerate(nav.PIPELINE):
-    _p, icon, name, _desc, subs = nav.TOOLS[page]
+    _p, icon, name, _desc, _subs = nav.TOOLS[page]
     state = "next" if page == _next_page else _states[page]
     if state == "done":
         badge, color, bg, border = "✅ Done", "#4ade80", "#101a13", "#234a2c"
@@ -78,13 +76,6 @@ for i, page in enumerate(nav.PIPELINE):
                 </div>""",
             unsafe_allow_html=True,
         )
-        if subs:
-            with st.expander(f"🗂️ {len(subs)} tabs"):
-                for s in subs:
-                    st.markdown(
-                        f"<div style='font-size:.74rem;color:#9aa6b2;padding:1px 0'>{s}</div>",
-                        unsafe_allow_html=True,
-                    )
 
 if _next_page is None:
     st.success("🎉 All set — every pipeline stage is complete. Jump into the **WWD Simulator** or **Evaluation**.")

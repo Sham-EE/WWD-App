@@ -173,11 +173,21 @@ def _vertex_editor(poly, label, step=1.0):
     return out
 
 
-tab_crop, tab_gt, tab_geom, tab_reg = st.tabs(
-    ["✂️ Crop to road (ROI)", "🏷️ Scorable GT (visible-only)", "🗺️ Geometry Editor",
-     "🧭 Registration (south + north)"])
+st.info(
+    "**Recommended order** — these tabs build on each other:&nbsp;&nbsp;"
+    "1️⃣ **Registration** *(optional — only if you're fusing south + north)* → "
+    "2️⃣ **Geometry Editor** *(draw the road polygons / ROI)* → "
+    "3️⃣ **Crop to road** *(clip the clouds to those polygons)* → "
+    "4️⃣ **Scorable GT** *(visible-only ground truth)*."
+)
 
-# ===================== Tab 1: Crop to road =====================
+# Tabs are laid out in that recommended order; the `with` blocks below keep their
+# original variable names, so only the labels + unpack order changed.
+tab_reg, tab_geom, tab_crop, tab_gt = st.tabs(
+    ["1️⃣ 🧭 Registration", "2️⃣ 🗺️ Geometry Editor", "3️⃣ ✂️ Crop to road (ROI)",
+     "4️⃣ 🏷️ Scorable GT (visible-only)"])
+
+# ===================== Step 3: Crop to road =====================
 with tab_crop:
     st.caption("Clip a LiDAR's point clouds to the **road polygons** in `site_geometry.json`. "
                "Scales across sensors — crop the south, the north, or (later) the registered cloud. "
@@ -266,7 +276,7 @@ with tab_crop:
 
         _crop_preview()
 
-# ===================== Tab 2: Scorable GT =====================
+# ===================== Step 4: Scorable GT =====================
 with tab_gt:
     st.caption("Build a **scorable** ground-truth set: keep only objects inside the processed region "
                "(the eval ROI) that actually have LiDAR points. Transparent + reproducible — the basis "
@@ -386,7 +396,7 @@ with tab_gt:
         _gt_preview()
 
 
-# ===================== Tab 3: Geometry Editor =====================
+# ===================== Step 2: Geometry Editor =====================
 with tab_geom:
     st.caption("Edit the **site geometry** — research/ROI polygon, road polygons (used for cropping), "
                "and exclusion rectangles. **Saving updates the whole pipeline** (Background Filtering, "
@@ -696,7 +706,7 @@ with tab_geom:
     st.session_state.geom_edit = geom
 
 
-# ===================== Tab 4: Registration (south + north) =====================
+# ===================== Step 1: Registration (south + north) =====================
 with tab_reg:
     st.caption("Fuse the **south** and **north** Ouster LiDARs into one cloud. The sensor→base "
                "extrinsics are read straight from the OpenLABEL labels (static rig → constant 4×4), so "

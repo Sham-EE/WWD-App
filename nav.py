@@ -14,8 +14,8 @@ import streamlit as st
 SECTIONS = [
     ("📂 Data & setup", [
         ("pages/0_Datasets.py",     "🗂️", "Datasets",      "Choose the active dataset or add your own.", []),
-        ("pages/1_Dataset_Prep.py", "🧰", "Dataset Prep",  "Crop, scorable GT, geometry & registration — recreate derived data.",
-            ["✂️ Crop to road", "🏷️ Scorable GT", "🗺️ Geometry Editor", "🧭 Registration"]),
+        ("pages/1_Dataset_Prep.py", "🧰", "Dataset Prep",  "Register, draw road geometry, crop & make scorable GT — recreate derived data.",
+            ["🧭 Registration", "🗺️ Geometry Editor", "✂️ Crop to road", "🏷️ Scorable GT"]),
         ("pages/7_Visualizer.py",   "🎬", "Visualizer",    "Cameras + 3D LiDAR labels, overlays, and the real intersection.",
             ["🎥 Road Viewer", "🧊 LiDAR 3D", "🛰️ Real intersection"]),
     ]),
