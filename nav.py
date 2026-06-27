@@ -5,6 +5,7 @@ collapsible sidebar sections. Used by both the custom sidebar (every page calls
 The default Streamlit page nav is hidden via `.streamlit/config.toml`
 (`showSidebarNavigation = false`) so this collapsible sidebar replaces it.
 """
+import inspect
 import os
 import streamlit as st
 
@@ -45,13 +46,40 @@ PIPELINE = [
 ]
 
 
+# page_path -> section title, for "which section is the current page in?"
+_PAGE_SECTION = {t[0]: title for title, tools in SECTIONS for t in tools}
+
+
+def _current_page():
+    """Best-effort path of the page that called render_sidebar ("pages/2_*.py" or
+    "Home.py"), read from the call stack — Streamlit execs each page with its real
+    filename. Used to auto-open that page's sidebar section."""
+    try:
+        for fr in inspect.stack():
+            base = os.path.basename(fr.filename)
+            if base == "Home.py":
+                return "Home.py"
+            if base[:1].isdigit() and base.endswith(".py"):
+                return "pages/" + base
+    except Exception:
+        pass
+    return None
+
+
 def render_sidebar():
     """Draw the custom collapsible sidebar. Call once near the top of every page
-    (after `st.set_page_config`)."""
+    (after `st.set_page_config`).
+
+    Keeps the native `st.expander` look. `st.expander` can't report its own
+    open/closed state, so to survive navigation we auto-expand the section that
+    owns the current page — i.e. whatever section you're working in stays open
+    after you click a tool (instead of everything collapsing). Other sections
+    start collapsed; on Home everything is collapsed."""
+    cur_section = _PAGE_SECTION.get(_current_page())
     with st.sidebar:
         st.page_link("Home.py", label="🏠  Home")
         for title, tools in SECTIONS:
-            with st.expander(title, expanded=True):
+            with st.expander(title, expanded=(title == cur_section)):
                 for path, icon, name, _desc, _subs in tools:
                     st.page_link(path, label=f"{icon}  {name}")
 

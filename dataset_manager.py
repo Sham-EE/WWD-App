@@ -42,11 +42,21 @@ REGISTRY_PATH = os.path.join(DATASETS_DIR, "registry.json")
 TEMPLATES = [
     {
         "id": "A9_r02_s02",
-        "name": "TUMTraf A9 r02_s02 (s110 ouster south) — template",
+        "name": "TUMTraf s110 · Garching intersection (A9 r02_s02) — template",
         "template": True,
         "pcd_dir": "datasets/A9_r02_s02/data/derived/point_clouds/cropped/south",
         "gt_dir": "datasets/A9_r02_s02/data/derived/labels/scorable/south",
         "workspace": "datasets/A9_r02_s02",
+        "description": (
+            "Real TUM Traffic intersection — sensor station **s110** at "
+            "Schleißheimer Str. (B471) × Zeppelinstr., Garching-Hochbrück, Munich "
+            "(48.2494 °N, 11.6308 °E). Ships curated derived data: road-cropped **south** "
+            "LiDAR + visible-only **scorable GT**, **WWD lane** directions and **site "
+            "geometry**, a south+north **registered** (fused) cloud, **georeferencing** "
+            "config (exact WGS84 + true compass bearings) and the **HD-map** road network "
+            "for the digital twin. The large raw LiDAR/image data is downloaded separately "
+            "into `data/` — the template config already points at it."
+        ),
     },
 ]
 

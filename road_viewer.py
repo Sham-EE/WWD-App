@@ -108,6 +108,41 @@ def mp4_available():
         return False
 
 
+def frames_to_video(frames, out_dir, basename, fps=10, progress=None):
+    """Encode a list of RGB(A) frame arrays to MP4 (needs imageio-ffmpeg), falling
+    back to an animated GIF. Returns (path, kind). Used for pre-rendered, smooth
+    playback of things that are choppy live (e.g. the WWD 3D simulation)."""
+    import imageio.v2 as imageio
+    import numpy as np
+    os.makedirs(out_dir, exist_ok=True)
+    arrs = [np.asarray(f)[:, :, :3] for f in frames]   # drop alpha for codecs
+    mp4 = os.path.join(out_dir, basename + ".mp4")
+    try:
+        writer = imageio.get_writer(mp4, fps=fps, codec="libx264",
+                                    macro_block_size=16, quality=7)
+        try:
+            for i, fr in enumerate(arrs):
+                writer.append_data(fr)
+                if progress:
+                    progress(i + 1, len(arrs))
+        finally:
+            writer.close()
+        return mp4, "mp4"
+    except Exception:
+        try:
+            os.remove(mp4)
+        except OSError:
+            pass
+    gif = os.path.join(out_dir, basename + ".gif")
+    writer = imageio.get_writer(gif, mode="I", duration=1.0 / max(1, fps), loop=0)
+    try:
+        for fr in arrs:
+            writer.append_data(fr)
+    finally:
+        writer.close()
+    return gif, "gif"
+
+
 def generate_side_by_side_video(left_frames, right_frames, out_dir, basename, fps=10,
                                 height=480, max_frames=0, progress=None):
     """Render left|right frames to a video. Tries MP4 (needs imageio-ffmpeg) and
