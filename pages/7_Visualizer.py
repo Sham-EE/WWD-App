@@ -332,66 +332,23 @@ def render_lidar_tab():
     _viewer3d()
 
 
-# ======================= Real intersection (satellite) tab =======================
+# ======================= Real intersection (Google Maps) tab =======================
 def render_real_tab():
-    st.markdown("The **real intersection** on satellite imagery — Schleißheimer Str. (B471) × "
-                "Zeppelinstr., **Garching-Hochbrück, Munich** — with our HD-map, LiDAR stations and "
-                "camera fields-of-view placed by the exact georeference. Orbit it to compare against "
-                "the camera views.")
-    if not geo.has_exact_georef("south"):
-        st.info("This view needs the exact georeference: place `map/lane_samples.json` (from the "
-                "dev-kit's `src/map/map.zip`) and install `pyproj`.")
-        return
-    import pydeck as pdk
-    center = geo.sensor_position_latlon("south")
-
-    o = st.columns(4)
-    bearing = o[0].slider("🧭 Orbit", 0, 360, 0, 5, key="real_bearing", help="Rotate the view.")
-    pitch = o[1].slider("📐 Tilt", 0, 60, 45, 5, key="real_pitch", help="0 = top-down, higher = oblique.")
-    zoom = o[2].slider("🔍 Zoom", 15.0, 19.0, 17.5, 0.5, key="real_zoom")
-    show_fov = o[3].checkbox("📷 Camera FOV", value=True, key="real_fov")
-
-    roads = geo.hdmap_paths_near(center, 140.0)
-    sens_pts, rings, labels = [], [], []
-    for s in (reg.lidar_markers(ds, "registered") or []):
-        ll = geo.sensor_xy_to_latlon(s["pos"][0], s["pos"][1], "south")
-        if ll is None:
-            continue
-        col = [0, 200, 255] if s["name"] == "South" else [255, 122, 89]
-        sens_pts.append({"position": [ll[1], ll[0]], "color": col})
-        rings.append({"path": geo.circle_latlon(ll, 120.0), "color": col})
-        labels.append({"position": [ll[1], ll[0]], "text": f"{s['name']} LiDAR"})
-
-    layers = [
-        pdk.Layer("TileLayer", data="https://server.arcgisonline.com/ArcGIS/rest/services/"
-                  "World_Imagery/MapServer/tile/{z}/{y}/{x}", min_zoom=0, max_zoom=19, tile_size=256),
-        pdk.Layer("PathLayer", [{"path": p} for p in roads], get_path="path",
-                  get_color=[255, 230, 80, 200], width_min_pixels=2),
-        pdk.Layer("PathLayer", rings, get_path="path", get_color="color", width_min_pixels=1, opacity=0.5),
-        pdk.Layer("ScatterplotLayer", sens_pts, get_position="position", get_fill_color="color",
-                  get_line_color=[0, 0, 0], get_radius=5, radius_min_pixels=8, stroked=True,
-                  line_width_min_pixels=2),
-        pdk.Layer("TextLayer", labels, get_position="position", get_text="text", get_size=14,
-                  get_color=[255, 255, 255], get_alignment_baseline="'top'", get_pixel_offset=[0, 10]),
-    ]
-    if show_fov:
-        cams = geo.camera_fovs_latlon("south")
-        layers.append(pdk.Layer("PolygonLayer", [{"polygon": c["cone"], "name": c["name"]} for c in cams],
-                                get_polygon="polygon", get_fill_color=[255, 200, 0, 55],
-                                get_line_color=[255, 200, 0, 180], line_width_min_pixels=1,
-                                stroked=True, filled=True, pickable=True))
-        layers.append(pdk.Layer("TextLayer",
-                                [{"position": [c["pos"][1], c["pos"][0]], "text": f"📷 {c['name']}"}
-                                 for c in cams], get_position="position", get_text="text", get_size=12,
-                                get_color=[255, 220, 120], get_alignment_baseline="'bottom'",
-                                get_pixel_offset=[0, -8]))
-
-    st.pydeck_chart(pdk.Deck(layers=layers, map_provider=None, tooltip={"text": "{name}"},
-                             initial_view_state=pdk.ViewState(latitude=center[0], longitude=center[1],
-                                                              zoom=zoom, pitch=pitch, bearing=bearing)),
-                    use_container_width=True)
-    st.caption(f"📍 LiDAR gantry at **{center[0]:.6f}, {center[1]:.6f}** · 🟡 HD-map roads · "
-               "🔵 South / 🟠 North LiDAR (120 m range) · 📷 camera FOV. Drag to pan; the sliders orbit/tilt.")
+    import streamlit.components.v1 as components
+    st.markdown("The dataset's **real location** — a live, interactive Google Map of the s110 "
+                "intersection: **Schleißheimer Str. (B471) × Zeppelinstr., Garching-Hochbrück, "
+                "Munich**. Pan, zoom, drop into Street View, or click a place like the **Jägerhof**.")
+    lat, lon = geo.sensor_position_latlon("south") or geo.SITE_LATLON_APPROX
+    c1, c2 = st.columns([1.4, 3])
+    layer = c1.radio("View", ["🛰️ Hybrid", "🛰️ Satellite", "🗺️ Map"], horizontal=True, key="real_layer")
+    t = {"🛰️ Hybrid": "h", "🛰️ Satellite": "k", "🗺️ Map": "m"}[layer]
+    src = f"https://maps.google.com/maps?q={lat},{lon}&t={t}&z=18&hl=en&output=embed"
+    components.html(
+        f'<iframe width="100%" height="660" style="border:0;border-radius:10px" loading="lazy" '
+        f'referrerpolicy="no-referrer-when-downgrade" src="{src}"></iframe>', height=680)
+    st.caption(f"📍 LiDAR gantry @ **{lat:.6f}, {lon:.6f}** — placed by the exact georeference.  "
+               f"[Open in Google Maps ↗](https://www.google.com/maps/search/?api=1&query={lat},{lon})  ·  "
+               "Use Google's own controls to switch Map/Satellite, zoom, or Street View.")
 
 
 tab_cam, tab_lidar, tab_real = st.tabs(
