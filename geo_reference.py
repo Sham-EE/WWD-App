@@ -57,11 +57,18 @@ def _rz(deg):
     c, s = math.cos(th), math.sin(th)
     return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
 
-# Candidate locations for the HD-map lane_samples.json (extracted from map.zip).
-_HDMAP_CANDIDATES = [
-    os.path.join(os.path.dirname(__file__), "map", "lane_samples.json"),
-    os.path.join(os.path.dirname(__file__), "datasets", "A9_r02_s02", "map", "lane_samples.json"),
-]
+def _hdmap_file():
+    """Path to the active dataset's HD-map lane_samples.json (`<dataset>/map/`), or None.
+    Falls back to the legacy repo-root `map/` location for older checkouts."""
+    try:
+        import dataset_manager as dm
+        p = dm.get_active().hdmap_path
+        if os.path.exists(p):
+            return p
+    except Exception:
+        pass
+    legacy = os.path.join(os.path.dirname(__file__), "map", "lane_samples.json")
+    return legacy if os.path.exists(legacy) else None
 
 
 # --------------------------------------------------------------------------- #
@@ -126,19 +133,18 @@ def _hdmap_georef():
     """(proj_string, origin_xyz) from the HD-map lane_samples.json, or None. Reads only
     the small header (geoReference + origin precede the huge `roads` array), so it does
     NOT parse the whole 48 MB file."""
-    for path in _HDMAP_CANDIDATES:
-        if not os.path.exists(path):
-            continue
-        try:
-            with open(path, "r") as f:
-                head = f.read(4096)
-            gr = re.search(r'"geoReference"\s*:\s*"([^"]*)"', head)
-            og = re.search(r'"origin"\s*:\s*\[([^\]]*)\]', head)
-            if gr and og:
-                origin = [float(v) for v in og.group(1).split(",")]
-                return gr.group(1), origin
-        except Exception:
-            continue
+    path = _hdmap_file()
+    if path is None:
+        return None
+    try:
+        with open(path, "r") as f:
+            head = f.read(4096)
+        gr = re.search(r'"geoReference"\s*:\s*"([^"]*)"', head)
+        og = re.search(r'"origin"\s*:\s*\[([^\]]*)\]', head)
+        if gr and og:
+            return gr.group(1), [float(v) for v in og.group(1).split(",")]
+    except Exception:
+        pass
     return None
 
 
@@ -356,7 +362,7 @@ def _hdmap_lanes_raw():
     """Every HD-map lane centerline as a map-frame np.ndarray([[x, y, z], ...]) (lanes
     with ≥2 samples). Parses the 48 MB file once (cached). [] if unavailable. Needs
     only the file — no pyproj."""
-    path = next((p for p in _HDMAP_CANDIDATES if os.path.exists(p)), None)
+    path = _hdmap_file()
     if path is None:
         return []
     try:

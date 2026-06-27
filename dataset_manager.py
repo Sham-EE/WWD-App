@@ -154,6 +154,17 @@ class Dataset:
         return os.path.join(self.data_dir, "raw")
 
     @property
+    def map_dir(self):
+        """Per-dataset HD-map dir. For TUMTraf this holds lane_samples.json (from the
+        dev-kit's src/map/map.zip) — used by geo_reference for the georeferenced
+        overlays. Optional: features degrade gracefully if it's absent."""
+        return self.d.get("map_dir", os.path.join(self.workspace, "map"))
+
+    @property
+    def hdmap_path(self):
+        return os.path.join(self.map_dir, "lane_samples.json")
+
+    @property
     def derived_dir(self):
         return os.path.join(self.data_dir, "derived")
 
