@@ -43,6 +43,20 @@ SITE_LATLON_APPROX = (48.2494, 11.6308)
 _MAP2BASE_R = np.array([[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
 _MAP2BASE_T = np.array([-854.96568588, -631.98486299, 0.0])
 
+# s110_base → point-cloud (native LiDAR) frame, lifted verbatim from the dev-kit
+# (src/visualization/visualize_point_cloud_with_3d_boxes.py): it subtracts this
+# translation then rotates by 77.8° about z (applied as points @ Rz). This is the
+# transform that overlays the HD-map on the raw point cloud — copying it exactly
+# fixes the rotation/offset the OpenLABEL-extrinsic chain got wrong.
+_S110_TO_CLOUD_T = np.array([-15.87257873, 2.30019086, 7.48077521])
+_S110_TO_CLOUD_RZ_DEG = 77.8
+
+
+def _rz(deg):
+    th = math.radians(deg)
+    c, s = math.cos(th), math.sin(th)
+    return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+
 # Candidate locations for the HD-map lane_samples.json (extracted from map.zip).
 _HDMAP_CANDIDATES = [
     os.path.join(os.path.dirname(__file__), "map", "lane_samples.json"),
@@ -148,27 +162,28 @@ def _geod():
 
 
 def has_exact_georef(sensor="south"):
-    """True iff the full survey-grade chain is available (HD map + pyproj + labels)."""
-    return (_hdmap_georef() is not None and sensor_to_s110_base(sensor) is not None
-            and _transformer(_hdmap_georef()[0]) is not None)
+    """True iff lat/lon projection is available (HD map + pyproj)."""
+    gr = _hdmap_georef()
+    return gr is not None and _transformer(gr[0]) is not None
 
 
 def sensor_to_projected(x, y, z=0.0, sensor="south"):
-    """Sensor-frame (x,y,z) → projected (easting, northing) in the HD-map CRS (metres).
-    None if the chain is unavailable."""
+    """Point-cloud-frame (x,y,z) → projected (easting, northing) in the HD-map CRS
+    (metres). Inverse of the dev-kit recipe: cloud → s110_base → HD-map. None if the
+    HD map is unavailable."""
     gr = _hdmap_georef()
-    T = sensor_to_s110_base(sensor)
-    if gr is None or T is None:
+    if gr is None:
         return None
     _, origin = gr
-    base = T @ np.array([float(x), float(y), float(z), 1.0])
-    mp = _MAP2BASE_R.T @ (base[:3] - _MAP2BASE_T)      # s110_base → HD-map frame
+    cloud = np.array([float(x), float(y), float(z)])
+    s110 = _rz(_S110_TO_CLOUD_RZ_DEG) @ cloud + _S110_TO_CLOUD_T   # cloud → s110_base
+    mp = _MAP2BASE_R.T @ (s110 - _MAP2BASE_T)                      # s110_base → HD-map
     return origin[0] + mp[0], origin[1] + mp[1]
 
 
 def sensor_xy_to_latlon(x, y, sensor="south"):
-    """Exact WGS84 (lat, lon) for a sensor-frame (x, y) via the HD-map anchor. None if
-    the HD map / pyproj / labels are unavailable."""
+    """Exact WGS84 (lat, lon) for a point-cloud-frame (x, y) via the HD-map anchor.
+    None if the HD map / pyproj are unavailable."""
     gr = _hdmap_georef()
     if gr is None:
         return None
@@ -272,6 +287,23 @@ def sensor_position_latlon(sensor="south"):
     return sensor_xy_to_latlon(0.0, 0.0, sensor)
 
 
+def sensor_points_to_latlon(xy, sensor="south"):
+    """Batch: point-cloud-frame (N,2) array → (N,2) [lat, lon] via the HD-map anchor
+    (inverse dev-kit recipe). None if the HD map / pyproj are unavailable."""
+    gr = _hdmap_georef()
+    if gr is None:
+        return None
+    tr = _transformer(gr[0])
+    if tr is None:
+        return None
+    xy = np.asarray(xy, dtype=float)
+    cloud = np.column_stack([xy[:, 0], xy[:, 1], np.zeros(len(xy))])
+    s110 = cloud @ _rz(_S110_TO_CLOUD_RZ_DEG).T + _S110_TO_CLOUD_T   # cloud → s110_base
+    mp = (s110 - _MAP2BASE_T) @ _MAP2BASE_R                          # s110_base → HD-map
+    lon, lat = tr.transform(gr[1][0] + mp[:, 0], gr[1][1] + mp[:, 1])
+    return np.column_stack([lat, lon])
+
+
 def circle_latlon(center_latlon, radius_m, n=72):
     """A closed ring of [lon, lat] points at radius_m around center (for FOV/range
     rings on the map)."""
@@ -331,26 +363,27 @@ def _hdmap_lanes_latlon():
 
 @functools.lru_cache(maxsize=4)
 def hdmap_lanes_sensor_frame(sensor="south", radius_m=130.0):
-    """HD-map lane centerlines in the SENSOR frame (metres), as polylines
-    [[x, y], ...] clipped to radius_m around the sensor origin. For BEV digital-twin
-    overlays. Needs only the HD map + OpenLABEL labels (no pyproj). [] if unavailable.
+    """HD-map lane centerlines in the point-cloud frame (metres), as polylines
+    [[x, y], ...] clipped to radius_m around the origin. For BEV digital-twin
+    overlays. Needs only the HD-map file (no pyproj / no labels). [] if unavailable.
 
-    Chain: map sample → s110_base (dev-kit map→base) → sensor (inverse OpenLABEL pose).
+    Uses the dev-kit's exact recipe: map sample → s110_base (map→base) → cloud
+    (subtract _S110_TO_CLOUD_T, then `@ Rz(77.8°)`). Valid for the south / registered
+    (south-anchored) clouds the app renders.
     """
     lanes = _hdmap_lanes_raw()
-    Ts2b = sensor_to_s110_base(sensor)
-    if not lanes or Ts2b is None:
+    if not lanes:
         return []
-    Tb2s = np.linalg.inv(Ts2b)
+    Rz = _rz(_S110_TO_CLOUD_RZ_DEG)
     r2 = radius_m * radius_m
     out = []
     for arr in lanes:
-        base = (_MAP2BASE_R @ arr.T).T + _MAP2BASE_T          # map → s110_base
-        hom = np.column_stack([base, np.ones(len(base))])
-        sxy = (Tb2s @ hom.T).T[:, :2]                         # s110_base → sensor
-        mask = (sxy[:, 0] ** 2 + sxy[:, 1] ** 2) < r2
+        s110 = (_MAP2BASE_R @ arr.T).T + _MAP2BASE_T          # map → s110_base
+        cloud = (s110 - _S110_TO_CLOUD_T) @ Rz               # s110_base → point cloud
+        xy = cloud[:, :2]
+        mask = (xy[:, 0] ** 2 + xy[:, 1] ** 2) < r2
         if int(mask.sum()) >= 2:
-            out.append(sxy[mask].tolist())
+            out.append(xy[mask].tolist())
     return out
 
 
