@@ -57,11 +57,18 @@ def _rz(deg):
     c, s = math.cos(th), math.sin(th)
     return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
 
-# Candidate locations for the HD-map lane_samples.json (extracted from map.zip).
-_HDMAP_CANDIDATES = [
-    os.path.join(os.path.dirname(__file__), "map", "lane_samples.json"),
-    os.path.join(os.path.dirname(__file__), "datasets", "A9_r02_s02", "map", "lane_samples.json"),
-]
+def _hdmap_file():
+    """Path to the active dataset's HD-map lane_samples.json (`<dataset>/map/`), or None.
+    Falls back to the legacy repo-root `map/` location for older checkouts."""
+    try:
+        import dataset_manager as dm
+        p = dm.get_active().hdmap_path
+        if os.path.exists(p):
+            return p
+    except Exception:
+        pass
+    legacy = os.path.join(os.path.dirname(__file__), "map", "lane_samples.json")
+    return legacy if os.path.exists(legacy) else None
 
 
 # --------------------------------------------------------------------------- #
@@ -126,19 +133,18 @@ def _hdmap_georef():
     """(proj_string, origin_xyz) from the HD-map lane_samples.json, or None. Reads only
     the small header (geoReference + origin precede the huge `roads` array), so it does
     NOT parse the whole 48 MB file."""
-    for path in _HDMAP_CANDIDATES:
-        if not os.path.exists(path):
-            continue
-        try:
-            with open(path, "r") as f:
-                head = f.read(4096)
-            gr = re.search(r'"geoReference"\s*:\s*"([^"]*)"', head)
-            og = re.search(r'"origin"\s*:\s*\[([^\]]*)\]', head)
-            if gr and og:
-                origin = [float(v) for v in og.group(1).split(",")]
-                return gr.group(1), origin
-        except Exception:
-            continue
+    path = _hdmap_file()
+    if path is None:
+        return None
+    try:
+        with open(path, "r") as f:
+            head = f.read(4096)
+        gr = re.search(r'"geoReference"\s*:\s*"([^"]*)"', head)
+        og = re.search(r'"origin"\s*:\s*\[([^\]]*)\]', head)
+        if gr and og:
+            return gr.group(1), [float(v) for v in og.group(1).split(",")]
+    except Exception:
+        pass
     return None
 
 
@@ -304,6 +310,41 @@ def sensor_points_to_latlon(xy, sensor="south"):
     return np.column_stack([lat, lon])
 
 
+def camera_fovs_latlon(sensor="south", fov_deg=68.8, length_m=50.0):
+    """Per south camera: {name, pos:(lat,lon), bearing, cone:[[lon,lat],...]}. Reads the
+    OpenLABEL camera poses (relative to the LiDAR), runs them through the exact georef,
+    and builds an FOV wedge along the optical axis. [] if unavailable."""
+    cs = _read_coord_systems(sensor)
+    g = _geod()
+    if cs is None or g is None or not has_exact_georef(sensor):
+        return []
+    out = []
+    for cam in ("s110_camera_basler_south1_8mm", "s110_camera_basler_south2_8mm"):
+        node = cs.get(cam)
+        if not node or "pose_wrt_parent" not in node:
+            continue
+        M = np.array(node["pose_wrt_parent"]["matrix4x4"], dtype=float).reshape(4, 4)
+        pos = M[:3, 3]                                   # camera origin in cloud frame
+        fxy = (M[:3, :3] @ np.array([0.0, 0.0, 1.0]))[:2]   # optical axis (+z) on the ground
+        nrm = np.linalg.norm(fxy)
+        if nrm < 1e-6:
+            continue
+        fxy /= nrm
+        p0 = sensor_xy_to_latlon(pos[0], pos[1], sensor)
+        p1 = sensor_xy_to_latlon(pos[0] + fxy[0], pos[1] + fxy[1], sensor)
+        if p0 is None or p1 is None:
+            continue
+        bearing = g.inv(p0[1], p0[0], p1[1], p1[0])[0]
+        cone = [[p0[1], p0[0]]]
+        for a in (bearing - fov_deg / 2.0, bearing + fov_deg / 2.0):
+            lon2, lat2, _ = g.fwd(p0[1], p0[0], a, length_m)
+            cone.append([lon2, lat2])
+        cone.append([p0[1], p0[0]])
+        out.append({"name": cam.replace("s110_camera_basler_", "").replace("_8mm", ""),
+                    "pos": p0, "bearing": float(bearing % 360.0), "cone": cone})
+    return out
+
+
 def circle_latlon(center_latlon, radius_m, n=72):
     """A closed ring of [lon, lat] points at radius_m around center (for FOV/range
     rings on the map)."""
@@ -321,7 +362,7 @@ def _hdmap_lanes_raw():
     """Every HD-map lane centerline as a map-frame np.ndarray([[x, y, z], ...]) (lanes
     with ≥2 samples). Parses the 48 MB file once (cached). [] if unavailable. Needs
     only the file — no pyproj."""
-    path = next((p for p in _HDMAP_CANDIDATES if os.path.exists(p)), None)
+    path = _hdmap_file()
     if path is None:
         return []
     try:

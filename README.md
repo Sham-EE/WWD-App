@@ -81,7 +81,7 @@ so no dev-kit, no calibration files, and no extra dependencies.
 - **3D LiDAR tab** — the point cloud + ground-truth 3D boxes + the **real HD-map
   road network** overlaid, in one big oblique (z-up) view coloured by category — the
   dev-kit "digital twin." The HD map comes from the dev-kit's `lane_samples.json`
-  (place it in `map/`), transformed into the cloud frame with the dev-kit's own
+  (place it in `datasets/<id>/map/`), transformed into the cloud frame with the dev-kit's own
   recipe (`hd_map.py` map→`s110_base`, then its `visualize_point_cloud_with_3d_boxes`
   `s110_base`→cloud transform — a 77.8° rotation + fixed translation, copied verbatim
   so the lanes land exactly on the scan). Toggles: 📦 Boxes · 🛣️ Road outline ·
@@ -268,9 +268,9 @@ streamlit run Home.py
 ```
 
 > **HD-map / georeferencing data (optional):** the Visualizer's HD-map overlay and the
-> exact lat/lon features read `map/lane_samples.json` — extract it from the dev-kit's
-> `src/map/map.zip` and drop it in `map/` (it's gitignored; everything degrades gracefully
-> without it).
+> exact lat/lon features read the active dataset's `<dataset>/map/lane_samples.json` (e.g.
+> `datasets/A9_r02_s02/map/`) — extract it from the dev-kit's `src/map/map.zip` and drop it
+> there (it's gitignored; everything degrades gracefully without it).
 
 ### End-to-end workflow
 0. **Dataset Prep** (first run / from scratch) → Crop to road, Registration, and
@@ -322,7 +322,7 @@ streamlit run Home.py
 | `label_projection.py` | OpenLABEL boxes/point-cloud → camera image (calibration from JSON) |
 | `lidar_viewer.py` | 3D LiDAR scan + GT boxes + HD-map overlay (oblique view) via Plotly |
 | `geo_reference.py` | Georeferencing: sensor↔WGS84 (true bearings, lat/lon) + HD-map road network (dev-kit transform) |
-| `map/lane_samples.json` | HD-map road network (from dev-kit `src/map/map.zip`; gitignored — place it here for the overlay) |
+| `datasets/<id>/map/lane_samples.json` | Per-dataset HD-map road network (from dev-kit `src/map/map.zip`; gitignored — resolved via `dataset_manager`) |
 | `viewer_ui.py` | Shared compact viewer controls (one-line nav + bulk overlay toggles) |
 | `road_viewer.py` | Camera browsing + side-by-side video helpers |
 | `wwd_simulator.py` | Synthetic wrong-way track + V2X dashboard integration |
@@ -492,7 +492,7 @@ false alarms matter more than recall); further gains need a learned detector, no
   + HD-map chain to convert sensor coordinates to **exact WGS84 lat/lon** and **true
   compass bearings** (UTM 32N via `pyproj`; anchor from the HD map's `geoReference`/
   `origin`).
-- **HD-map road network** (`map/lane_samples.json` from the dev-kit's `src/map/map.zip`)
+- **HD-map road network** (`datasets/<id>/map/lane_samples.json` from the dev-kit's `src/map/map.zip`)
   is rendered in the **Visualizer 3D tab** on top of the point cloud + class-coloured
   boxes — the dev-kit "digital twin," in one oblique z-up view.
 - **Alignment fix:** the HD-map→cloud transform is copied **verbatim from the dev-kit**
