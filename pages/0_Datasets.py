@@ -5,6 +5,7 @@ import glob
 import streamlit as st
 
 import dataset_manager as dm
+import geo_reference as geo
 import nav
 
 st.set_page_config(layout="wide", page_title="Datasets")
@@ -82,8 +83,8 @@ with st.expander(f"📋 {ds.name} — details", expanded=True):
         st.caption(ds.d["description"])
 
     # st.expander can't nest, so the per-topic detail panels are tabs.
-    t_paths, t_tree, t_site, t_lanes, t_manage = st.tabs(
-        ["📁 Paths", "🌳 Structure", "🗺️ Site geometry", "🛣️ Lanes", "✏️ Manage"])
+    t_paths, t_tree, t_site, t_geo, t_lanes, t_manage = st.tabs(
+        ["📁 Paths", "🌳 Structure", "🗺️ Site geometry", "🛰️ Georeferencing", "🛣️ Lanes", "✏️ Manage"])
 
     with t_paths:
         st.markdown("**Raw inputs** (the untouched download)")
@@ -148,28 +149,56 @@ with st.expander(f"📋 {ds.name} — details", expanded=True):
                    "the Dataset Prep page.")
 
     with t_site:
-        st.markdown(
-            '<span style="cursor:help;border-bottom:1px dotted #8b97a7" '
-            'title="The processed region used by Background Filtering, from site_geometry.json: '
-            'the research polygon (overall area analysed), road polygon(s) (drivable area), and '
-            'foreground-exclusion rectangles (regions always ignored). This is NOT the wrong-way lanes '
-            '— those live under Lane geometry and are edited in the Lane Editor; changing lanes does not '
-            'change this. For the A9 template these are curated values; for a new dataset they are '
-            'auto-derived from the point-cloud extent and can be re-derived below.">'
-            'ⓘ&nbsp; What is site geometry? (hover)</span>',
-            unsafe_allow_html=True)
-        geo = None
+        st.caption("The processed region used by **Background Filtering** / cropping (from "
+                   "`site_geometry.json`): the **research polygon** (area analysed), **road polygon(s)** "
+                   "(drivable area), and **exclusion rectangles** (regions always ignored). Coordinates "
+                   "are in the sensor frame (metres); edit them on **Dataset Prep → Geometry Editor**.")
+        site_geo = None
         if os.path.exists(ds.site_geometry_path):
             try:
-                geo = json.load(open(ds.site_geometry_path))
+                site_geo = json.load(open(ds.site_geometry_path))
             except Exception:
                 pass
-        if geo and geo.get("research_polygon"):
-            rp = geo["research_polygon"]
+        if site_geo and site_geo.get("research_polygon"):
+            rp = site_geo["research_polygon"]
+            roads = site_geo.get("road_polygons", [])
+            rects = site_geo.get("foreground_exclusion_rects", [])
             xs = [p[0] for p in rp]; ys = [p[1] for p in rp]
             st.write(f"Research polygon bounds: X [{min(xs):.1f}, {max(xs):.1f}] · "
-                     f"Y [{min(ys):.1f}, {max(ys):.1f}] · {len(geo.get('road_polygons', []))} road polygon(s) · "
-                     f"{len(geo.get('foreground_exclusion_rects', []))} exclusion rect(s)")
+                     f"Y [{min(ys):.1f}, {max(ys):.1f}] · {len(roads)} road polygon(s) · "
+                     f"{len(rects)} exclusion rect(s)")
+
+            def _coord_rows(poly):
+                return [{"#": i + 1, "X (m)": round(float(p[0]), 2), "Y (m)": round(float(p[1]), 2)}
+                        for i, p in enumerate(poly)]
+
+            if st.toggle("📐 Show coordinates", key=f"geo_coords_{ds.id}"):
+                ct_res, ct_road, ct_excl = st.tabs(
+                    ["🟦 Research polygon", f"🛣️ Road polygons ({len(roads)})",
+                     f"⛔ Exclusion rects ({len(rects)})"])
+                with ct_res:
+                    st.dataframe(_coord_rows(rp), use_container_width=True, hide_index=True)
+                with ct_road:
+                    if roads:
+                        for i, poly in enumerate(roads):
+                            st.markdown(f"**Road polygon {i + 1}** · {len(poly)} vertices")
+                            st.dataframe(_coord_rows(poly), use_container_width=True, hide_index=True)
+                    else:
+                        st.caption("None defined.")
+                with ct_excl:
+                    if rects:
+                        summary = []
+                        for i, r in enumerate(rects):
+                            rx = [p[0] for p in r]; ry = [p[1] for p in r]
+                            summary.append({"rect": i + 1,
+                                            "x_min": round(min(rx), 2), "x_max": round(max(rx), 2),
+                                            "y_min": round(min(ry), 2), "y_max": round(max(ry), 2),
+                                            "w (m)": round(max(rx) - min(rx), 2),
+                                            "h (m)": round(max(ry) - min(ry), 2)})
+                        st.dataframe(summary, use_container_width=True, hide_index=True)
+                        st.caption("Axis-aligned rectangles — the always-ignored foreground regions.")
+                    else:
+                        st.caption("None defined.")
         else:
             st.info("No site_geometry.json — the pipeline falls back to the built-in default geometry.")
 
@@ -185,6 +214,54 @@ with st.expander(f"📋 {ds.name} — details", expanded=True):
                        "dataset's config), then run Background Filtering → Detection.")
         else:
             st.caption("Template geometry is curated and read-only here.")
+
+    with t_geo:
+        st.caption("Georeferencing places this dataset's sensor frame on the real Earth — used by the "
+                   "**WWD Simulator** (true compass bearings + exact lat/lon V2X) and the **Visualizer** "
+                   "(HD-map digital twin + Real-intersection map).")
+        gref_path = os.path.join(ds.config_dir, "georef.json")
+        gref = None
+        if os.path.exists(gref_path):
+            try:
+                gref = json.load(open(gref_path))
+            except Exception:
+                pass
+        if gref:
+            st.success(f"Per-dataset `georef.json` found — overrides the built-in defaults.")
+            cfg = gref
+        else:
+            st.info("No per-dataset `georef.json` — using the built-in TUMTraf defaults. Add one to "
+                    "retarget the georeferencing/HD-map stack to another site (no code changes).")
+            cfg = geo._DEFAULT_GEOREF
+
+        if cfg.get("site_name"):
+            st.markdown(f"**Site:** {cfg['site_name']}")
+        ll = cfg.get("site_latlon")
+        if ll:
+            lat, lon = float(ll[0]), float(ll[1])
+            gc1, gc2, gc3 = st.columns([1, 1, 2])
+            gc1.metric("Latitude", f"{lat:.5f}°")
+            gc2.metric("Longitude", f"{lon:.5f}°")
+            gc3.write("")
+            gc3.markdown(f"[🌍 Open in Google Maps](https://maps.google.com/?q={lat},{lon})")
+
+        # capability status
+        hd_ok = os.path.exists(ds.hdmap_path)
+        try:
+            import pyproj  # noqa: F401
+            pyproj_ok = True
+        except Exception:
+            pyproj_ok = False
+        st.write(f"HD-map road network: {'✅ present' if hd_ok else '⚪ missing'} · `{ds.hdmap_path}`")
+        st.write(f"Exact WGS84 mode (pyproj): "
+                 f"{'✅ available — exact lat/lon & geodesic bearings' if pyproj_ok else '⚪ unavailable — approximate placement'}")
+
+        if st.toggle("🔧 Show transforms (HD-map → s110_base → cloud)", key=f"geo_tf_{ds.id}"):
+            st.caption("Lifted verbatim from the TUMTraf dev-kit. `map_to_base` is a rigid "
+                       "rotation+translation; `base_to_cloud` is a Z-rotation (degrees) + translation "
+                       "into the point-cloud frame.")
+            st.json({"map_to_base": cfg.get("map_to_base", {}),
+                     "base_to_cloud": cfg.get("base_to_cloud", {})})
 
     with t_lanes:
         st.caption("**Lanes** (`lanes.geojson`) define the expected legal travel direction per road "
