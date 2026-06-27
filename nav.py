@@ -27,8 +27,7 @@ SECTIONS = [
     ]),
     ("🚨 Wrong-way driving", [
         ("pages/5_Lane_Editor.py",   "🛣️", "Lane Editor",   "Build/adjust the lane directions used for WWD.", []),
-        ("pages/6_WWD_Simulator.py", "🚨", "WWD Simulator", "Spawn a synthetic wrong-way driver; fire the V2X alert.",
-            ["🚗 Scenario", "🛡️ Detector", "🎛️ Display"]),
+        ("pages/6_WWD_Simulator.py", "🚨", "WWD Simulator", "Spawn a synthetic wrong-way driver; fire the V2X alert.", []),
     ]),
 ]
 

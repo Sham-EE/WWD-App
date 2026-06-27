@@ -48,15 +48,15 @@ with ab2:
 st.write("")
 
 # ---------------- Dynamic pipeline (horizontal stepper) ----------------
-# One card per workflow tool (in order); each card shows its status badge and
-# lists the page's own sub-tabs (e.g. Dataset Prep → Crop / GT / Geometry /
-# Registration). The first not-done tool is "Next".
+# One even-height card per workflow tool (in order) with its status badge. Tools
+# that have in-page tabs (e.g. Dataset Prep) get a click-to-reveal collapsible
+# below the card so the row stays even. The first not-done tool is "Next".
 _states = nav.tool_states(_active)
 _next_page = next((p for p in nav.PIPELINE if _states[p] == "todo"), None)
 
 st.markdown("#### 🧭 Pipeline")
 st.caption("The recommended order — status updates as the active dataset progresses. "
-           "Each step lists its in-page tabs.")
+           "Steps with in-page tabs show a collapsible below them.")
 _cols = st.columns(len(nav.PIPELINE))
 for i, page in enumerate(nav.PIPELINE):
     _p, icon, name, _desc, subs = nav.TOOLS[page]
@@ -67,21 +67,24 @@ for i, page in enumerate(nav.PIPELINE):
         badge, color, bg, border = "🔵 Next", "#60a5fa", "#0f1722", "#2b4a78"
     else:
         badge, color, bg, border = "⬜ To do", "#6b7480", "#14181f", "#2a3340"
-    subs_html = "".join(
-        f"<div style='color:#8b97a7;font-size:.66rem;line-height:.98rem'>{s}</div>" for s in subs
-    ) or "<div style='color:#3a4452;font-size:.66rem'>—</div>"
     with _cols[i]:
         st.markdown(
             f"""<div style="background:{bg};border:1px solid {border};border-radius:12px;
-                        padding:10px 6px;text-align:center;min-height:150px">
+                        padding:10px 6px;text-align:center;min-height:118px">
                   <div style="font-size:.7rem;color:#6b7480">STEP {i+1}</div>
                   <div style="font-size:1.35rem;line-height:1.55rem">{icon}</div>
                   <div style="font-weight:600;font-size:.84rem;margin-top:2px">{name}</div>
-                  <div style="color:{color};font-size:.74rem;margin:3px 0 6px">{badge}</div>
-                  {subs_html}
+                  <div style="color:{color};font-size:.74rem;margin-top:3px">{badge}</div>
                 </div>""",
             unsafe_allow_html=True,
         )
+        if subs:
+            with st.expander(f"🗂️ {len(subs)} tabs"):
+                for s in subs:
+                    st.markdown(
+                        f"<div style='font-size:.74rem;color:#9aa6b2;padding:1px 0'>{s}</div>",
+                        unsafe_allow_html=True,
+                    )
 
 if _next_page is None:
     st.success("🎉 All set — every pipeline stage is complete. Jump into the **WWD Simulator** or **Evaluation**.")
