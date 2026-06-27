@@ -7,8 +7,10 @@ from visualization import create_3d_figure, generate_tracking_animation
 from wwd_detection import load_lane_config, lanes_calibrated, detect_wrong_way, summarize_wrong_way
 import registration as reg
 import viewer_ui as vu
+import nav
 
 st.set_page_config(layout="wide", page_title="Object Detection and Tracking")
+nav.render_sidebar()
 
 st.title("📦 Object Detection and Tracking")
 
