@@ -51,7 +51,7 @@ def render_sidebar():
     with st.sidebar:
         st.page_link("Home.py", label="🏠  Home")
         for title, tools in SECTIONS:
-            with st.expander(title, expanded=True):
+            with st.expander(title, expanded=False):
                 for path, icon, name, _desc, _subs in tools:
                     st.page_link(path, label=f"{icon}  {name}")
 
