@@ -179,7 +179,7 @@ with right:
 # ---------------- Live geo map (native, real-time — the real intersection) ----------------
 st.divider()
 st.subheader("🗺️ Live geo map — real intersection")
-st.caption(f"**{geo.SITE_NAME}** — the driver moves here in real time as the sim plays "
+st.caption(f"**{geo.site_name()}** — the driver moves here in real time as the sim plays "
            "(no broadcast needed).")
 # Map layer toggles
 vu.ensure_toggle_defaults({"map_satellite": True, "map_hdmap": True,
@@ -323,11 +323,11 @@ _d = sim_track[step]
 _true_bearing = geo.heading_to_true_bearing(_d["heading"], "south") if _geo_ok \
     else math_heading_to_compass(_d["heading"])
 _latlon = geo.sensor_xy_to_latlon(_d["cx"], _d["cy"], "south")  # None until Tier-2 anchor set
-_loc = _latlon if _latlon is not None else geo.SITE_LATLON_APPROX
-st.caption(f"📍 **{geo.SITE_NAME}**  ·  "
+_loc = _latlon if _latlon is not None else geo.site_latlon()
+st.caption(f"📍 **{geo.site_name()}**  ·  "
            + (f"driver @ {_latlon[0]:.6f}, {_latlon[1]:.6f} (exact)"
               if _latlon is not None else
-              f"~{geo.SITE_LATLON_APPROX[0]:.4f}, {geo.SITE_LATLON_APPROX[1]:.4f} "
+              f"~{geo.site_latlon()[0]:.4f}, {geo.site_latlon()[1]:.4f} "
               "(approx site — add the HD-map UTM anchor in geo_reference.py for exact per-driver lat/lon)")
            + (f"  ·  bearing **{_true_bearing:.0f}°** (true)" if _geo_ok
               else "  ·  bearing assumes +y=north (no georef found)"))
@@ -347,7 +347,7 @@ else:
             "speed": round(float(speed), 1), "heading": round(float(_true_bearing)),
             "lane": opt["lane_id"], "direction": opt["wrong_name"],
             "lat": round(float(_loc[0]), 6), "lon": round(float(_loc[1]), 6),
-            "lat_exact": _latlon is not None, "site": geo.SITE_NAME,
+            "lat_exact": _latlon is not None, "site": geo.site_name(),
         }
         st.session_state.v2x_armed = True
         st.rerun()

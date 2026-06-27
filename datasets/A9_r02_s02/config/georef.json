@@ -1,0 +1,13 @@
+{
+  "_comment": "Per-dataset georeference for the TUMTraf s110 intersection. Read by geo_reference.py via dataset_manager; overrides the module's built-in defaults. The two transforms are lifted verbatim from the TUMTraf dev-kit (hd_map.py map->s110_base, and visualize_point_cloud_with_3d_boxes.py s110_base->cloud).",
+  "site_name": "Schleißheimer Str. (B471) × Zeppelinstr., Garching-Hochbrück (Munich), DE",
+  "site_latlon": [48.2494, 11.6308],
+  "map_to_base": {
+    "rotation": [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+    "translation": [-854.96568588, -631.98486299, 0.0]
+  },
+  "base_to_cloud": {
+    "rotation_deg": 77.8,
+    "translation": [-15.87257873, 2.30019086, 7.48077521]
+  }
+}

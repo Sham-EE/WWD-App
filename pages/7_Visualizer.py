@@ -335,11 +335,10 @@ def render_lidar_tab():
 # ======================= Real intersection (Google Maps) tab =======================
 def render_real_tab():
     import streamlit.components.v1 as components
-    st.markdown("The dataset's **real location** — a live, interactive Google Map of the s110 "
-                "intersection: **Schleißheimer Str. (B471) × Zeppelinstr., Garching-Hochbrück, "
-                "Munich**. Pan, zoom, switch Map/Satellite (bottom-left), or click a place like the "
-                "**Jägerhof**.")
-    lat, lon = geo.sensor_position_latlon("south") or geo.SITE_LATLON_APPROX
+    st.markdown(f"The dataset's **real location** — a live, interactive Google Map of "
+                f"**{geo.site_name()}**. Pan, zoom, switch Map/Satellite (bottom-left), or click a "
+                "place like the **Jägerhof**.")
+    lat, lon = geo.sensor_position_latlon("south") or geo.site_latlon()
     src = f"https://maps.google.com/maps?q={lat},{lon}&t=h&z=18&hl=en&output=embed"   # t=h → satellite
     components.html(
         f'<iframe width="100%" height="660" style="border:0;border-radius:10px" loading="lazy" '
