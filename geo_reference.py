@@ -304,6 +304,41 @@ def sensor_points_to_latlon(xy, sensor="south"):
     return np.column_stack([lat, lon])
 
 
+def camera_fovs_latlon(sensor="south", fov_deg=68.8, length_m=50.0):
+    """Per south camera: {name, pos:(lat,lon), bearing, cone:[[lon,lat],...]}. Reads the
+    OpenLABEL camera poses (relative to the LiDAR), runs them through the exact georef,
+    and builds an FOV wedge along the optical axis. [] if unavailable."""
+    cs = _read_coord_systems(sensor)
+    g = _geod()
+    if cs is None or g is None or not has_exact_georef(sensor):
+        return []
+    out = []
+    for cam in ("s110_camera_basler_south1_8mm", "s110_camera_basler_south2_8mm"):
+        node = cs.get(cam)
+        if not node or "pose_wrt_parent" not in node:
+            continue
+        M = np.array(node["pose_wrt_parent"]["matrix4x4"], dtype=float).reshape(4, 4)
+        pos = M[:3, 3]                                   # camera origin in cloud frame
+        fxy = (M[:3, :3] @ np.array([0.0, 0.0, 1.0]))[:2]   # optical axis (+z) on the ground
+        nrm = np.linalg.norm(fxy)
+        if nrm < 1e-6:
+            continue
+        fxy /= nrm
+        p0 = sensor_xy_to_latlon(pos[0], pos[1], sensor)
+        p1 = sensor_xy_to_latlon(pos[0] + fxy[0], pos[1] + fxy[1], sensor)
+        if p0 is None or p1 is None:
+            continue
+        bearing = g.inv(p0[1], p0[0], p1[1], p1[0])[0]
+        cone = [[p0[1], p0[0]]]
+        for a in (bearing - fov_deg / 2.0, bearing + fov_deg / 2.0):
+            lon2, lat2, _ = g.fwd(p0[1], p0[0], a, length_m)
+            cone.append([lon2, lat2])
+        cone.append([p0[1], p0[0]])
+        out.append({"name": cam.replace("s110_camera_basler_", "").replace("_8mm", ""),
+                    "pos": p0, "bearing": float(bearing % 360.0), "cone": cone})
+    return out
+
+
 def circle_latlon(center_latlon, radius_m, n=72):
     """A closed ring of [lon, lat] points at radius_m around center (for FOV/range
     rings on the map)."""
