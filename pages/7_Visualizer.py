@@ -337,18 +337,17 @@ def render_real_tab():
     import streamlit.components.v1 as components
     st.markdown("The dataset's **real location** — a live, interactive Google Map of the s110 "
                 "intersection: **Schleißheimer Str. (B471) × Zeppelinstr., Garching-Hochbrück, "
-                "Munich**. Pan, zoom, drop into Street View, or click a place like the **Jägerhof**.")
+                "Munich**. Pan, zoom, switch Map/Satellite (bottom-left), or click a place like the "
+                "**Jägerhof**.")
     lat, lon = geo.sensor_position_latlon("south") or geo.SITE_LATLON_APPROX
-    c1, c2 = st.columns([1.4, 3])
-    layer = c1.radio("View", ["🛰️ Hybrid", "🛰️ Satellite", "🗺️ Map"], horizontal=True, key="real_layer")
-    t = {"🛰️ Hybrid": "h", "🛰️ Satellite": "k", "🗺️ Map": "m"}[layer]
-    src = f"https://maps.google.com/maps?q={lat},{lon}&t={t}&z=18&hl=en&output=embed"
+    src = f"https://maps.google.com/maps?q={lat},{lon}&t=h&z=18&hl=en&output=embed"   # t=h → satellite
     components.html(
         f'<iframe width="100%" height="660" style="border:0;border-radius:10px" loading="lazy" '
         f'referrerpolicy="no-referrer-when-downgrade" src="{src}"></iframe>', height=680)
+    pano = f"https://www.google.com/maps/@?api=1&map_action=pano&viewpoint={lat},{lon}"
     st.caption(f"📍 LiDAR gantry @ **{lat:.6f}, {lon:.6f}** — placed by the exact georeference.  "
                f"[Open in Google Maps ↗](https://www.google.com/maps/search/?api=1&query={lat},{lon})  ·  "
-               "Use Google's own controls to switch Map/Satellite, zoom, or Street View.")
+               f"[👤 Street View — walk it in first-person ↗]({pano})")
 
 
 tab_cam, tab_lidar, tab_real = st.tabs(
