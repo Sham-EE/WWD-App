@@ -1,13 +1,18 @@
 # LiDAR Wrong-Way Driving (WWD) Detection Toolkit
 
 A Streamlit pipeline for detecting wrong-way driving from roadside LiDAR point
-clouds. The pages (in sidebar / usage order):
+clouds. The **Home** page shows a live, dataset-aware **pipeline stepper** (a
+compact pill-and-arrow flow that marks each stage Done / Next / To-do) plus
+quick-launch tool cards; the **sidebar** groups the tools into collapsible
+sections (Data & setup · Detection pipeline · Wrong-way driving). The pages
+(in sidebar / usage order):
 
 0. **Datasets** — choose which dataset the app works on, or add your own.
 1. **Dataset Prep** — recreate the dataset's *derived* data in-app (no external
    scripts), **edit the scene geometry that the whole pipeline reads**, and
-   **register the south + north LiDARs into one fused cloud**. Four tabs:
-   **Crop to road**, **Scorable GT**, **Geometry Editor**, and **Registration**.
+   **register the south + north LiDARs into one fused cloud**. Four tabs, laid
+   out in recommended order with their own prep stepper: **Registration**
+   (optional) → **Geometry Editor** → **Crop to road** → **Scorable GT**.
    See below.
 2. **Background Filtering** — build a static-background model and keep only the
    moving foreground points. Choose the **sensor** (Registered / South / North)
@@ -24,11 +29,12 @@ clouds. The pages (in sidebar / usage order):
    detector and fire the V2X dashboard's messaging on detection. Includes a live,
    **georeferenced** map of the real intersection (true compass bearings, exact
    lat/lon — the site is the TUMTraf s110 junction in Garching-Hochbrück, Munich).
-7. **Visualizer** — two tabs: a **camera** viewer (both cameras side by side with
+7. **Visualizer** — three tabs: a **camera** viewer (both cameras side by side with
    generated bounding-box / point-cloud overlays + track-history trails + video),
-   and a **3D LiDAR** viewer (the scan + ground-truth boxes + the **real HD-map
-   road network** in one oblique view — the dev-kit "digital twin"). A native,
-   dependency-light replacement for the TUM Traffic dev-kit.
+   a **3D LiDAR** viewer (the scan + ground-truth boxes + the **real HD-map
+   road network** in one oblique view — the dev-kit "digital twin"), and a
+   **Real intersection** tab (interactive Google Maps satellite embed of the
+   site). A native, dependency-light replacement for the TUM Traffic dev-kit.
 
 ## Datasets
 
@@ -299,7 +305,8 @@ streamlit run Home.py
 
 | File | Purpose |
 |------|---------|
-| `Home.py` | Landing page / navigation (grouped tool cards + active dataset) |
+| `Home.py` | Landing page — dataset-aware **pipeline stepper** + grouped tool cards + active dataset |
+| `nav.py` | Shared nav: collapsible sidebar, tool/sub-tab definitions, `render_stepper`, per-tool completion |
 | `pages/0_Datasets.py` | Select active dataset / add your own; per-dataset workspace |
 | `pages/1_Dataset_Prep.py` | Crop to road, scorable GT, **Geometry Editor**, **Registration** (4 tabs) |
 | `pages/2_Background_Filtering.py` | Background model build + foreground 3D inspector |
@@ -487,7 +494,20 @@ false alarms matter more than recall); further gains need a learned detector, no
 
 ## Changelog (highlights since the pipeline came together)
 
-**Georeferencing + HD-map digital twin (latest)**
+**Home / navigation refresh (latest)**
+- **Collapsible sidebar** (`nav.py` + `.streamlit/config.toml` `showSidebarNavigation = false`):
+  Home at top, then expandable sections — **Data & setup**, **Detection pipeline**,
+  **Wrong-way driving** — replacing Streamlit's flat page list. Every page calls
+  `nav.render_sidebar()`; tool definitions live in one place (`nav.SECTIONS`).
+- **Dataset-aware pipeline stepper** on Home: a compact pill-and-arrow flow
+  (`nav.render_stepper`) that reads the active dataset's artifacts and marks each
+  stage **Done / Next / To-do**, with a "next step" jump button. Section cards below
+  list each tool's in-page tabs.
+- **Dataset Prep prep stepper**: the four tabs are reordered to the recommended
+  sequence (**Registration** *(optional)* → **Geometry Editor** → **Crop to road** →
+  **Scorable GT**) with their own stepper showing what's already done.
+
+**Georeferencing + HD-map digital twin**
 - The dataset is the **real TUMTraf s110 intersection** (Schleißheimer Str. (B471) ×
   Zeppelinstr., Garching-Hochbrück, Munich). `geo_reference.py` composes the OpenLABEL
   + HD-map chain to convert sensor coordinates to **exact WGS84 lat/lon** and **true
