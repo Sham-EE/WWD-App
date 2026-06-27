@@ -230,6 +230,26 @@ def sensor_xy_to_latlon(x, y, sensor="south"):
     return float(lat), float(lon)
 
 
+def latlon_to_sensor(lat, lon, sensor="south"):
+    """Inverse of `sensor_xy_to_latlon`: exact WGS84 (lat, lon) → point-cloud-frame
+    (x, y). Walks the chain backwards: WGS84 → projected E/N → HD-map → s110_base →
+    cloud. None if the HD map / pyproj are unavailable. Used to turn map-drawn
+    geometry (lat/lon) into the sensor frame the detector works in."""
+    gr = _hdmap_georef()
+    if gr is None:
+        return None
+    tr = _transformer(gr[0])
+    if tr is None:
+        return None
+    _, origin = gr
+    g = _georef()
+    e, n = tr.transform(float(lon), float(lat), direction="INVERSE")   # WGS84 → proj E/N
+    mp = np.array([e - origin[0], n - origin[1], 0.0])                 # HD-map frame
+    s110 = g["map2base_R"] @ mp + g["map2base_T"]                      # HD-map → s110_base
+    cloud = _rz(g["cloud_rz_deg"]).T @ (s110 - g["cloud_T"])          # s110_base → cloud
+    return float(cloud[0]), float(cloud[1])
+
+
 # --------------------------------------------------------------------------- #
 #  Public: bearing + projector (exact when possible, graceful fallback)
 # --------------------------------------------------------------------------- #
