@@ -173,19 +173,52 @@ def _vertex_editor(poly, label, step=1.0):
     return out
 
 
-st.info(
-    "**Recommended order** — these tabs build on each other:&nbsp;&nbsp;"
-    "1️⃣ **Registration** *(optional — only if you're fusing south + north)* → "
-    "2️⃣ **Geometry Editor** *(draw the road polygons / ROI)* → "
-    "3️⃣ **Crop to road** *(clip the clouds to those polygons)* → "
-    "4️⃣ **Scorable GT** *(visible-only ground truth)*."
-)
+# ---------------- Prep pipeline (mirrors the Home stepper) ----------------
+# The four tabs below build on each other; this stepper shows the recommended
+# order and which steps are already done for the active dataset.
+def _has_pcd(d):
+    return bool(glob.glob(os.path.join(d, "*.pcd")))
 
-# Tabs are laid out in that recommended order; the `with` blocks below keep their
-# original variable names, so only the labels + unpack order changed.
+_status = ds.status()
+# (icon, name, done?, optional?)
+_prep_steps = [
+    ("🧭", "Registration", _has_pcd(ds.registered_dir), True),
+    ("🗺️", "Geometry Editor", os.path.exists(ds.site_geometry_path), False),
+    ("✂️", "Crop to road", _status["pcd"], False),
+    ("🏷️", "Scorable GT", _status["gt"], False),
+]
+_prep_next = next((i for i, (_ic, _nm, dn, op) in enumerate(_prep_steps) if not dn and not op), None)
+
+st.markdown("##### 🧭 Prep order")
+_pc = st.columns(len(_prep_steps))
+for i, (ic, nm, dn, op) in enumerate(_prep_steps):
+    if dn:
+        badge, color, bg, border = "✅ Done", "#4ade80", "#101a13", "#234a2c"
+    elif i == _prep_next:
+        badge, color, bg, border = "🔵 Next", "#60a5fa", "#0f1722", "#2b4a78"
+    elif op:
+        badge, color, bg, border = "⚪ Optional", "#c8a96a", "#1a1710", "#473a24"
+    else:
+        badge, color, bg, border = "⬜ To do", "#6b7480", "#14181f", "#2a3340"
+    with _pc[i]:
+        st.markdown(
+            f"""<div style="background:{bg};border:1px solid {border};border-radius:12px;
+                        padding:10px 6px;text-align:center;min-height:104px">
+                  <div style="font-size:.7rem;color:#6b7480">STEP {i+1}</div>
+                  <div style="font-size:1.35rem;line-height:1.55rem">{ic}</div>
+                  <div style="font-weight:600;font-size:.84rem;margin-top:2px">{nm}</div>
+                  <div style="color:{color};font-size:.74rem;margin-top:3px">{badge}</div>
+                </div>""",
+            unsafe_allow_html=True,
+        )
+st.caption("Registration is optional — only when fusing south + north. "
+           "Geometry Editor draws the road polygons, Crop clips the clouds to them, "
+           "then Scorable GT builds the visible-only ground truth.")
+
+# Tabs follow the recommended order; the `with` blocks keep their original
+# variable names, so only the labels + unpack order changed.
 tab_reg, tab_geom, tab_crop, tab_gt = st.tabs(
-    ["1️⃣ 🧭 Registration", "2️⃣ 🗺️ Geometry Editor", "3️⃣ ✂️ Crop to road (ROI)",
-     "4️⃣ 🏷️ Scorable GT (visible-only)"])
+    ["🧭 Registration", "🗺️ Geometry Editor", "✂️ Crop to road (ROI)", "🏷️ Scorable GT (visible-only)"])
 
 # ===================== Step 3: Crop to road =====================
 with tab_crop:
