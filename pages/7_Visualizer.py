@@ -354,11 +354,86 @@ def render_real_tab():
                f"[👤 Street View — walk it in first-person ↗]({pano})")
 
 
-tab_cam, tab_lidar, tab_real = st.tabs(
-    ["🎥 Road Viewer (cameras)", "🧊 LiDAR labels (3D)", "🛰️ Real intersection"])
+# ======================= Videos tab (camera + 3D, synced) =======================
+def render_videos_tab():
+    st.markdown("Two clips of the same run, rendered from the **same frames** so they move "
+                "together: the **camera** side-by-side on top, and the **3D LiDAR** view below "
+                "(at a forward angle that mirrors the south cameras).")
+    n = min(len(labels), len(pcds))
+    if n == 0:
+        st.warning("Need both point clouds and OpenLABEL labels (set them in **Input folders** above).")
+        return
+
+    with st.expander("⚙️ 3D video — angle & settings", expanded=True):
+        st.caption("Tune the angle to match the south-camera view (the dev-kit look).")
+        a1, a2, a3, a4 = st.columns(4)
+        elev = a1.slider("Elevation°", 0, 60, 12, key="vid3d_elev")
+        azim = a2.slider("Azimuth°", -180, 180, -90, key="vid3d_azim")
+        roll = a3.slider("Roll°", -30, 30, 0, key="vid3d_roll")
+        focal = a4.slider("Perspective", 0.1, 1.0, 0.3, 0.05, key="vid3d_focal",
+                          help="Lower = wider, more dramatic perspective (like a camera lens).")
+        s1, s2, s3 = st.columns(3)
+        v_fps = s1.slider("FPS", 1, 30, 10, key="vid3d_fps",
+                          help="Use the SAME FPS as the Road Viewer video for a synced pair.")
+        v_pts = s2.select_slider("Points", [3000, 6000, 12000, 20000], value=6000, key="vid3d_pts")
+        v_max = s3.number_input("Max frames (0 = all)", 0, n, 0, key="vid3d_max")
+
+    if st.button("🎬 Generate 3D LiDAR video", type="primary", use_container_width=True):
+        hd = geo.hdmap_lanes_sensor_frame("north" if _sensor == "north" else "south", 130.0)
+        mk = reg.lidar_markers(ds, _sensor)
+        bar = st.progress(0.0, text="Rendering 3D frames…")
+        try:
+            path, kind = lv.render_lidar_video(
+                pcds[:n], labels[:n], ds.road_videos_dir, f"lidar3d_{_sensor}_{_src}",
+                fps=int(v_fps), elev=float(elev), azim=float(azim), roll=float(roll),
+                focal=float(focal), max_points=int(v_pts), hdmap_lanes=hd, sensors=mk,
+                max_frames=int(v_max),
+                progress=lambda c, t: bar.progress(c / t, text=f"Rendering {c}/{t} frames…"))
+            st.session_state.lidar_video = (path, kind)
+            bar.empty()
+            st.success(f"Saved {kind.upper()} → `{path}`")
+        except Exception as e:
+            bar.empty()
+            st.error(f"3D video render failed: {e}")
+
+    # ---- show both, camera on top / 3D below ----
+    st.divider()
+    cam = st.session_state.get("road_video")
+    vid = st.session_state.get("lidar_video")
+    st.markdown("#### 🎥 Cameras")
+    if cam and os.path.exists(cam[0]):
+        if cam[1] == "mp4":
+            st.video(cam[0])
+        else:
+            st.image(cam[0], caption="Camera side-by-side (GIF)")
+        with open(cam[0], "rb") as f:
+            st.download_button("⬇️ Download camera video", f, file_name=os.path.basename(cam[0]),
+                               key="dl_cam_vid")
+    else:
+        st.info("No camera video yet — generate it in the **🎥 Road Viewer** tab "
+                "(use **all frames** and the **same FPS** so the two clips stay in sync).")
+    st.markdown("#### 🧊 3D LiDAR")
+    if vid and os.path.exists(vid[0]):
+        if vid[1] == "mp4":
+            st.video(vid[0])
+        else:
+            st.image(vid[0], caption="3D LiDAR (GIF)")
+        with open(vid[0], "rb") as f:
+            st.download_button("⬇️ Download 3D LiDAR video", f, file_name=os.path.basename(vid[0]),
+                               key="dl_3d_vid")
+    else:
+        st.info("No 3D video yet — set the angle above and click **Generate 3D LiDAR video**.")
+    st.caption("Both clips save to the dataset's **road_videos** folder. For a perfectly synced "
+               "pair, render both with the **same FPS** and **all frames**.")
+
+
+tab_cam, tab_lidar, tab_videos, tab_real = st.tabs(
+    ["🎥 Road Viewer (cameras)", "🧊 LiDAR labels (3D)", "🎬 Videos", "🛰️ Real intersection"])
 with tab_cam:
     render_camera_tab()
 with tab_lidar:
     render_lidar_tab()
+with tab_videos:
+    render_videos_tab()
 with tab_real:
     render_real_tab()

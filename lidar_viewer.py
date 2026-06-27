@@ -131,3 +131,123 @@ def build_figure(points, objs, color_mode="by_category", view="oblique",
                    xaxis=xr, yaxis=yr, zaxis=dict(visible=False)),
         uirevision="lidar_oblique")   # keep the user's rotation/zoom across frame changes
     return fig
+
+
+# --------------------------------------------------------------------------- #
+#  Matplotlib video renderer (fast, ~ms/frame — unlike kaleido) at a fixed
+#  forward-looking angle that mirrors the south cameras (the dev-kit view).
+# --------------------------------------------------------------------------- #
+def render_lidar_video(pcd_files, label_files, out_dir, basename, *, fps=10,
+                       width=960, height=480, elev=12.0, azim=-90.0, roll=0.0,
+                       focal=0.3, max_points=12000, color_mode="by_category",
+                       hdmap_lanes=None, sensors=None, xlim=None, ylim=None,
+                       zlim=None, max_frames=0, progress=None):
+    """Render the LiDAR scan + GT 3D boxes to a video with matplotlib (Agg) — fast
+    enough for all frames — from a fixed perspective angle (elev/azim/roll/focal)
+    chosen to look the way the south cameras do. Saves MP4 (ffmpeg) or GIF
+    fallback to `out_dir`. Returns (path, kind).
+
+    pcd_files / label_files : aligned per-frame paths (same order/length).
+    hdmap_lanes : list of sensor-frame polylines (drawn green at ground).
+    sensors     : list of {pos:[x,y,z], color} LiDAR markers (drawn as X's).
+    """
+    import os
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import imageio.v2 as imageio
+
+    os.makedirs(out_dir, exist_ok=True)
+    n = len(pcd_files)
+    if max_frames and max_frames > 0:
+        n = min(n, max_frames)
+    if n == 0:
+        raise ValueError("no frames to render")
+
+    # Stable limits from a representative frame (so the view doesn't jitter).
+    if xlim is None or ylim is None or zlim is None:
+        p0 = load_points(pcd_files[n // 2], 40000)
+        if len(p0):
+            xlim = xlim or (float(np.percentile(p0[:, 0], 1)) - 4, float(np.percentile(p0[:, 0], 99)) + 4)
+            ylim = ylim or (float(np.percentile(p0[:, 1], 1)) - 4, float(np.percentile(p0[:, 1], 99)) + 4)
+            zlim = zlim or (float(np.percentile(p0[:, 2], 1)) - 1, float(np.percentile(p0[:, 2], 99)) + 3)
+        else:
+            xlim, ylim, zlim = xlim or (-60, 80), ylim or (-50, 50), zlim or (-10, 6)
+    gz = zlim[0] + 0.3
+
+    # Batch every HD-map polyline into ONE collection — thousands of separate
+    # ax.plot calls would dominate the per-frame time. Static, so build once.
+    from mpl_toolkits.mplot3d.art3d import Line3DCollection
+    hd_segs = []
+    for poly in (hdmap_lanes or []):
+        arr = np.asarray(poly, dtype=float)
+        for k in range(len(arr) - 1):
+            hd_segs.append([(arr[k, 0], arr[k, 1], gz), (arr[k + 1, 0], arr[k + 1, 1], gz)])
+
+    dpi = 100
+    fig = plt.figure(figsize=(width / dpi, height / dpi), dpi=dpi, facecolor="#0e1117")
+    mp4 = os.path.join(out_dir, basename + ".mp4")
+    try:
+        writer = imageio.get_writer(mp4, fps=fps, codec="libx264", macro_block_size=16, quality=7)
+        out, kind = mp4, "mp4"
+    except Exception:
+        out = os.path.join(out_dir, basename + ".gif")
+        writer = imageio.get_writer(out, mode="I", duration=1.0 / max(1, fps), loop=0)
+        kind = "gif"
+
+    try:
+        for i in range(n):
+            fig.clf()
+            ax = fig.add_subplot(111, projection="3d")
+            ax.set_facecolor("#0e1117")
+            try:
+                ax.set_proj_type("persp", focal_length=float(focal))
+            except TypeError:
+                ax.set_proj_type("persp")
+
+            # HD-map road network (green, at ground) — under everything, one collection.
+            if hd_segs:
+                ax.add_collection3d(Line3DCollection(hd_segs, colors="#39d353",
+                                                     linewidths=0.6, alpha=0.5))
+
+            # Point cloud.
+            pts = load_points(pcd_files[i], max_points)
+            if len(pts):
+                ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], s=0.25, c="#9aa6b2",
+                           alpha=0.35, depthshade=False, linewidths=0)
+
+            # GT 3D boxes (coloured by category, dev-kit palette) — one collection.
+            objs = lp.load_objects(label_files[i]) if i < len(label_files) else []
+            bsegs, bcols = [], []
+            for o in objs:
+                c = lp.cuboid_corners(o["val"])
+                col = _hex(lp._color_for(o, color_mode))
+                for a, b in lp._EDGES:
+                    bsegs.append([(c[a, 0], c[a, 1], c[a, 2]), (c[b, 0], c[b, 1], c[b, 2])])
+                    bcols.append(col)
+            if bsegs:
+                ax.add_collection3d(Line3DCollection(bsegs, colors=bcols, linewidths=1.2))
+
+            # LiDAR station markers (X's).
+            for s in (sensors or []):
+                p = s.get("pos", [0, 0, 0])
+                col = s.get("color", "#ffffff")
+                if isinstance(col, (list, tuple)):
+                    col = _hex(col)
+                ax.scatter([p[0]], [p[1]], [p[2]], c=col, marker="x", s=70, linewidths=2.2)
+
+            ax.view_init(elev=elev, azim=azim, roll=roll)
+            ax.set_xlim(*xlim); ax.set_ylim(*ylim); ax.set_zlim(*zlim)
+            ax.set_box_aspect((xlim[1] - xlim[0], ylim[1] - ylim[0],
+                               max(zlim[1] - zlim[0], (xlim[1] - xlim[0]) / 12)))
+            ax.set_axis_off()
+
+            fig.canvas.draw()
+            rgba = np.asarray(fig.canvas.buffer_rgba())
+            writer.append_data(rgba[:, :, :3].copy())
+            if progress:
+                progress(i + 1, n)
+    finally:
+        writer.close()
+        plt.close(fig)
+    return out, kind
