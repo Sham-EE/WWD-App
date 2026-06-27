@@ -142,13 +142,13 @@ with st.expander("⚙️ Simulation setup", expanded=True):
             st.caption("3D scan overlays.")
             _pts_shown = st.select_slider("Points shown", [10000, 20000, 30000, 50000], value=20000,
                                           key="sim3d_maxpts")
+            st.caption("(The 🧊 Point cloud toggle is above the view — turn it off for smooth playback.)")
             q1, q2, q3 = st.columns(3)
-            q1.toggle("🧊 Point cloud", key="sim3d_points")
             q1.toggle("📦 GT boxes", key="sim3d_boxes")
+            q1.toggle("🛣️ WWD lanes", key="sim3d_lanes")
             q2.toggle("🛣️ Road outline", key="sim3d_road")
             q2.toggle("🗺️ HD-map roads", key="sim3d_hdmap")
             q3.toggle("📍 LiDAR stations", key="sim3d_lidar")
-            q3.toggle("🛣️ WWD lanes", key="sim3d_lanes")
         else:
             st.caption("Show / hide overlays on the abstract BEV view.")
             _disp_keys = ["sim_show_lanes", "sim_show_legal_arrows", "sim_show_path",
@@ -206,6 +206,9 @@ _dcol = "#ff2b2b" if flagged_now else "#ffa500"
 left, right = st.columns([3, 2], gap="medium")
 with left:
     if is_3d and _n_frames:
+        st.toggle("🧊 Point cloud", key="sim3d_points",
+                  help="Turn the LiDAR points OFF for much smoother playback — only the "
+                       "lightweight boxes / lanes / driver animate (no 20k-point reload each frame).")
         # The driver steps through the real LiDAR frames as it plays.
         scene_i = min(start_frame + step, _n_frames - 1)
         pts = _sim_load_pts(_pcds[scene_i], int(st.session_state.get("sim3d_maxpts", 20000)))
