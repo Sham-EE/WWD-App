@@ -325,7 +325,10 @@ if is_3d and _n_frames:
         _vid = st.session_state.get("wwd_vid")
         if _vid and os.path.exists(_vid[0]):
             _path, _kind = _vid
-            (st.video if _kind == "mp4" else st.image)(_path)
+            if _kind == "mp4":
+                st.video(_path)
+            else:
+                st.image(_path)
             with open(_path, "rb") as _fh:
                 st.download_button(f"⬇️ Download {_kind.upper()}", _fh,
                                    file_name=os.path.basename(_path),

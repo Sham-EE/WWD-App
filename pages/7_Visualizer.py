@@ -278,7 +278,10 @@ def render_camera_tab():
     rvid = st.session_state.get("road_video")
     if rvid and os.path.exists(rvid[0]):
         path, kind = rvid
-        st.video(path) if kind == "mp4" else st.image(path, caption="Road animation (GIF)")
+        if kind == "mp4":
+            st.video(path)
+        else:
+            st.image(path, caption="Road animation (GIF)")
         st.caption(f"Last generated: `{path}`")
 
 
