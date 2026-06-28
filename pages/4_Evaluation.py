@@ -122,6 +122,42 @@ def _render_single_run():
     eval_note = st.text_input("Run note (optional — logged with this eval)", key="eval_note_single",
                               placeholder="e.g. strong_pts=100, suppress_static on")
 
+    # ---- Phase 0: export predictions for the official TUM Traffic dev-kit benchmark ----
+    with st.expander("📤 Export for the official dev-kit benchmark (per-class AP)"):
+        st.caption("Writes the in-memory detections as one file per frame, **named to match the GT**, so you "
+                   "can run the dev-kit's `evaluation.py` → per-class Precision/Recall/**AP@0.1**, comparable "
+                   "to the published **InfraDet3D** table (~68 AP, 6 classes). The classical detector is BEV, "
+                   "so boxes use a per-class default height on an estimated ground plane (fine at AP@0.1).")
+        ex1, ex2 = st.columns([2, 1])
+        exp_fmt = ex1.radio("Format", ["OpenLABEL (.json)", "KITTI (.txt)"], horizontal=True,
+                            help="OpenLABEL carries the confidence score (AP needs it). KITTI is the simpler "
+                                 "text form (class x y z l w h yaw score).")
+        gz = ex2.number_input("Ground Z (m)", -20.0, 5.0, -7.5, 0.5,
+                              help="Road-plane height in the sensor frame; boxes sit on it.")
+        if st.button("📤 Export predictions", key="export_devkit"):
+            import detection_io as dio
+            gt_files = sorted(glob.glob(os.path.join(gt_dir, "*.json"))) if os.path.isdir(gt_dir) else []
+            gt_by_key = {_frame_key(f): os.path.splitext(os.path.basename(f))[0] for f in gt_files}
+            names = [gt_by_key.get(_frame_key(p), os.path.splitext(os.path.basename(p))[0])
+                     for p in results["pcd_files"]]
+            out = os.path.join(_ds.outputs_dir, "predictions", f"{_sensor}_{_src}")
+            is_ol = exp_fmt.startswith("OpenLABEL")
+            (dio.export_openlabel if is_ol else dio.export_kitti)(
+                results["det_frames"], names, out, ground_z=float(gz))
+            st.success(f"Exported {len(names)} prediction files → `{out}`"
+                       + ("" if gt_files else "  ⚠️ GT folder not found — files named from the PCDs instead."))
+            st.markdown("Then run the dev-kit benchmark:")
+            st.code(
+                "python tum-traffic-dataset-dev-kit/src/eval/evaluation.py \\\n"
+                f"  --folder_path_ground_truth {gt_dir} \\\n"
+                f"  --folder_path_predictions {out} \\\n"
+                f"  --object_min_points 5 --prediction_format {'openlabel' if is_ol else 'kitti'} \\\n"
+                "  --use_superclasses --use_ouster_lidar_only",
+                language="bash")
+            st.caption("`--object_min_points 5` matches the published protocol. If the dev-kit doesn't read "
+                       "the confidence from the OpenLABEL `score` attribute, share its prediction-loader and "
+                       "I'll match the exact schema.")
+
     # Cross-check: the in-memory detection must be for the sensor/source being scored,
     # otherwise we'd match one sensor's frames against another's GT (the cryptic
     # "no frames aligned" error). Surface it clearly instead.
