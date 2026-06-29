@@ -158,6 +158,45 @@ def _render_single_run():
                        "the confidence from the OpenLABEL `score` attribute, share its prediction-loader and "
                        "I'll match the exact schema.")
 
+    # ---- in-app dev-kit AP benchmark (no external repo / pytorch3d needed) ----
+    with st.expander("🎯 Benchmark — dev-kit AP@0.1 (in-app)"):
+        st.caption("Runs the TUM Traffic dev-kit's per-class **AP@0.1** evaluation **inside the app** — no "
+                   "separate repo, numba-GPU or pytorch3d. Point it at any predictions folder (your exported "
+                   "detections now, or a learned model's OpenLABEL output later).")
+        bgt = st.text_input("Ground-truth folder", value=gt_dir, key="bench_gt")
+        bpred = st.text_input("Predictions folder",
+                              value=os.path.join(_ds.outputs_dir, "predictions", f"{_sensor}_{_src}"),
+                              key="bench_pred")
+        bc1, bc2 = st.columns(2)
+        bmin = bc1.number_input("object_min_points (GT)", 0, 50, 5, key="bench_minpts")
+        bsuper = bc2.checkbox("Superclasses (VEHICLE / PED / BICYCLE)", value=True, key="bench_super")
+        if st.button("🎯 Run AP benchmark", key="run_bench", type="primary"):
+            if not os.path.isdir(bgt) or not os.path.isdir(bpred):
+                st.error("Ground-truth or predictions folder not found.")
+            else:
+                import devkit_eval as de
+                with st.spinner("Scoring predictions (3D IoU, AP@0.1)…"):
+                    try:
+                        rows, total = de.run_benchmark(bgt, bpred, object_min_points=int(bmin),
+                                                       use_superclass=bool(bsuper))
+                        df = pd.DataFrame(rows + [total])
+                        df["pred/gt"] = df["occ_pred"].astype(str) + "/" + df["occ_gt"].astype(str)
+                        df = df[["class", "pred/gt", "precision", "recall", "ap"]].rename(
+                            columns={"class": "Class", "precision": "Precision",
+                                     "recall": "Recall", "ap": "AP@0.1"})
+                        st.dataframe(df.style.format({"Precision": "{:.2f}", "Recall": "{:.2f}",
+                                                      "AP@0.1": "{:.2f}"}),
+                                     use_container_width=True, hide_index=True)
+                        st.success(f"Total AP@0.1: **{total['ap']:.2f}**  (reference — published InfraDet3D "
+                                   "PointPillars on the test set: ~**68.5** for 6 classes).")
+                    except Exception as e:
+                        st.error(f"Benchmark failed: {type(e).__name__}: {e}")
+        st.caption("In-app port of the dev-kit's AP machinery (copied) with a shapely 3D-IoU and boxes "
+                   "flattened to the ground plane (the dev-kit projects boxes to the s110_base ground). "
+                   "Close to — not bit-identical to — the official script. Your classical detector scores "
+                   "low here because 3D-IoU AP is far stricter than the 2 m centre-distance gate above — "
+                   "which is exactly the gap a learned detector closes.")
+
     # Cross-check: the in-memory detection must be for the sensor/source being scored,
     # otherwise we'd match one sensor's frames against another's GT (the cryptic
     # "no frames aligned" error). Surface it clearly instead.
