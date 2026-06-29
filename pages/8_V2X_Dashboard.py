@@ -21,8 +21,9 @@ if not (event and armed):
     st.page_link("pages/6_WWD_Simulator.py", label="→ Go to the WWD Simulator", icon="🚨")
     st.stop()
 
-st.caption(f"Live broadcast for **{event.get('site','the intersection')}** — generated in-app from the "
-           "detector's exact georeferenced output (no external dashboard asset).")
+st.caption(f"Live broadcast for **{event.get('site','the intersection')}** — the map **plays on its own**: "
+           "the wrong-way driver drives its real path while nearby C-V2X vehicles light up with the "
+           "WRONG-WAY warning as it enters their range. Generated in-app (no external dashboard asset).")
 components.html(v2x.build_dashboard_html(event), height=1000, scrolling=True)
 
 c1, c2 = st.columns([1, 4])

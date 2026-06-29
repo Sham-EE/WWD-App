@@ -123,6 +123,45 @@ def build_v2x_intersection(sim_track, to_latlon, site_name, ident="tumtraf-s110"
     }
 
 
+def _lane_points(poly, n=2, frac=0.55):
+    """Sample `n` points along a lane polygon's long (principal) axis — robust to the
+    polygon's orientation (PCA), used to place synthetic vehicles inside the lane."""
+    xy = np.asarray(poly.exterior.coords)[:-1]
+    c = xy.mean(axis=0)
+    d = xy - c
+    _, V = np.linalg.eigh(d.T @ d)
+    axis = V[:, -1]                       # principal (long) axis
+    proj = d @ axis
+    span = float(proj.max() - proj.min())
+    ts = np.linspace(-0.5, 0.5, max(1, n)) * span * frac
+    return [(float(c[0] + t * axis[0]), float(c[1] + t * axis[1])) for t in ts]
+
+
+def build_v2x_vehicles(lanes, wrong_lane_id, to_latlon, per_lane=2):
+    """Synthetic connected (C-V2X) vehicles positioned on the LEGAL lanes + one law-
+    enforcement unit near the intersection — the receivers that visibly get the alert
+    on the dashboard map when the wrong-way driver enters their range. Returns a list
+    of {lat, lon, kind, label} (kind: 'cv2x' | 'police')."""
+    veh = []
+    cxs, cys = [], []
+    for ln in lanes:
+        c = ln["polygon"].centroid
+        cxs.append(c.x); cys.append(c.y)
+        if ln["lane_id"] == wrong_lane_id:
+            continue
+        for x, y in _lane_points(ln["polygon"], n=per_lane):
+            ll = to_latlon(x, y)
+            if ll is not None:
+                veh.append({"lat": round(float(ll[0]), 7), "lon": round(float(ll[1]), 7),
+                            "kind": "cv2x", "label": f"C-V2X vehicle · {ln['lane_id']} lane"})
+    if cxs:
+        ll = to_latlon(float(np.mean(cxs)), float(np.mean(cys)))
+        if ll is not None:
+            veh.append({"lat": round(float(ll[0]), 7), "lon": round(float(ll[1]), 7),
+                        "kind": "police", "label": "Law enforcement (CAD dispatch)"})
+    return veh
+
+
 def cardinal_color(heading_rad) -> str:
     """Cardinal travel-direction colour — sourced from the Detection view
     (visualization.CARDINAL_BINS) so the two pages always use the same palette."""

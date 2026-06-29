@@ -8,7 +8,8 @@ import plotly.graph_objects as go
 from wwd_detection import load_lane_config, lanes_calibrated, detect_wrong_way
 from wwd_simulator import (wrong_way_options, make_wrong_way_track,
                            build_sim_det_frames, simulator_figure, SIM_TID,
-                           math_heading_to_compass, build_v2x_intersection)
+                           math_heading_to_compass, build_v2x_intersection,
+                           build_v2x_vehicles)
 import viewer_ui as vu
 import geo_reference as geo
 import dataset_manager as dm
@@ -318,8 +319,14 @@ else:
                        "georeferenced output and opens it in the 📡 V2X Dashboard tab. Play to the "
                        "confirmation step to enable."):
         import uuid as _uuid
-        _intersection = build_v2x_intersection(
-            sim_track, lambda x, y: geo.sensor_xy_to_latlon(x, y, "south"), geo.site_name())
+        _to_ll = lambda x, y: geo.sensor_xy_to_latlon(x, y, "south")
+        _intersection = build_v2x_intersection(sim_track, _to_ll, geo.site_name())
+        _vehicles = build_v2x_vehicles(lanes, opt["lane_id"], _to_ll)
+        _path_ll = []
+        for _d2 in sim_track:
+            _l = _to_ll(float(_d2["cx"]), float(_d2["cy"]))
+            if _l is not None:
+                _path_ll.append([round(_l[0], 7), round(_l[1], 7)])
         _sensors_ll = []
         for _s in reg.lidar_markers(ds, "south"):
             _p = _s.get("pos", [0, 0, 0])
@@ -332,6 +339,7 @@ else:
             "lat": round(float(_loc[0]), 6), "lon": round(float(_loc[1]), 6),
             "lat_exact": _latlon is not None, "site": geo.site_name(),
             "intersection": _intersection, "sensors": _sensors_ll,
+            "path": _path_ll, "fps": float(fps), "vehicles": _vehicles, "alert_radius_m": 90.0,
             "event_uuid": str(_uuid.uuid4()),
             "confirm": {"frames": int(conf_frames),
                         "seconds": round(_confirm_step / float(fps), 1) if _confirm_step is not None else None,

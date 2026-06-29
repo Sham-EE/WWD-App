@@ -79,6 +79,73 @@ def _esc(v):
     return _html.escape(str(v))
 
 
+# Self-playing Leaflet animation: the driver moves along `path` in real time and each
+# synthetic C-V2X vehicle lights up (turns red + WRONG-WAY popup) the moment the driver
+# enters its range — so the tab plays live on its own, no Streamlit reruns. Single
+# braces here (injected into the f-string as an opaque value, not f-string-parsed).
+_ANIM_JS = r"""
+var D = __GEO__;
+var map = L.map('map',{zoomControl:true}).setView(D.center, 18);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  {maxZoom:21,maxNativeZoom:19,attribution:'Imagery © Esri'}).addTo(map);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+  {maxZoom:21,maxNativeZoom:19,opacity:.9}).addTo(map);
+if (D.region && D.region.nwLat){
+  L.rectangle([[D.region.nwLat,D.region.nwLon],[D.region.seLat,D.region.seLon]],
+    {color:'#3b82f6',weight:1,dashArray:'5,5',fill:false}).addTo(map).bindTooltip('Geofence');
+}
+if (D.laneNodes && D.laneNodes.length){
+  L.polyline(D.laneNodes, {color:'#f59e0b',weight:5,opacity:.9}).addTo(map);
+}
+(D.sensors||[]).forEach(function(s){
+  L.circleMarker([s[0],s[1]],{radius:5,color:'#22d3ee',weight:2,fillOpacity:.6}).addTo(map).bindTooltip('LiDAR');
+});
+// synthetic C-V2X receivers
+var vehMarks = (D.vehicles||[]).map(function(v){
+  var col = v.kind==='police' ? '#a78bfa' : '#3b82f6';
+  var m = L.circleMarker([v.lat,v.lon],{radius:6,color:col,weight:2,fillColor:col,fillOpacity:.85})
+            .addTo(map).bindTooltip(v.label);
+  return {v:v, m:m, col:col, alerted:false};
+});
+var counter = document.getElementById('alertCount'), cnt = 0;
+var R = D.alertRadius||90, fps = D.fps||10, SUBS = 4;
+var path = (D.path && D.path.length>1) ? D.path : [D.driver, D.driver];
+var trail = L.polyline([], {color:'#ff3b3b',weight:2,opacity:.55,dashArray:'4,5'}).addTo(map);
+var arrow = L.polyline([path[0],path[0]], {color:'#ff3b3b',weight:4}).addTo(map);
+var driver = L.circleMarker(path[0], {radius:8,color:'#fff',weight:2,fillColor:'#ff3b3b',fillOpacity:.95})
+               .addTo(map).bindTooltip('Wrong-way driver');
+map.fitBounds(L.polyline(path).getBounds().pad(0.35));
+function hav(a,b){ var Re=6371000, r=Math.PI/180;
+  var dLat=(b[0]-a[0])*r, dLon=(b[1]-a[1])*r;
+  var s=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dLon/2)*Math.sin(dLon/2);
+  return 2*Re*Math.asin(Math.min(1,Math.sqrt(s))); }
+var seg=0, sub=0;
+function reset(){ seg=0; sub=0; cnt=0; trail.setLatLngs([]); if(counter) counter.textContent=0;
+  vehMarks.forEach(function(vl){ vl.alerted=false; vl.m.setStyle({color:vl.col,fillColor:vl.col}); vl.m.setRadius(6); vl.m.closePopup(); }); }
+function tick(){
+  var a=path[seg], b=path[Math.min(seg+1,path.length-1)], t=sub/SUBS;
+  var pos=[a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t];
+  driver.setLatLng(pos); trail.addLatLng(pos);
+  var dir=[b[0]-a[0], b[1]-a[1]], nrm=Math.hypot(dir[0],dir[1])||1, L0=0.00035;
+  arrow.setLatLngs([pos, [pos[0]+dir[0]/nrm*L0, pos[1]+dir[1]/nrm*L0]]);
+  vehMarks.forEach(function(vl){
+    if(!vl.alerted && hav(pos,[vl.v.lat,vl.v.lon]) < R){
+      vl.alerted=true; cnt++;
+      vl.m.setStyle({color:'#ff3b3b',fillColor:'#ff3b3b'}); vl.m.setRadius(8);
+      vl.m.bindPopup('⚠️ C-V2X: WRONG WAY AHEAD').openPopup();
+      if(counter) counter.textContent=cnt;
+    }
+  });
+  sub++;
+  if(sub>=SUBS){ sub=0; seg++;
+    if(seg>=path.length-1){ setTimeout(function(){ reset(); tick(); }, 900); return; } }
+  setTimeout(tick, 1000/(fps*SUBS));
+}
+tick();
+function cp(id){ var t=document.getElementById(id).innerText; navigator.clipboard&&navigator.clipboard.writeText(t); }
+"""
+
+
 def build_dashboard_html(event, *, height=980):
     """Full standalone dashboard HTML for `event` (the WWD broadcast payload)."""
     tim, ev_uuid = build_tim(event)
@@ -97,15 +164,23 @@ def build_dashboard_html(event, *, height=980):
     exact = bool(event.get("lat_exact"))
     conf = event.get("confirm") or {}
 
-    # Geometry injected into the Leaflet script (all true lat/lon).
+    vehicles = event.get("vehicles", [])
+    n_veh = len(vehicles)
+    # Geometry injected into the Leaflet script (all true lat/lon). The dashboard
+    # ANIMATES the driver along `path` in real time and lights up `vehicles` as the
+    # wrong-way driver enters their C-V2X range — so the tab plays on its own.
     geo_payload = json.dumps({
         "center": inter.get("center", [lat, lon]),
         "laneNodes": inter.get("laneNodes", []),
         "driver": [lat, lon],
-        "heading": float(heading or 0),
+        "path": event.get("path") or [[lat, lon]],
+        "fps": float(event.get("fps", 10)),
+        "alertRadius": float(event.get("alert_radius_m", 90)),
+        "vehicles": vehicles,
         "region": inter.get("applicableRegion") or {},
         "sensors": event.get("sensors", []),
     })
+    anim = _ANIM_JS.replace("__GEO__", geo_payload)
 
     pipeline_rows = "\n".join(
         f'<div class="step"><span class="dot"></span><div><b>{_esc(t)}</b>'
@@ -174,37 +249,9 @@ button:hover{{background:#27344a}}
     <pre id="hex" style="display:none">{_esc(hexblob)}</pre>
   </div>
   <div class="card"><h2>Detection → broadcast pipeline</h2>{pipeline_rows}</div>
-  <div class="card"><h2>Receivers notified</h2>{receiver_rows}</div>
+  <div class="card"><h2>Receivers notified</h2>
+    <div class="kv"><span>C-V2X vehicles alerted (live)</span><b><span id="alertCount">0</span> / {n_veh}</b></div>
+    {receiver_rows}</div>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
-var D = {geo_payload};
-var map = L.map('map',{{zoomControl:true}}).setView(D.center, 18);
-L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',
-  {{maxZoom:21,maxNativeZoom:19,attribution:'Imagery © Esri'}}).addTo(map);
-L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{{z}}/{{y}}/{{x}}',
-  {{maxZoom:21,maxNativeZoom:19,opacity:.9}}).addTo(map);
-// applicable region
-if (D.region && D.region.nwLat){{
-  L.rectangle([[D.region.nwLat,D.region.nwLon],[D.region.seLat,D.region.seLon]],
-    {{color:'#3b82f6',weight:1,dashArray:'5,5',fill:false}}).addTo(map);
-}}
-// wrong-way lane
-if (D.laneNodes && D.laneNodes.length){{
-  L.polyline(D.laneNodes, {{color:'#f59e0b',weight:5,opacity:.9}}).addTo(map);
-}}
-// LiDAR sensors
-(D.sensors||[]).forEach(function(s){{
-  L.circleMarker([s[0],s[1]],{{radius:5,color:'#22d3ee',weight:2,fillOpacity:.6}})
-   .addTo(map).bindTooltip('LiDAR');
-}});
-// driver + heading arrow (bearing 0 = north, clockwise)
-var dv = D.driver, br = (D.heading||0)*Math.PI/180.0, len=0.00035;
-var dlat = Math.cos(br)*len, dlon = Math.sin(br)*len/Math.cos(dv[0]*Math.PI/180);
-var tip = [dv[0]+dlat, dv[1]+dlon];
-L.polyline([dv,tip],{{color:'#ff3b3b',weight:4}}).addTo(map);
-L.circleMarker(dv,{{radius:8,color:'#ff3b3b',weight:3,fillColor:'#ff3b3b',fillOpacity:.85}})
- .addTo(map).bindPopup('Wrong-way driver').openPopup();
-map.fitBounds(L.polyline((D.laneNodes&&D.laneNodes.length?D.laneNodes:[dv,tip])).getBounds().pad(0.4));
-function cp(id){{var t=document.getElementById(id).innerText;navigator.clipboard&&navigator.clipboard.writeText(t);}}
-</script></body></html>"""
+<script>{anim}</script></body></html>"""
