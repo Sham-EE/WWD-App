@@ -431,8 +431,8 @@ html,body{height:100%;margin:0;background:#0e1117;font-family:system-ui,sans-ser
 .bar button.sec{background:#30363d}
 .bar #st{font-size:11px;opacity:.6;margin-left:8px}
 .cell{flex:1 1 0;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
-.cell label{font-size:11px;opacity:.65;margin-bottom:2px}
-video{max-width:100%;max-height:calc(100% - 16px);object-fit:contain;background:#000;border-radius:6px}
+.cell label{flex:0 0 auto;font-size:11px;opacity:.65;margin-bottom:2px}
+video{flex:1 1 auto;min-height:0;width:100%;object-fit:contain;background:#000;border-radius:6px}
 </style></head><body><div class="wrap">
 <div class="bar">
   <button onclick="playBoth()">▶︎ Play both</button>
@@ -462,10 +462,10 @@ def _compact_clip(src, role):
     import imageio_ffmpeg
     cache = os.path.join(os.getcwd(), "static")
     os.makedirs(cache, exist_ok=True)
-    dst = os.path.join(cache, f"_sync_{role}_720.mp4")
+    dst = os.path.join(cache, f"_sync_{role}_960.mp4")
     if (not os.path.exists(dst)) or os.path.getmtime(src) > os.path.getmtime(dst):
         ff = imageio_ffmpeg.get_ffmpeg_exe()
-        subprocess.run([ff, "-y", "-i", src, "-vf", "scale=720:-2", "-c:v", "libx264",
+        subprocess.run([ff, "-y", "-i", src, "-vf", "scale=960:-2", "-c:v", "libx264",
                         "-crf", "30", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-an", dst],
                        check=True, capture_output=True)
     return dst
@@ -504,8 +504,9 @@ def render_videos_tab():
 
     synced = False
     if road and lidar and road[1] == "mp4" and lidar[1] == "mp4":
-        h = st.slider("Viewport height (px)", 420, 1200, 720, 20, key="vids_h",
-                      help="Total height for both stacked clips — set it so both fit without scrolling.")
+        h = st.slider("Viewport height (px)", 480, 1600, 900, 20, key="vids_h",
+                      help="Total height for both stacked clips — taller makes both videos bigger. "
+                           "Set it so both still fit your screen without scrolling.")
         try:
             with st.spinner("Preparing the synced players…"):
                 rc, lc = _compact_clip(road[0], "road"), _compact_clip(lidar[0], "lidar")
