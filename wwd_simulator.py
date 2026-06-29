@@ -19,9 +19,11 @@ SIM_TID = 90001  # high id so it never collides with real track ids
 
 V2X_HTML_PATH = os.path.join(os.path.dirname(__file__), "assets", "wwd_v2x_dashboard.html")
 
-# JS injected into the V2X React app: when window.__WWD_EVENT__ is present, fire
-# the app's alert pipeline once on mount with the detected speed/heading. Inserted
-# right after the app's fireAlert useCallback (anchored on its dependency list).
+# JS injected into the V2X React app: when window.__WWD_EVENT__ is present, swap in
+# OUR real intersection (so the Leaflet map shows the actual WWD site + lane, not the
+# dashboard's hardcoded one), then fire the alert pipeline once on mount with the
+# driver's exact lat/lon, true heading and speed. Inserted right after the app's
+# fireAlert useCallback (anchored on its dependency list).
 _V2X_AUTO_FIRE = r"""
   // ===== External LiDAR/WWD trigger (injected by the Streamlit simulator) =====
   const __wwdFireRef = useRef(null);
@@ -30,12 +32,29 @@ _V2X_AUTO_FIRE = r"""
     var ev = window.__WWD_EVENT__;
     if (!ev || window.__WWD_AUTO_FIRED__) return;
     window.__WWD_AUTO_FIRED__ = true;
+    // Make the map accurate to OUR WWD: inject the real intersection + select it.
+    if (ev.intersection && ev.intersection.laneNodes && ev.intersection.laneNodes.length) {
+      var inj = ev.intersection;
+      setIntersections(function (prev) {
+        var others = (prev || []).filter(function (i) { return i.id !== inj.id; });
+        return [inj].concat(others);
+      });
+      setCurrentId(inj.id);
+    }
     if (ev.speed != null) setSpeed(Number(ev.speed));
+    // Let React re-render the new intersection + map before firing the alert.
     setTimeout(function () {
-      var nodes = current.laneNodes;
-      var mid = (nodes && nodes.length) ? nodes[Math.floor(nodes.length / 2)] : current.center;
-      if (__wwdFireRef.current) __wwdFireRef.current(mid, ev.heading != null ? Number(ev.heading) : 270);
-    }, 700);
+      var pt;
+      if (ev.lat != null && ev.lon != null) {
+        pt = { lat: Number(ev.lat), lon: Number(ev.lon) };
+      } else {
+        var inter = ev.intersection || current;
+        var nodes = inter.laneNodes;
+        var n = (nodes && nodes.length) ? nodes[Math.floor(nodes.length / 2)] : null;
+        pt = n ? (Array.isArray(n) ? { lat: n[0], lon: n[1] } : n) : current.center;
+      }
+      if (__wwdFireRef.current) __wwdFireRef.current(pt, ev.heading != null ? Number(ev.heading) : 270);
+    }, 1100);
   }, []);
 """
 
@@ -63,6 +82,45 @@ def v2x_dashboard_html(event):
     if _FIREALERT_ANCHOR in html:
         html = html.replace(_FIREALERT_ANCHOR, _FIREALERT_ANCHOR + _V2X_AUTO_FIRE, 1)
     return html
+
+
+def build_v2x_intersection(sim_track, to_latlon, site_name, ident="tumtraf-s110",
+                           max_nodes=10, elevation=482):
+    """Build the V2X dashboard's intersection model (its exact schema) for OUR real
+    WWD, so the broadcast map shows the actual site + lane instead of the dashboard's
+    hardcoded one.
+
+    `sim_track` is the synthetic driver's path (wrong-way order); `to_latlon(x, y)`
+    georeferences a sensor-frame point to (lat, lon). laneNodes are emitted in the
+    LEGAL direction (the dashboard's convention) — i.e. the driver's path reversed —
+    downsampled to <=max_nodes. Returns None if the track can't be georeferenced.
+    """
+    if not sim_track:
+        return None
+    legal = list(reversed(sim_track))
+    idx = sorted(set(np.linspace(0, len(legal) - 1, min(max_nodes, len(legal))).astype(int)))
+    nodes = []
+    for i in idx:
+        ll = to_latlon(float(legal[i]["cx"]), float(legal[i]["cy"]))
+        if ll is None:
+            return None
+        nodes.append([round(float(ll[0]), 7), round(float(ll[1]), 7)])
+    if len(nodes) < 2:
+        return None
+    lats = [p[0] for p in nodes]; lons = [p[1] for p in nodes]
+    return {
+        "id": ident,
+        "name": site_name,
+        "protected": False,
+        "createdAt": "2024-01-01T00:00:00.000Z",
+        "source": "TUMTraf A9 · s110 LiDAR georeference",
+        "roadName": site_name,
+        "center": nodes[len(nodes) // 2],
+        "elevation": int(elevation),
+        "applicableRegion": {"nwLat": max(lats), "nwLon": min(lons),
+                             "seLat": min(lats), "seLon": max(lons)},
+        "laneNodes": nodes,
+    }
 
 
 def cardinal_color(heading_rad) -> str:

@@ -9,7 +9,8 @@ import plotly.graph_objects as go
 from wwd_detection import load_lane_config, lanes_calibrated, detect_wrong_way
 from wwd_simulator import (wrong_way_options, make_wrong_way_track,
                            build_sim_det_frames, simulator_figure, SIM_TID,
-                           v2x_dashboard_html, math_heading_to_compass)
+                           v2x_dashboard_html, math_heading_to_compass,
+                           build_v2x_intersection)
 import viewer_ui as vu
 import geo_reference as geo
 import dataset_manager as dm
@@ -290,50 +291,6 @@ with right:
                    f"{int(conf_frames)} frames. Lower the confirmation frames, increase speed/length, "
                    "or check lane calibration.")
 
-# ---------------- Render a smooth animation (MP4 / GIF) ----------------
-if is_3d and _n_frames:
-    st.divider()
-    with st.expander("🎬 Render a smooth animation (MP4 / GIF)"):
-        st.caption("Live 3D playback is choppy because Streamlit re-renders every frame. This "
-                   "**pre-renders the run to a video** that plays back perfectly smooth. The 3D "
-                   "scene takes a few seconds per frame to render, so keep the frame count modest.")
-        rc1, rc2, rc3, rc4 = st.columns(4)
-        _vframes = rc1.slider("Frames", 6, min(n_steps, 60), min(n_steps, 24),
-                              help="Evenly sampled across the whole run.")
-        _vpts = rc2.toggle("Include points", value=False,
-                           help="Render the LiDAR points too (slower; larger file).")
-        _vmax = rc3.select_slider("Points", [4000, 8000, 15000], value=8000, disabled=not _vpts)
-        _vfps = rc4.slider("Playback FPS", 4, 24, 10)
-        if st.button("🎬 Render animation", type="primary"):
-            import imageio.v2 as _imageio
-            import io as _io
-            idxs = sorted(set(np.linspace(0, n_steps - 1, int(_vframes)).astype(int).tolist()))
-            bar = st.progress(0.0, text="Rendering frames…")
-            _frames = []
-            try:
-                for _k, _si in enumerate(idxs):
-                    _f, _, _, _ = _scene_fig(int(_si), _vpts, _vmax, height=560)
-                    _png = _f.to_image(format="png", width=896, height=560)
-                    _frames.append(_imageio.imread(_io.BytesIO(_png)))
-                    bar.progress((_k + 1) / len(idxs), text=f"Rendering {_k + 1}/{len(idxs)} frames…")
-                bar.progress(1.0, text="Encoding…")
-                _path, _kind = rv.frames_to_video(_frames, ds.rendered_dir, "wwd_sim", fps=int(_vfps))
-                st.session_state.wwd_vid = (_path, _kind)
-            except Exception as e:
-                st.error(f"Render failed ({type(e).__name__}: {e}). Try fewer frames / points off.")
-            bar.empty()
-        _vid = st.session_state.get("wwd_vid")
-        if _vid and os.path.exists(_vid[0]):
-            _path, _kind = _vid
-            if _kind == "mp4":
-                st.video(_path)
-            else:
-                st.image(_path)
-            with open(_path, "rb") as _fh:
-                st.download_button(f"⬇️ Download {_kind.upper()}", _fh,
-                                   file_name=os.path.basename(_path),
-                                   mime="video/mp4" if _kind == "mp4" else "image/gif")
-
 # ---------------- V2X broadcast (external dashboard) ----------------
 st.divider()
 st.subheader("📡 V2X broadcast — WWD V2X Dashboard")
@@ -362,11 +319,14 @@ else:
                   help="Fires your dashboard's full J2735 TIM / C-V2X / nav-push pipeline with the "
                        "detected speed, true compass heading & geo-location. Play to the detection "
                        "step to enable."):
+        _intersection = build_v2x_intersection(
+            sim_track, lambda x, y: geo.sensor_xy_to_latlon(x, y, "south"), geo.site_name())
         st.session_state.v2x_event = {
             "speed": round(float(speed), 1), "heading": round(float(_true_bearing)),
             "lane": opt["lane_id"], "direction": opt["wrong_name"],
             "lat": round(float(_loc[0]), 6), "lon": round(float(_loc[1]), 6),
             "lat_exact": _latlon is not None, "site": geo.site_name(),
+            "intersection": _intersection,
         }
         st.session_state.v2x_armed = True
         st.rerun()
