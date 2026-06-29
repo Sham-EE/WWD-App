@@ -21,5 +21,4 @@ datasets/*/outputs/
 # --- HD map (external dev-kit data, ~48 MB): each dataset's lane_samples.json lives in
 #     <dataset>/map/ (from the dev-kit's src/map/map.zip) and enables EXACT
 #     georeferencing. geo_reference.py degrades gracefully without it. Track code, not data. ---
-datasets/*/map/
 
