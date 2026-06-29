@@ -110,6 +110,9 @@ var vehMarks = (D.vehicles||[]).map(function(v){
 var counter = document.getElementById('alertCount'), cnt = 0;
 var R = D.alertRadius||90, fps = D.fps||10, SUBS = 4;
 var path = (D.path && D.path.length>1) ? D.path : [D.driver, D.driver];
+var fence = L.circle(path[0], {radius:R, color:'#ff8c00', weight:1.5, dashArray:'6,6',
+              fillColor:'#ff8c00', fillOpacity:0.08}).addTo(map).bindTooltip('C-V2X broadcast range');
+var steps = Array.prototype.slice.call(document.querySelectorAll('.step'));
 var trail = L.polyline([], {color:'#ff3b3b',weight:2,opacity:.55,dashArray:'4,5'}).addTo(map);
 var arrow = L.polyline([path[0],path[0]], {color:'#ff3b3b',weight:4}).addTo(map);
 var driver = L.circleMarker(path[0], {radius:8,color:'#fff',weight:2,fillColor:'#ff3b3b',fillOpacity:.95})
@@ -121,13 +124,22 @@ function hav(a,b){ var Re=6371000, r=Math.PI/180;
   return 2*Re*Math.asin(Math.min(1,Math.sqrt(s))); }
 var seg=0, sub=0;
 function reset(){ seg=0; sub=0; cnt=0; trail.setLatLngs([]); if(counter) counter.textContent=0;
+  fence.setLatLng(path[0]);
+  steps.forEach(function(s){ s.classList.add('pending'); });
   vehMarks.forEach(function(vl){ vl.alerted=false; vl.m.setStyle({color:vl.col,fillColor:vl.col}); vl.m.setRadius(6); vl.m.closePopup(); }); }
 function tick(){
   var a=path[seg], b=path[Math.min(seg+1,path.length-1)], t=sub/SUBS;
   var pos=[a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t];
-  driver.setLatLng(pos); trail.addLatLng(pos);
+  driver.setLatLng(pos); trail.addLatLng(pos); fence.setLatLng(pos);
   var dir=[b[0]-a[0], b[1]-a[1]], nrm=Math.hypot(dir[0],dir[1])||1, L0=0.00035;
   arrow.setLatLngs([pos, [pos[0]+dir[0]/nrm*L0, pos[1]+dir[1]/nrm*L0]]);
+  // pipeline stages fill in across the first ~45% of the run
+  var prog=(seg+sub/SUBS)/Math.max(1,path.length-1);
+  for(var k=0;k<steps.length;k++){
+    if(steps[k].classList.contains('pending') && prog >= (k+1)/steps.length*0.45){
+      steps[k].classList.remove('pending');
+    }
+  }
   vehMarks.forEach(function(vl){
     if(!vl.alerted && hav(pos,[vl.v.lat,vl.v.lon]) < R){
       vl.alerted=true; cnt++;
@@ -183,7 +195,7 @@ def build_dashboard_html(event, *, height=980):
     anim = _ANIM_JS.replace("__GEO__", geo_payload)
 
     pipeline_rows = "\n".join(
-        f'<div class="step"><span class="dot"></span><div><b>{_esc(t)}</b>'
+        f'<div class="step pending"><span class="dot"></span><div><b>{_esc(t)}</b>'
         f'<small>{_esc(s)}</small></div><span class="ok">✓</span></div>'
         for t, s in _PIPELINE)
     receiver_rows = "\n".join(
@@ -217,8 +229,12 @@ def build_dashboard_html(event, *, height=980):
 .step,.rx{{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)}}
 .step:last-child,.rx:last-child{{border-bottom:0}}
 .step b,.rx b{{display:block;font-size:13px}} .step small,.rx small{{color:var(--mut);font-size:11px}}
-.step .dot{{width:9px;height:9px;border-radius:50%;background:var(--grn);box-shadow:0 0 8px var(--grn)}}
+.step .dot{{width:9px;height:9px;border-radius:50%;background:var(--grn);box-shadow:0 0 8px var(--grn);transition:.3s}}
 .step .ok,.rx .ok{{margin-left:auto;color:var(--grn);font-size:12px;font-weight:700}}
+.step{{transition:opacity .3s}}
+.step.pending{{opacity:.4}}
+.step.pending .dot{{background:#3a4658;box-shadow:none}}
+.step.pending .ok{{visibility:hidden}}
 .rxic{{font-size:18px}}
 pre{{background:#0a0e16;border:1px solid var(--line);border-radius:8px;padding:10px;max-height:230px;overflow:auto;font-size:11.5px;color:#bfe3c8;margin:0}}
 .row{{display:flex;gap:8px;margin-top:8px}}
