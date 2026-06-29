@@ -69,9 +69,29 @@ def _dashed_xyz(coords, z, dash=2.5, gap=1.8, step=0.4):
     return xs, ys, zs
 
 
+def orbit_camera(azimuth=45.0, elevation=35.0, zoom=1.0, pan_x=0.0, pan_y=0.0, roll=0.0,
+                 base_radius=1.5):
+    """A Plotly 3D `camera` dict from intuitive controls. Azimuth/elevation spin the
+    eye around the scene; `zoom` moves it in (higher = closer, glitch-free true 3D
+    zoom); pan_x/pan_y shift the look-at centre (normalized scene units); `roll`
+    tilts the horizon by rotating the up-vector about the view axis."""
+    import math
+    az, el, rl = math.radians(azimuth), math.radians(elevation), math.radians(roll)
+    r = base_radius / max(float(zoom), 0.05)
+    dx, dy, dz = math.cos(el) * math.cos(az), math.cos(el) * math.sin(az), math.sin(el)
+    center = dict(x=float(pan_x), y=float(pan_y), z=0.0)
+    eye = dict(x=center["x"] + r * dx, y=center["y"] + r * dy, z=center["z"] + r * dz)
+    # Roll: Rodrigues-rotate world-up (0,0,1) about the unit view direction.
+    d = np.array([dx, dy, dz], dtype=float); d /= (np.linalg.norm(d) or 1.0)
+    u0 = np.array([0.0, 0.0, 1.0])
+    u = u0 * math.cos(rl) + np.cross(d, u0) * math.sin(rl) + d * float(d @ u0) * (1 - math.cos(rl))
+    return dict(eye=eye, center=center, up=dict(x=float(u[0]), y=float(u[1]), z=float(u[2])),
+                projection=dict(type="perspective"))
+
+
 def build_figure(points, objs, color_mode="by_category", view="oblique",
                  height=560, line_width=4, show_labels=True, road_poly=None, bounds=None,
-                 sensors=None, hdmap_lanes=None):
+                 sensors=None, hdmap_lanes=None, camera=None, uirevision="lidar_oblique"):
     """Plotly 3D figure: grey points + category-coloured GT boxes, in an oblique
     z-up perspective (the same horizontal angle as the Background Filtering viewer).
     If `road_poly` is given, its boundary is drawn as a green dashed outline at
@@ -127,10 +147,61 @@ def build_figure(points, objs, color_mode="by_category", view="oblique",
     yr = dict(visible=False, range=[bounds[2], bounds[3]]) if bounds else dict(visible=False)
     fig.update_layout(
         height=height, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor=_BG,
-        scene=dict(aspectmode="data", bgcolor=_BG, camera=_OBLIQUE,
+        scene=dict(aspectmode="data", bgcolor=_BG, camera=(camera or _OBLIQUE),
                    xaxis=xr, yaxis=yr, zaxis=dict(visible=False)),
-        uirevision="lidar_oblique")   # keep the user's rotation/zoom across frame changes
+        uirevision=uirevision)   # keep the user's rotation/zoom across frame changes
     return fig
+
+
+# --------------------------------------------------------------------------- #
+#  Plotly + kaleido video renderer — true 3D perspective & clipping, so it
+#  matches the interactive preview EXACTLY and zooming never streaks off-screen
+#  geometry across the frame (the matplotlib failure mode). Slower (kaleido spins
+#  a headless browser per frame, ~seconds/frame) but accurate.
+# --------------------------------------------------------------------------- #
+def render_lidar_video_plotly(pcd_files, label_files, out_dir, basename, *, camera,
+                              fps=10, width=960, height=560, max_points=12000,
+                              color_mode="by_category", road_poly=None, hdmap_lanes=None,
+                              sensors=None, bounds=None, show_labels=True, max_frames=0,
+                              progress=None):
+    """Render the LiDAR scan + GT 3D boxes to a video with Plotly/kaleido at the given
+    `camera` (use `orbit_camera(...)`). Each frame is the SAME `build_figure` the live
+    preview draws, so the clip is pixel-faithful to what you framed. MP4 (ffmpeg) or
+    GIF fallback → `out_dir`. Returns (path, kind)."""
+    import os
+    import io
+    import imageio.v2 as imageio
+
+    os.makedirs(out_dir, exist_ok=True)
+    n = len(pcd_files)
+    if max_frames and max_frames > 0:
+        n = min(n, max_frames)
+    if n == 0:
+        raise ValueError("no frames to render")
+
+    mp4 = os.path.join(out_dir, basename + ".mp4")
+    try:
+        writer = imageio.get_writer(mp4, fps=fps, codec="libx264", macro_block_size=16, quality=7)
+        out, kind = mp4, "mp4"
+    except Exception:
+        out = os.path.join(out_dir, basename + ".gif")
+        writer = imageio.get_writer(out, mode="I", duration=1.0 / max(1, fps), loop=0)
+        kind = "gif"
+
+    try:
+        for i in range(n):
+            pts = load_points(pcd_files[i], max_points)
+            objs = lp.load_objects(label_files[i]) if i < len(label_files) else []
+            fig = build_figure(pts, objs, color_mode, height=height, road_poly=road_poly,
+                               bounds=bounds, sensors=sensors, hdmap_lanes=hdmap_lanes,
+                               camera=camera, show_labels=show_labels)
+            png = fig.to_image(format="png", width=width, height=height, engine="kaleido")
+            writer.append_data(np.asarray(imageio.imread(io.BytesIO(png)))[:, :, :3])
+            if progress:
+                progress(i + 1, n)
+    finally:
+        writer.close()
+    return out, kind
 
 
 # --------------------------------------------------------------------------- #

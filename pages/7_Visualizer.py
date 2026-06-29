@@ -336,69 +336,55 @@ def render_lidar_tab():
 
     _viewer3d()
 
-    # ---- 3D LiDAR video — rendered at the exact angle you preview below ----
+    # ---- 3D LiDAR video — Plotly/kaleido, WYSIWYG with the interactive preview ----
     st.divider()
     st.subheader("🎬 3D LiDAR video")
-    st.caption("Dial in the angle, check the **still preview** (rendered with the *same* engine as the "
-               "video — what you see is what you get), then render every frame. Found the look you want? "
-               "Note the elev/azim/roll/perspective and hardcode the defaults below.")
-    a1, a2, a3, a4 = st.columns(4)
-    v_elev = a1.slider("Elevation°", -10, 89, 12, key="vid3d_elev",
-                       help="Camera tilt above the ground plane. Low ≈ the south cameras' eye-level look.")
-    v_azim = a2.slider("Azimuth°", -180, 180, -90, key="vid3d_azim",
-                       help="Compass spin around the scene. -90 looks down the +x axis (forward).")
-    v_roll = a3.slider("Roll°", -45, 45, 0, key="vid3d_roll", help="Tilt the horizon.")
-    v_focal = a4.slider("Perspective", 0.1, 1.0, 0.3, 0.05, key="vid3d_focal",
-                        help="Lower = wider, more dramatic lens; higher = flatter / more orthographic.")
+    st.caption("This preview uses the **same Plotly engine** as the render, so what you frame is exactly "
+               "what you get — and zooming in won't streak the HD-map lines across the screen. **Orbit it "
+               "with the mouse** to explore, then lock the camera with the sliders (the render uses the "
+               "sliders). Found the look? Note the values and I'll hardcode them.")
+    a1, a2, a3 = st.columns(3)
+    c_az = a1.slider("Azimuth°", -180, 180, 45, key="vid3d_az",
+                     help="Spin the camera around the scene (compass heading).")
+    c_el = a2.slider("Elevation°", 0, 89, 30, key="vid3d_el",
+                     help="Camera height above the ground plane. Low ≈ eye-level / camera-like.")
+    c_roll = a3.slider("Roll°", -45, 45, 0, key="vid3d_roll", help="Tilt the horizon.")
+    z1, z2, z3 = st.columns(3)
+    c_zoom = z1.slider("Zoom", 0.4, 4.0, 1.0, 0.05, key="vid3d_zoom",
+                       help="Higher = closer (moves the camera in). True 3D zoom — no distortion or glitch.")
+    c_px = z2.slider("Pan X", -1.0, 1.0, 0.0, 0.05, key="vid3d_px",
+                     help="Shift the look-at point left/right (normalized scene units).")
+    c_py = z3.slider("Pan Y", -1.0, 1.0, 0.0, 0.05, key="vid3d_py",
+                     help="Shift the look-at point forward/back (normalized scene units).")
     s1, s2, s3 = st.columns(3)
     v_fps = s1.slider("FPS", 1, 30, 10, key="vid3d_fps")
-    v_pts = s2.select_slider("Points", [3000, 6000, 12000, 20000], value=6000, key="vid3d_pts",
-                             help="Points per frame in the render (the live view above uses its own setting).")
+    v_pts = s2.select_slider("Points", [3000, 6000, 12000, 20000], value=6000, key="vid3d_pts")
     v_max = s3.number_input("Max frames (0 = all)", 0, n, 0, key="vid3d_max")
-    z1, z2, z3 = st.columns(3)
-    v_zoom = z1.slider("Zoom", 1.0, 6.0, 1.0, 0.1, key="vid3d_zoom",
-                       help="Higher = tighter framing (zoom in). Shrinks the visible window around the "
-                            "centre — no distortion (all axes scale together).")
-    v_panx = z2.slider("Pan X (m)", -40.0, 40.0, 0.0, 1.0, key="vid3d_panx",
-                       help="Slide the framed window along the sensor X axis.")
-    v_pany = z3.slider("Pan Y (m)", -40.0, 40.0, 0.0, 1.0, key="vid3d_pany",
-                       help="Slide the framed window along the sensor Y axis.")
 
-    # Same extent for preview AND video, so the still is exactly what the clip renders.
-    @st.cache_data(show_spinner=False)
-    def _scene_limits(pcd_paths):
-        return lv.scene_limits(list(pcd_paths))
-
-    def _zoom_pan(lim, pan=0.0):
-        """Shrink a (lo, hi) axis window by the zoom factor around its centre (+ pan)."""
-        c = 0.5 * (lim[0] + lim[1]) + pan
-        hw = (lim[1] - lim[0]) / 2.0 / max(float(v_zoom), 0.1)
-        return (c - hw, c + hw)
-
-    _bx, _by, _bz = _scene_limits(tuple(pcds[:n]))
-    xlim, ylim, zlim = _zoom_pan(_bx, v_panx), _zoom_pan(_by, v_pany), _zoom_pan(_bz)
+    camera = lv.orbit_camera(azimuth=c_az, elevation=c_el, zoom=c_zoom,
+                             pan_x=c_px, pan_y=c_py, roll=c_roll)
     prev_i = min(int(st.session_state.get("lidar_frame", 0)), n - 1)
-    try:
-        _still = lv.render_lidar_frame(
-            pcds[prev_i], labels[prev_i], elev=float(v_elev), azim=float(v_azim), roll=float(v_roll),
-            focal=float(v_focal), max_points=int(v_pts), color_mode=color_mode,
-            hdmap_lanes=hdmap_lanes, sensors=sensors, xlim=xlim, ylim=ylim, zlim=zlim)
-        st.image(_still, use_container_width=True,
-                 caption=f"Preview — frame {prev_i+1}/{n} · elev {v_elev}° · azim {v_azim}° · roll "
-                         f"{v_roll}° · persp {v_focal} · zoom {v_zoom}× · pan ({v_panx:g}, {v_pany:g})  "
-                         f"(the video renders every frame at this exact view)")
-        st.caption("Tip: step the **Scene frame** above to preview a different frame at this view.")
-    except Exception as e:
-        st.warning(f"Preview unavailable: {e}")
+    _pp = _load_pts(pcds[prev_i], int(v_pts))
+    _po = lp.load_objects(labels[prev_i])
+    # uirevision keyed to the camera: moving a slider applies the new camera, but
+    # stepping the scene frame (same camera) preserves any manual mouse-orbit.
+    st.plotly_chart(
+        lv.build_figure(_pp, _po, color_mode, height=560, road_poly=road,
+                        sensors=sensors, hdmap_lanes=hdmap_lanes, camera=camera,
+                        uirevision=f"vid_{c_az}_{c_el}_{c_roll}_{c_zoom}_{c_px}_{c_py}"),
+        use_container_width=True, key="vid3d_preview")
+    st.caption(f"Preview — frame {prev_i+1}/{n} · az {c_az}° · el {c_el}° · roll {c_roll}° · "
+               f"zoom {c_zoom}× · pan ({c_px:g}, {c_py:g})  ·  the render uses this exact camera.")
+    st.info("⏱️ kaleido renders ~1–3 s per frame (a headless browser per frame), so all "
+            f"{n} frames can take several minutes. Set **Max frames** low to test the angle first.")
 
-    if st.button("🎬 Generate 3D LiDAR video", type="primary", use_container_width=True):
-        bar = st.progress(0.0, text="Rendering 3D frames…")
+    if st.button("🎬 Generate 3D LiDAR video (kaleido)", type="primary", use_container_width=True):
+        bar = st.progress(0.0, text="Rendering 3D frames (kaleido)…")
         try:
-            path, kind = lv.render_lidar_video(
+            path, kind = lv.render_lidar_video_plotly(
                 pcds[:n], labels[:n], ds.road_videos_dir, f"lidar3d_{_sensor}_{_src}",
-                fps=int(v_fps), elev=float(v_elev), azim=float(v_azim), roll=float(v_roll),
-                focal=float(v_focal), max_points=int(v_pts), hdmap_lanes=hdmap_lanes, sensors=sensors,
-                xlim=xlim, ylim=ylim, zlim=zlim, max_frames=int(v_max),
+                camera=camera, fps=int(v_fps), max_points=int(v_pts), color_mode=color_mode,
+                road_poly=road, hdmap_lanes=hdmap_lanes, sensors=sensors, max_frames=int(v_max),
                 progress=lambda c, t: bar.progress(c / t, text=f"Rendering {c}/{t} frames…"))
             st.session_state.lidar_video = (path, kind)
             bar.empty()
