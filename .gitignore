@@ -22,3 +22,6 @@ datasets/*/outputs/
 #     <dataset>/map/ (from the dev-kit's src/map/map.zip) and enables EXACT
 #     georeferencing. geo_reference.py degrades gracefully without it. Track code, not data. ---
 
+
+# Streamlit static-serving copies for the synced Videos tab (large, regenerated)
+static/

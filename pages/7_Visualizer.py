@@ -245,7 +245,9 @@ def render_camera_tab():
         st.caption("ℹ️ MP4 needs `imageio-ffmpeg`; otherwise an animated **GIF** is produced.")
     g1, g2, g3 = st.columns(3)
     v_fps = g1.slider("Video FPS", 1, 30, 10, 1)
-    v_height = g2.select_slider("Frame height (px)", [360, 480, 540, 720], value=480)
+    v_height = g2.select_slider("Frame height (px)", [360, 480, 540, 720, 900, 1080], value=720,
+                                help="Per-camera vertical resolution. The cameras are 1920×1200, so higher "
+                                     "= sharper (and a bigger file). 480 looks soft; 720–1080 is crisp.")
     v_max = g3.number_input("Max frames (0 = all)", 0, n, 0)
     video_dir = ds.road_videos_dir
     tag = mode or "raw"
@@ -336,6 +338,74 @@ def render_lidar_tab():
 
     _viewer3d()
 
+    # ---- 3D LiDAR video — Plotly/kaleido, WYSIWYG with the interactive preview ----
+    st.divider()
+    st.subheader("🎬 3D LiDAR video")
+    st.caption("This preview uses the **same Plotly engine** as the render, so what you frame is exactly "
+               "what you get — and zooming in won't streak the HD-map lines across the screen. **Orbit it "
+               "with the mouse** to explore, then lock the camera with the sliders (the render uses the "
+               "sliders). Found the look? Note the values and I'll hardcode them.")
+    a1, a2, a3 = st.columns(3)
+    c_az = a1.slider("Azimuth°", -180, 180, 180, key="vid3d_az",
+                     help="Spin the camera around the scene (compass heading).")
+    c_el = a2.slider("Elevation°", 0, 89, 30, key="vid3d_el",
+                     help="Camera height above the ground plane. Low ≈ eye-level / camera-like.")
+    c_roll = a3.slider("Roll°", -45, 45, 0, key="vid3d_roll", help="Tilt the horizon.")
+    z1, z2, z3 = st.columns(3)
+    c_zoom = z1.slider("Zoom", 0.4, 4.0, 2.05, 0.05, key="vid3d_zoom",
+                       help="Higher = closer (moves the camera in). True 3D zoom — no distortion or glitch.")
+    c_px = z2.slider("Pan X", -1.0, 1.0, 0.05, 0.05, key="vid3d_px",
+                     help="Shift the look-at point left/right (normalized scene units).")
+    c_py = z3.slider("Pan Y", -1.0, 1.0, -0.05, 0.05, key="vid3d_py",
+                     help="Shift the look-at point forward/back (normalized scene units).")
+    s1, s2, s3 = st.columns(3)
+    v_fps = s1.slider("FPS", 1, 30, 10, key="vid3d_fps")
+    v_pts = s2.select_slider("Points", [3000, 6000, 12000, 20000], value=20000, key="vid3d_pts")
+    v_max = s3.number_input("Max frames (0 = all)", 0, n, 0, key="vid3d_max")
+
+    camera = lv.orbit_camera(azimuth=c_az, elevation=c_el, zoom=c_zoom,
+                             pan_x=c_px, pan_y=c_py, roll=c_roll)
+    prev_i = min(int(st.session_state.get("lidar_frame", 0)), n - 1)
+    _pp = _load_pts(pcds[prev_i], int(v_pts))
+    _po = lp.load_objects(labels[prev_i])
+    # uirevision keyed to the camera: moving a slider applies the new camera, but
+    # stepping the scene frame (same camera) preserves any manual mouse-orbit.
+    st.plotly_chart(
+        lv.build_figure(_pp, _po, color_mode, height=560, road_poly=road,
+                        sensors=sensors, hdmap_lanes=hdmap_lanes, camera=camera,
+                        uirevision=f"vid_{c_az}_{c_el}_{c_roll}_{c_zoom}_{c_px}_{c_py}"),
+        use_container_width=True, key="vid3d_preview")
+    st.caption(f"Preview — frame {prev_i+1}/{n} · az {c_az}° · el {c_el}° · roll {c_roll}° · "
+               f"zoom {c_zoom}× · pan ({c_px:g}, {c_py:g})  ·  the render uses this exact camera.")
+    st.info("⏱️ kaleido renders ~1–3 s per frame (a headless browser per frame), so all "
+            f"{n} frames can take several minutes. Set **Max frames** low to test the angle first.")
+
+    if st.button("🎬 Generate 3D LiDAR video (kaleido)", type="primary", use_container_width=True):
+        bar = st.progress(0.0, text="Rendering 3D frames (kaleido)…")
+        try:
+            path, kind = lv.render_lidar_video_plotly(
+                pcds[:n], labels[:n], ds.road_videos_dir, f"lidar3d_{_sensor}_{_src}",
+                camera=camera, fps=int(v_fps), max_points=int(v_pts), color_mode=color_mode,
+                road_poly=road, hdmap_lanes=hdmap_lanes, sensors=sensors, max_frames=int(v_max),
+                progress=lambda c, t: bar.progress(c / t, text=f"Rendering {c}/{t} frames…"))
+            st.session_state.lidar_video = (path, kind)
+            bar.empty()
+            st.success(f"Saved {kind.upper()} → `{path}`")
+        except Exception as e:
+            bar.empty()
+            st.error(f"3D video render failed: {e}")
+
+    vid = st.session_state.get("lidar_video")
+    if vid and os.path.exists(vid[0]):
+        if vid[1] == "mp4":
+            st.video(vid[0])
+        else:
+            st.image(vid[0], caption="3D LiDAR (GIF)")
+        with open(vid[0], "rb") as f:
+            st.download_button("⬇️ Download 3D LiDAR video", f, file_name=os.path.basename(vid[0]),
+                               key="dl_3d_vid")
+        st.caption(f"Last generated: `{vid[0]}` · saved to the dataset's road_videos folder.")
+
 
 # ======================= Real intersection (Google Maps) tab =======================
 def render_real_tab():
@@ -354,77 +424,140 @@ def render_real_tab():
                f"[👤 Street View — walk it in first-person ↗]({pano})")
 
 
-# ======================= Videos tab (camera + 3D, synced) =======================
+# ======================= Videos tab (synced playback) =======================
+_SYNC_PLAYER_HTML = """<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{height:100%;margin:0;background:#0e1117;font-family:system-ui,sans-serif;color:#cfd6e4}
+.wrap{height:100%;display:flex;flex-direction:column;gap:6px;padding:6px;box-sizing:border-box}
+.bar{flex:0 0 auto;text-align:center}
+.bar button{background:#1f6feb;color:#fff;border:0;border-radius:7px;padding:7px 16px;margin:0 4px;font-size:14px;cursor:pointer}
+.bar button.sec{background:#30363d}
+.bar button.sp{padding:7px 10px;font-size:13px}
+.bar .sep{margin:0 6px;opacity:.4}
+.bar #st{font-size:11px;opacity:.6;margin-left:8px}
+.cell{flex:1 1 0;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.cell label{flex:0 0 auto;font-size:11px;opacity:.65;margin-bottom:2px}
+video{flex:1 1 auto;min-height:0;width:100%;object-fit:contain;background:#000;border-radius:6px}
+</style></head><body><div class="wrap">
+<div class="bar">
+  <button onclick="playBoth()">▶︎ Play both</button>
+  <button class="sec" onclick="pauseBoth()">⏸ Pause</button>
+  <button class="sec" onclick="restartBoth()">⟲ Restart</button>
+  <span class="sep">speed</span>
+  <button class="sp sec" data-r="0.25" onclick="setSpeed(0.25)">0.25×</button>
+  <button class="sp sec" data-r="0.5" onclick="setSpeed(0.5)">0.5×</button>
+  <button class="sp sec" data-r="0.75" onclick="setSpeed(0.75)">0.75×</button>
+  <button class="sp sec" data-r="1" onclick="setSpeed(1)">1×</button>
+  <span id="st"></span>
+</div>
+<div class="cell"><label>🎥 Road Viewer</label><video id="v1" preload="auto" playsinline muted src="__V1__"></video></div>
+<div class="cell"><label>🧊 LiDAR labels (3D)</label><video id="v2" preload="auto" playsinline muted src="__V2__"></video></div>
+</div><script>
+var v1=document.getElementById('v1'),v2=document.getElementById('v2'),st=document.getElementById('st');
+v1.onerror=function(){st.textContent='⚠️ road clip failed to load';};
+v2.onerror=function(){st.textContent='⚠️ lidar clip failed to load';};
+function setSpeed(r){v1.playbackRate=r;v2.playbackRate=r;
+  var bs=document.querySelectorAll('.sp');for(var i=0;i<bs.length;i++){bs[i].style.background=(parseFloat(bs[i].dataset.r)===r)?'#1f6feb':'#30363d';}
+  st.textContent='speed '+r+'×';}
+function playBoth(){v2.currentTime=v1.currentTime;var p=v1.play();v2.play();if(p&&p.catch)p.catch(function(e){st.textContent='⚠️ '+e;});}
+function pauseBoth(){v1.pause();v2.pause();}
+function restartBoth(){v1.currentTime=0;v2.currentTime=0;playBoth();}
+setInterval(function(){if(!v1.paused&&Math.abs(v2.currentTime-v1.currentTime)>0.15)v2.currentTime=v1.currentTime;},200);
+setSpeed(1);
+</script></body></html>"""
+
+
+def _compact_clip(src, role):
+    """Transcode a (possibly tens-of-MB) clip to a compact copy cached under ./static/
+    (gitignored), re-encoding only when the source is newer. Returns its path. Small
+    enough to base64-embed in the synced player — which sidesteps Streamlit static
+    serving's text/plain + nosniff headers that block <video>.
+
+    The Road Viewer clip is side-by-side (double-wide), so it gets more width than the
+    LiDAR clip; both are capped to the source width (`min(iw, W)`) to avoid pointless
+    upscaling, and use a lower CRF for cleaner camera detail."""
+    import subprocess
+    import imageio_ffmpeg
+    cache = os.path.join(os.getcwd(), "static")
+    os.makedirs(cache, exist_ok=True)
+    w = 1440 if role == "road" else 960
+    dst = os.path.join(cache, f"_sync_{role}_{w}.mp4")
+    if (not os.path.exists(dst)) or os.path.getmtime(src) > os.path.getmtime(dst):
+        ff = imageio_ffmpeg.get_ffmpeg_exe()
+        subprocess.run([ff, "-y", "-i", src, "-vf", f"scale=min(iw\\,{w}):-2", "-c:v", "libx264",
+                        "-crf", "28", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-an", dst],
+                       check=True, capture_output=True)
+    return dst
+
+
 def render_videos_tab():
-    st.markdown("Two clips of the same run, rendered from the **same frames** so they move "
-                "together: the **camera** side-by-side on top, and the **3D LiDAR** view below "
-                "(at a forward angle that mirrors the south cameras).")
-    n = min(len(labels), len(pcds))
-    if n == 0:
-        st.warning("Need both point clouds and OpenLABEL labels (set them in **Input folders** above).")
-        return
+    import glob
+    import base64
+    import streamlit.components.v1 as components
+    st.markdown("Play the **Road Viewer** clip and the **3D LiDAR** clip **together** — one button runs "
+                "both in lock-step, stacked so you see both at once. Generate them first in the "
+                "🎥 Road Viewer and 🧊 LiDAR labels tabs.")
 
-    with st.expander("⚙️ 3D video — angle & settings", expanded=True):
-        st.caption("Tune the angle to match the south-camera view (the dev-kit look).")
-        a1, a2, a3, a4 = st.columns(4)
-        elev = a1.slider("Elevation°", 0, 60, 12, key="vid3d_elev")
-        azim = a2.slider("Azimuth°", -180, 180, -90, key="vid3d_azim")
-        roll = a3.slider("Roll°", -30, 30, 0, key="vid3d_roll")
-        focal = a4.slider("Perspective", 0.1, 1.0, 0.3, 0.05, key="vid3d_focal",
-                          help="Lower = wider, more dramatic perspective (like a camera lens).")
-        s1, s2, s3 = st.columns(3)
-        v_fps = s1.slider("FPS", 1, 30, 10, key="vid3d_fps",
-                          help="Use the SAME FPS as the Road Viewer video for a synced pair.")
-        v_pts = s2.select_slider("Points", [3000, 6000, 12000, 20000], value=6000, key="vid3d_pts")
-        v_max = s3.number_input("Max frames (0 = all)", 0, n, 0, key="vid3d_max")
+    def _resolve(state_key, *patterns):
+        v = st.session_state.get(state_key)
+        if v and os.path.exists(v[0]) and os.path.getsize(v[0]) > 1024:
+            return v[0], v[1]
+        cand = []
+        for p in patterns:
+            cand += [f for f in glob.glob(os.path.join(ds.road_videos_dir, p)) if os.path.getsize(f) > 1024]
+        if not cand:
+            return None
+        path = max(cand, key=os.path.getmtime)
+        return path, ("mp4" if path.lower().endswith(".mp4") else "gif")
 
-    if st.button("🎬 Generate 3D LiDAR video", type="primary", use_container_width=True):
-        hd = geo.hdmap_lanes_sensor_frame("north" if _sensor == "north" else "south", 130.0)
-        mk = reg.lidar_markers(ds, _sensor)
-        bar = st.progress(0.0, text="Rendering 3D frames…")
+    road = _resolve("road_video", "road_*.mp4", "road_*.gif")
+    lidar = _resolve("lidar_video", "lidar3d_*.mp4", "lidar3d_*.gif")
+
+    miss = []
+    if not road:
+        miss.append("**Road Viewer** video — generate it in the 🎥 Road Viewer tab")
+    if not lidar:
+        miss.append("**3D LiDAR** video — generate it at the bottom of the 🧊 LiDAR labels tab")
+    if miss:
+        st.info("Waiting on: " + " · ".join(miss) + ".")
+
+    synced = False
+    if road and lidar and road[1] == "mp4" and lidar[1] == "mp4":
+        h = st.slider("Viewport height (px)", 480, 1600, 900, 20, key="vids_h",
+                      help="Total height for both stacked clips — taller makes both videos bigger. "
+                           "Set it so both still fit your screen without scrolling.")
         try:
-            path, kind = lv.render_lidar_video(
-                pcds[:n], labels[:n], ds.road_videos_dir, f"lidar3d_{_sensor}_{_src}",
-                fps=int(v_fps), elev=float(elev), azim=float(azim), roll=float(roll),
-                focal=float(focal), max_points=int(v_pts), hdmap_lanes=hd, sensors=mk,
-                max_frames=int(v_max),
-                progress=lambda c, t: bar.progress(c / t, text=f"Rendering {c}/{t} frames…"))
-            st.session_state.lidar_video = (path, kind)
-            bar.empty()
-            st.success(f"Saved {kind.upper()} → `{path}`")
-        except Exception as e:
-            bar.empty()
-            st.error(f"3D video render failed: {e}")
+            with st.spinner("Preparing the synced players…"):
+                rc, lc = _compact_clip(road[0], "road"), _compact_clip(lidar[0], "lidar")
 
-    # ---- show both, camera on top / 3D below ----
-    st.divider()
-    cam = st.session_state.get("road_video")
-    vid = st.session_state.get("lidar_video")
-    st.markdown("#### 🎥 Cameras")
-    if cam and os.path.exists(cam[0]):
-        if cam[1] == "mp4":
-            st.video(cam[0])
-        else:
-            st.image(cam[0], caption="Camera side-by-side (GIF)")
-        with open(cam[0], "rb") as f:
-            st.download_button("⬇️ Download camera video", f, file_name=os.path.basename(cam[0]),
-                               key="dl_cam_vid")
-    else:
-        st.info("No camera video yet — generate it in the **🎥 Road Viewer** tab "
-                "(use **all frames** and the **same FPS** so the two clips stay in sync).")
-    st.markdown("#### 🧊 3D LiDAR")
-    if vid and os.path.exists(vid[0]):
-        if vid[1] == "mp4":
-            st.video(vid[0])
-        else:
-            st.image(vid[0], caption="3D LiDAR (GIF)")
-        with open(vid[0], "rb") as f:
-            st.download_button("⬇️ Download 3D LiDAR video", f, file_name=os.path.basename(vid[0]),
-                               key="dl_3d_vid")
-    else:
-        st.info("No 3D video yet — set the angle above and click **Generate 3D LiDAR video**.")
-    st.caption("Both clips save to the dataset's **road_videos** folder. For a perfectly synced "
-               "pair, render both with the **same FPS** and **all frames**.")
+                def _uri(p):
+                    with open(p, "rb") as f:
+                        return "data:video/mp4;base64," + base64.b64encode(f.read()).decode()
+
+                html = _SYNC_PLAYER_HTML.replace("__V1__", _uri(rc)).replace("__V2__", _uri(lc))
+            components.html(html, height=int(h) + 8, scrolling=False)
+            st.caption(f"Road: `{os.path.basename(road[0])}` · LiDAR: `{os.path.basename(lidar[0])}`  ·  "
+                       "in-page sync uses compact copies (full-res clips stay in road_videos). **Play both** "
+                       "starts them together and auto-resyncs on drift; use the **speed** buttons to slow "
+                       "them down. Road looking soft? Re-render it in the 🎥 Road Viewer tab at a higher "
+                       "**Frame height** (720–1080).")
+            synced = True
+        except Exception as e:
+            st.warning(f"Couldn't build the synced player ({e}). Showing separate players below.")
+
+    if not synced:
+        # Fallback: show whatever exists with native players.
+        if road:
+            st.markdown("#### 🎥 Road Viewer")
+            if road[1] == "mp4":
+                st.video(road[0])
+            else:
+                st.image(road[0], caption="Road Viewer (GIF)")
+        if lidar:
+            st.markdown("#### 🧊 LiDAR labels (3D)")
+            if lidar[1] == "mp4":
+                st.video(lidar[0])
+            else:
+                st.image(lidar[0], caption="3D LiDAR (GIF)")
 
 
 tab_cam, tab_lidar, tab_videos, tab_real = st.tabs(
