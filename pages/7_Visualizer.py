@@ -245,7 +245,9 @@ def render_camera_tab():
         st.caption("ℹ️ MP4 needs `imageio-ffmpeg`; otherwise an animated **GIF** is produced.")
     g1, g2, g3 = st.columns(3)
     v_fps = g1.slider("Video FPS", 1, 30, 10, 1)
-    v_height = g2.select_slider("Frame height (px)", [360, 480, 540, 720], value=480)
+    v_height = g2.select_slider("Frame height (px)", [360, 480, 540, 720, 900, 1080], value=720,
+                                help="Per-camera vertical resolution. The cameras are 1920×1200, so higher "
+                                     "= sharper (and a bigger file). 480 looks soft; 720–1080 is crisp.")
     v_max = g3.number_input("Max frames (0 = all)", 0, n, 0)
     video_dir = ds.road_videos_dir
     tag = mode or "raw"
@@ -429,6 +431,8 @@ html,body{height:100%;margin:0;background:#0e1117;font-family:system-ui,sans-ser
 .bar{flex:0 0 auto;text-align:center}
 .bar button{background:#1f6feb;color:#fff;border:0;border-radius:7px;padding:7px 16px;margin:0 4px;font-size:14px;cursor:pointer}
 .bar button.sec{background:#30363d}
+.bar button.sp{padding:7px 10px;font-size:13px}
+.bar .sep{margin:0 6px;opacity:.4}
 .bar #st{font-size:11px;opacity:.6;margin-left:8px}
 .cell{flex:1 1 0;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .cell label{flex:0 0 auto;font-size:11px;opacity:.65;margin-bottom:2px}
@@ -438,6 +442,11 @@ video{flex:1 1 auto;min-height:0;width:100%;object-fit:contain;background:#000;b
   <button onclick="playBoth()">▶︎ Play both</button>
   <button class="sec" onclick="pauseBoth()">⏸ Pause</button>
   <button class="sec" onclick="restartBoth()">⟲ Restart</button>
+  <span class="sep">speed</span>
+  <button class="sp sec" data-r="0.25" onclick="setSpeed(0.25)">0.25×</button>
+  <button class="sp sec" data-r="0.5" onclick="setSpeed(0.5)">0.5×</button>
+  <button class="sp sec" data-r="0.75" onclick="setSpeed(0.75)">0.75×</button>
+  <button class="sp sec" data-r="1" onclick="setSpeed(1)">1×</button>
   <span id="st"></span>
 </div>
 <div class="cell"><label>🎥 Road Viewer</label><video id="v1" preload="auto" playsinline muted src="__V1__"></video></div>
@@ -446,27 +455,36 @@ video{flex:1 1 auto;min-height:0;width:100%;object-fit:contain;background:#000;b
 var v1=document.getElementById('v1'),v2=document.getElementById('v2'),st=document.getElementById('st');
 v1.onerror=function(){st.textContent='⚠️ road clip failed to load';};
 v2.onerror=function(){st.textContent='⚠️ lidar clip failed to load';};
+function setSpeed(r){v1.playbackRate=r;v2.playbackRate=r;
+  var bs=document.querySelectorAll('.sp');for(var i=0;i<bs.length;i++){bs[i].style.background=(parseFloat(bs[i].dataset.r)===r)?'#1f6feb':'#30363d';}
+  st.textContent='speed '+r+'×';}
 function playBoth(){v2.currentTime=v1.currentTime;var p=v1.play();v2.play();if(p&&p.catch)p.catch(function(e){st.textContent='⚠️ '+e;});}
 function pauseBoth(){v1.pause();v2.pause();}
 function restartBoth(){v1.currentTime=0;v2.currentTime=0;playBoth();}
 setInterval(function(){if(!v1.paused&&Math.abs(v2.currentTime-v1.currentTime)>0.15)v2.currentTime=v1.currentTime;},200);
+setSpeed(1);
 </script></body></html>"""
 
 
 def _compact_clip(src, role):
-    """Transcode a (possibly tens-of-MB) clip to a compact 720p copy cached under
-    ./static/ (gitignored), re-encoding only when the source is newer. Returns its
-    path. Small enough to base64-embed in the synced player — which sidesteps
-    Streamlit static serving's text/plain + nosniff headers that block <video>."""
+    """Transcode a (possibly tens-of-MB) clip to a compact copy cached under ./static/
+    (gitignored), re-encoding only when the source is newer. Returns its path. Small
+    enough to base64-embed in the synced player — which sidesteps Streamlit static
+    serving's text/plain + nosniff headers that block <video>.
+
+    The Road Viewer clip is side-by-side (double-wide), so it gets more width than the
+    LiDAR clip; both are capped to the source width (`min(iw, W)`) to avoid pointless
+    upscaling, and use a lower CRF for cleaner camera detail."""
     import subprocess
     import imageio_ffmpeg
     cache = os.path.join(os.getcwd(), "static")
     os.makedirs(cache, exist_ok=True)
-    dst = os.path.join(cache, f"_sync_{role}_960.mp4")
+    w = 1280 if role == "road" else 960
+    dst = os.path.join(cache, f"_sync_{role}_{w}.mp4")
     if (not os.path.exists(dst)) or os.path.getmtime(src) > os.path.getmtime(dst):
         ff = imageio_ffmpeg.get_ffmpeg_exe()
-        subprocess.run([ff, "-y", "-i", src, "-vf", "scale=960:-2", "-c:v", "libx264",
-                        "-crf", "30", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-an", dst],
+        subprocess.run([ff, "-y", "-i", src, "-vf", f"scale=min(iw\\,{w}):-2", "-c:v", "libx264",
+                        "-crf", "28", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-an", dst],
                        check=True, capture_output=True)
     return dst
 
@@ -518,9 +536,10 @@ def render_videos_tab():
                 html = _SYNC_PLAYER_HTML.replace("__V1__", _uri(rc)).replace("__V2__", _uri(lc))
             components.html(html, height=int(h) + 8, scrolling=False)
             st.caption(f"Road: `{os.path.basename(road[0])}` · LiDAR: `{os.path.basename(lidar[0])}`  ·  "
-                       "smooth in-page sync uses compact 720p copies (full-res clips stay in road_videos). "
-                       "**Play both** starts them together and auto-resyncs on drift — render both at the "
-                       "**same FPS** for a tight match.")
+                       "in-page sync uses compact copies (full-res clips stay in road_videos). **Play both** "
+                       "starts them together and auto-resyncs on drift; use the **speed** buttons to slow "
+                       "them down. Road looking soft? Re-render it in the 🎥 Road Viewer tab at a higher "
+                       "**Frame height** (720–1080).")
             synced = True
         except Exception as e:
             st.warning(f"Couldn't build the synced player ({e}). Showing separate players below.")
