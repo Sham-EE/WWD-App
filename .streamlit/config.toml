@@ -1,3 +1,8 @@
 [client]
 # Hide Streamlit's flat auto page list; we render our own collapsible sidebar (nav.py).
 showSidebarNavigation = false
+
+[server]
+# Serve ./static/** at /app/static/** so the Videos tab can play the (large) MP4s
+# via a real URL instead of base64-embedding tens of MB into the page.
+enableStaticServing = true

@@ -422,11 +422,115 @@ def render_real_tab():
                f"[👤 Street View — walk it in first-person ↗]({pano})")
 
 
-tab_cam, tab_lidar, tab_real = st.tabs(
-    ["🎥 Road Viewer (cameras)", "🧊 LiDAR labels (3D)", "🛰️ Real intersection"])
+# ======================= Videos tab (synced playback) =======================
+def _publish_static(src, role):
+    """Copy a generated clip into ./static/ (served at /app/static/**) so the player
+    iframe can stream it by URL. Re-copies only when the source is newer. Returns
+    (url_name, version) — version is the mtime, used as a cache-buster."""
+    import shutil
+    static_dir = os.path.join(os.getcwd(), "static")
+    os.makedirs(static_dir, exist_ok=True)
+    name = f"_sync_{role}{os.path.splitext(src)[1]}"
+    dst = os.path.join(static_dir, name)
+    if (not os.path.exists(dst)) or os.path.getmtime(src) > os.path.getmtime(dst):
+        shutil.copy2(src, dst)
+    return name, int(os.path.getmtime(dst))
+
+
+def render_videos_tab():
+    import glob
+    import streamlit.components.v1 as components
+    st.markdown("Play the **Road Viewer** clip and the **3D LiDAR** clip **together** — one button runs "
+                "both in lock-step, stacked so you see both at once. Generate them first in the "
+                "🎥 Road Viewer and 🧊 LiDAR labels tabs.")
+
+    def _resolve(state_key, *patterns):
+        v = st.session_state.get(state_key)
+        if v and os.path.exists(v[0]) and os.path.getsize(v[0]) > 1024:
+            return v[0], v[1]
+        cand = []
+        for p in patterns:
+            cand += [f for f in glob.glob(os.path.join(ds.road_videos_dir, p)) if os.path.getsize(f) > 1024]
+        if not cand:
+            return None
+        path = max(cand, key=os.path.getmtime)
+        return path, ("mp4" if path.lower().endswith(".mp4") else "gif")
+
+    road = _resolve("road_video", "road_*.mp4", "road_*.gif")
+    lidar = _resolve("lidar_video", "lidar3d_*.mp4", "lidar3d_*.gif")
+
+    miss = []
+    if not road:
+        miss.append("**Road Viewer** video — generate it in the 🎥 Road Viewer tab")
+    if not lidar:
+        miss.append("**3D LiDAR** video — generate it at the bottom of the 🧊 LiDAR labels tab")
+    if miss:
+        st.info("Waiting on: " + " · ".join(miss) + ".")
+
+    if road and lidar and road[1] == "mp4" and lidar[1] == "mp4":
+        h = st.slider("Viewport height (px)", 420, 1200, 720, 20, key="vids_h",
+                      help="Total height for both stacked clips — set it so both fit without scrolling.")
+        rn, rv = _publish_static(road[0], "road")
+        ln, lv_ = _publish_static(lidar[0], "lidar")
+        html = """<!doctype html><html><head><meta charset="utf-8"><style>
+        html,body{height:100%;margin:0;background:#0e1117;font-family:system-ui,sans-serif;color:#cfd6e4}
+        .wrap{height:100%;display:flex;flex-direction:column;gap:6px;padding:6px;box-sizing:border-box}
+        .bar{flex:0 0 auto;text-align:center}
+        .bar button{background:#1f6feb;color:#fff;border:0;border-radius:7px;padding:7px 16px;margin:0 4px;font-size:14px;cursor:pointer}
+        .bar button.sec{background:#30363d}
+        .cell{flex:1 1 0;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+        .cell label{font-size:11px;opacity:.65;margin-bottom:2px}
+        video{max-width:100%;max-height:calc(100% - 16px);object-fit:contain;background:#000;border-radius:6px}
+        </style></head><body><div class="wrap">
+        <div class="bar">
+          <button onclick="playBoth()">▶︎ Play both</button>
+          <button class="sec" onclick="pauseBoth()">⏸ Pause</button>
+          <button class="sec" onclick="restartBoth()">⟲ Restart</button>
+        </div>
+        <div class="cell"><label>🎥 Road Viewer</label><video id="v1" preload="auto" playsinline muted></video></div>
+        <div class="cell"><label>🧊 LiDAR labels (3D)</label><video id="v2" preload="auto" playsinline muted></video></div>
+        </div><script>
+        var ORIGIN=(function(){try{return window.parent.location.origin;}catch(e){return window.location.origin;}})();
+        var v1=document.getElementById('v1'),v2=document.getElementById('v2');
+        function setSrc(v,url){var s=document.createElement('source');s.src=url;s.type='video/mp4';v.appendChild(s);v.load();}
+        setSrc(v1,ORIGIN+'/app/static/__RN__?v=__RV__');
+        setSrc(v2,ORIGIN+'/app/static/__LN__?v=__LV__');
+        function playBoth(){v2.currentTime=v1.currentTime;v1.play();v2.play();}
+        function pauseBoth(){v1.pause();v2.pause();}
+        function restartBoth(){v1.currentTime=0;v2.currentTime=0;v1.play();v2.play();}
+        setInterval(function(){if(!v1.paused&&Math.abs(v2.currentTime-v1.currentTime)>0.15)v2.currentTime=v1.currentTime;},200);
+        </script></body></html>"""
+        html = (html.replace("__RN__", rn).replace("__RV__", str(rv))
+                    .replace("__LN__", ln).replace("__LV__", str(lv_)))
+        components.html(html, height=int(h) + 8, scrolling=False)
+        st.caption(f"Road: `{os.path.basename(road[0])}` · LiDAR: `{os.path.basename(lidar[0])}`  ·  "
+                   "both muted (silent clips); **Play both** starts them together and they auto-resync "
+                   "if they drift. For a tight sync, render both with the **same FPS**.")
+    else:
+        # Fallback: show whatever exists with native players (sync needs both as MP4).
+        if road:
+            st.markdown("#### 🎥 Road Viewer")
+            if road[1] == "mp4":
+                st.video(road[0])
+            else:
+                st.image(road[0], caption="Road Viewer (GIF)")
+        if lidar:
+            st.markdown("#### 🧊 LiDAR labels (3D)")
+            if lidar[1] == "mp4":
+                st.video(lidar[0])
+            else:
+                st.image(lidar[0], caption="3D LiDAR (GIF)")
+        if road and lidar:
+            st.caption("One-button synced playback needs **both** clips as MP4 (install imageio-ffmpeg).")
+
+
+tab_cam, tab_lidar, tab_videos, tab_real = st.tabs(
+    ["🎥 Road Viewer (cameras)", "🧊 LiDAR labels (3D)", "🎬 Videos", "🛰️ Real intersection"])
 with tab_cam:
     render_camera_tab()
 with tab_lidar:
     render_lidar_tab()
+with tab_videos:
+    render_videos_tab()
 with tab_real:
     render_real_tab()

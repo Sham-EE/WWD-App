@@ -23,3 +23,6 @@ datasets/*/outputs/
 #     georeferencing. geo_reference.py degrades gracefully without it. Track code, not data. ---
 datasets/*/map/
 
+
+# Streamlit static-serving copies for the synced Videos tab (large, regenerated)
+static/
