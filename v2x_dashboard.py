@@ -123,11 +123,13 @@ function hav(a,b){ var Re=6371000, r=Math.PI/180;
   var s=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dLon/2)*Math.sin(dLon/2);
   return 2*Re*Math.asin(Math.min(1,Math.sqrt(s))); }
 var seg=0, sub=0;
+var playing=false, status=document.getElementById('status');
 function reset(){ seg=0; sub=0; cnt=0; trail.setLatLngs([]); if(counter) counter.textContent=0;
-  fence.setLatLng(path[0]);
+  fence.setLatLng(path[0]); driver.setLatLng(path[0]);
   steps.forEach(function(s){ s.classList.add('pending'); });
   vehMarks.forEach(function(vl){ vl.alerted=false; vl.m.setStyle({color:vl.col,fillColor:vl.col}); vl.m.setRadius(6); vl.m.closePopup(); }); }
 function tick(){
+  if(!playing) return;
   var a=path[seg], b=path[Math.min(seg+1,path.length-1)], t=sub/SUBS;
   var pos=[a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t];
   driver.setLatLng(pos); trail.addLatLng(pos); fence.setLatLng(pos);
@@ -150,10 +152,16 @@ function tick(){
   });
   sub++;
   if(sub>=SUBS){ sub=0; seg++;
-    if(seg>=path.length-1){ setTimeout(function(){ reset(); tick(); }, 900); return; } }
+    if(seg>=path.length-1){ if(status) status.textContent='↻ replaying…';
+      setTimeout(function(){ if(playing){ reset(); if(status) status.textContent='▶ playing…'; tick(); } }, 900);
+      return; } }
   setTimeout(tick, 1000/(fps*SUBS));
 }
-tick();
+function play(){ if(!playing){ playing=true; if(status) status.textContent='▶ playing…'; tick(); } }
+function pause(){ playing=false; if(status) status.textContent='⏸ paused'; }
+function restart(){ playing=false; reset(); play(); }
+// Leaflet needs a size kick inside the Streamlit iframe; then autoplay.
+setTimeout(function(){ try{ map.invalidateSize(); }catch(e){} play(); }, 350);
 function cp(id){ var t=document.getElementById(id).innerText; navigator.clipboard&&navigator.clipboard.writeText(t); }
 """
 
@@ -219,6 +227,9 @@ def build_dashboard_html(event, *, height=980):
 .hdr h1{{font-size:17px;margin:0}} .hdr .sub{{color:var(--mut);font-size:12px}}
 .badge{{margin-left:auto;background:var(--red);color:#fff;font-weight:700;padding:6px 12px;border-radius:8px;font-size:13px;animation:pulse 1.2s infinite}}
 @keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:.55}}}}
+.ctrl{{display:flex;gap:8px;align-items:center;padding:8px 16px;background:#0d121c;border-bottom:1px solid var(--line)}}
+.ctrl button{{background:#1f6feb;color:#fff;border:0;border-radius:7px;padding:6px 14px;cursor:pointer;font-size:13px}}
+.ctrl button.sec{{background:#30363d}} .ctrl #status{{color:var(--mut);font-size:12px;margin-left:6px}}
 #map{{height:46vh;min-height:320px;width:100%;border-bottom:1px solid var(--line)}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px;padding:12px}}
 .card{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}}
@@ -244,6 +255,10 @@ button:hover{{background:#27344a}}
 </style></head><body>
 <div class="hdr"><div>🚨</div><div><h1>V2X Broadcast — Wrong-Way Driver</h1>
 <div class="sub">{_esc(site)}</div></div><div class="badge">● ALERT ACTIVE</div></div>
+<div class="ctrl"><button onclick="play()">▶︎ Play</button>
+  <button class="sec" onclick="pause()">⏸ Pause</button>
+  <button class="sec" onclick="restart()">⟲ Restart</button>
+  <span id="status">▶ playing…</span></div>
 <div id="map"></div>
 <div class="grid">
   <div class="card"><h2>Detection</h2>

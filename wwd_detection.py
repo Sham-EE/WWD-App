@@ -117,6 +117,23 @@ def _lane_for_point(lanes, x: float, y: float):
     return None
 
 
+def _runs(frames):
+    """All maximal runs of consecutive integers in a sorted unique list, as a list
+    of (start, end, length)."""
+    if not frames:
+        return []
+    out = []
+    start = prev = frames[0]
+    for f in frames[1:]:
+        if f == prev + 1:
+            prev = f
+        else:
+            out.append((start, prev, prev - start + 1))
+            start = prev = f
+    out.append((start, prev, prev - start + 1))
+    return out
+
+
 def _longest_consecutive_run(frames):
     """Length of the longest run of consecutive integers in a sorted unique list,
     plus the (start, end) frame numbers of that run."""
@@ -202,29 +219,49 @@ def detect_wrong_way(det_frames, lanes, params=None):
                 flagged_meta[fi] = (diff, lane['lane_id'], d, float(hdg))
 
         flagged_sorted = sorted(flagged)
-        run_len, run_start, run_end = _longest_consecutive_run(flagged_sorted)
 
-        run_frames = set(f for f in flagged_sorted if run_start is not None and run_start <= f <= run_end)
-
-        is_ww = False
-        disp = 0.0
-        consistency = 0.0
-        if run_len >= min_frames and run_start is not None:
-            p0 = pos_by_frame.get(run_start)
-            p1 = pos_by_frame.get(run_end)
-            if p0 is not None and p1 is not None:
-                disp = float(np.hypot(p1[0] - p0[0], p1[1] - p0[1]))
-            # A real wrong-way vehicle holds a steady heading against flow; a turn
-            # sweeps through headings, giving a low resultant length.
-            consistency = _resultant_length([flagged_meta[f][3] for f in run_frames])
-            is_ww = (disp >= min_disp) and (consistency >= min_consistency)
-        max_angle = max((flagged_meta[f][0] for f in run_frames), default=0.0)
-        lane_id = None
-        if run_frames:
-            # most common lane over the flagged run
+        # Evaluate EVERY consecutive run of flagged frames (the junction exemption
+        # can split one wrong-way pass into several runs). A run is a genuine
+        # wrong-way pass only when it is long enough, travels far enough, holds a
+        # STEADY heading, AND its NET travel direction itself opposes the lane.
+        # That last test is what rejects turning cars: a turn's net displacement
+        # curves diagonally, so it never opposes the lane by `angle_thresh`, even
+        # though a few instantaneous headings during the turn might.
+        qualifying = []   # (start, end, length, disp, consistency, max_angle, lane_id, frames)
+        for rs, re_, rl in _runs(flagged_sorted):
+            if rl < min_frames:
+                continue
+            rframes = [f for f in flagged_sorted if rs <= f <= re_]
+            p0, p1 = pos_by_frame.get(rs), pos_by_frame.get(re_)
+            if p0 is None or p1 is None:
+                continue
+            dx, dy = (p1[0] - p0[0]), (p1[1] - p0[1])
+            disp = float(np.hypot(dx, dy))
+            consistency = _resultant_length([flagged_meta[f][3] for f in rframes])
             lane_counts = defaultdict(int)
-            for f in run_frames:
+            for f in rframes:
                 lane_counts[flagged_meta[f][1]] += 1
+            r_lane_id = max(lane_counts, key=lane_counts.get)
+            r_lane = next((l for l in lanes if l["lane_id"] == r_lane_id), None)
+            disp_opposes = (disp > 1e-6 and r_lane is not None and
+                            angular_diff_deg(np.degrees(np.arctan2(dy, dx)),
+                                             r_lane["heading_deg"]) >= angle_thresh)
+            if disp >= min_disp and consistency >= min_consistency and disp_opposes:
+                r_max = max(flagged_meta[f][0] for f in rframes)
+                qualifying.append((rs, re_, rl, disp, consistency, r_max, r_lane_id, set(rframes)))
+
+        is_ww = bool(qualifying)
+        first_flag = qualifying[0][0] if is_ww else None          # EARLIEST qualifying run
+        run_frames = set().union(*[q[7] for q in qualifying]) if qualifying else set()
+        max_angle = max((q[5] for q in qualifying), default=0.0)
+        run_len = max((q[2] for q in qualifying), default=0)
+        disp = max((q[3] for q in qualifying), default=0.0)
+        consistency = max((q[4] for q in qualifying), default=0.0)
+        lane_id = None
+        if qualifying:
+            lane_counts = defaultdict(int)
+            for q in qualifying:
+                lane_counts[q[6]] += len(q[7])
             lane_id = max(lane_counts, key=lane_counts.get)
 
         if is_ww:
@@ -239,7 +276,7 @@ def detect_wrong_way(det_frames, lanes, params=None):
             "displacement_m": disp,
             "heading_consistency": consistency,
             "flagged_frames": run_frames,
-            "first_flag_frame": run_start if is_ww else None,
+            "first_flag_frame": first_flag,
         }
 
     wrong_way_tids = {tid for tid, r in track_results.items() if r["is_wrong_way"]}
