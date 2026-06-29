@@ -479,7 +479,7 @@ def _compact_clip(src, role):
     import imageio_ffmpeg
     cache = os.path.join(os.getcwd(), "static")
     os.makedirs(cache, exist_ok=True)
-    w = 1280 if role == "road" else 960
+    w = 1440 if role == "road" else 960
     dst = os.path.join(cache, f"_sync_{role}_{w}.mp4")
     if (not os.path.exists(dst)) or os.path.getmtime(src) > os.path.getmtime(dst):
         ff = imageio_ffmpeg.get_ffmpeg_exe()
