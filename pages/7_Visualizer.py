@@ -423,22 +423,57 @@ def render_real_tab():
 
 
 # ======================= Videos tab (synced playback) =======================
-def _publish_static(src, role):
-    """Copy a generated clip into ./static/ (served at /app/static/**) so the player
-    iframe can stream it by URL. Re-copies only when the source is newer. Returns
-    (url_name, version) — version is the mtime, used as a cache-buster."""
-    import shutil
-    static_dir = os.path.join(os.getcwd(), "static")
-    os.makedirs(static_dir, exist_ok=True)
-    name = f"_sync_{role}{os.path.splitext(src)[1]}"
-    dst = os.path.join(static_dir, name)
+_SYNC_PLAYER_HTML = """<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{height:100%;margin:0;background:#0e1117;font-family:system-ui,sans-serif;color:#cfd6e4}
+.wrap{height:100%;display:flex;flex-direction:column;gap:6px;padding:6px;box-sizing:border-box}
+.bar{flex:0 0 auto;text-align:center}
+.bar button{background:#1f6feb;color:#fff;border:0;border-radius:7px;padding:7px 16px;margin:0 4px;font-size:14px;cursor:pointer}
+.bar button.sec{background:#30363d}
+.bar #st{font-size:11px;opacity:.6;margin-left:8px}
+.cell{flex:1 1 0;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.cell label{font-size:11px;opacity:.65;margin-bottom:2px}
+video{max-width:100%;max-height:calc(100% - 16px);object-fit:contain;background:#000;border-radius:6px}
+</style></head><body><div class="wrap">
+<div class="bar">
+  <button onclick="playBoth()">▶︎ Play both</button>
+  <button class="sec" onclick="pauseBoth()">⏸ Pause</button>
+  <button class="sec" onclick="restartBoth()">⟲ Restart</button>
+  <span id="st"></span>
+</div>
+<div class="cell"><label>🎥 Road Viewer</label><video id="v1" preload="auto" playsinline muted src="__V1__"></video></div>
+<div class="cell"><label>🧊 LiDAR labels (3D)</label><video id="v2" preload="auto" playsinline muted src="__V2__"></video></div>
+</div><script>
+var v1=document.getElementById('v1'),v2=document.getElementById('v2'),st=document.getElementById('st');
+v1.onerror=function(){st.textContent='⚠️ road clip failed to load';};
+v2.onerror=function(){st.textContent='⚠️ lidar clip failed to load';};
+function playBoth(){v2.currentTime=v1.currentTime;var p=v1.play();v2.play();if(p&&p.catch)p.catch(function(e){st.textContent='⚠️ '+e;});}
+function pauseBoth(){v1.pause();v2.pause();}
+function restartBoth(){v1.currentTime=0;v2.currentTime=0;playBoth();}
+setInterval(function(){if(!v1.paused&&Math.abs(v2.currentTime-v1.currentTime)>0.15)v2.currentTime=v1.currentTime;},200);
+</script></body></html>"""
+
+
+def _compact_clip(src, role):
+    """Transcode a (possibly tens-of-MB) clip to a compact 720p copy cached under
+    ./static/ (gitignored), re-encoding only when the source is newer. Returns its
+    path. Small enough to base64-embed in the synced player — which sidesteps
+    Streamlit static serving's text/plain + nosniff headers that block <video>."""
+    import subprocess
+    import imageio_ffmpeg
+    cache = os.path.join(os.getcwd(), "static")
+    os.makedirs(cache, exist_ok=True)
+    dst = os.path.join(cache, f"_sync_{role}_720.mp4")
     if (not os.path.exists(dst)) or os.path.getmtime(src) > os.path.getmtime(dst):
-        shutil.copy2(src, dst)
-    return name, int(os.path.getmtime(dst))
+        ff = imageio_ffmpeg.get_ffmpeg_exe()
+        subprocess.run([ff, "-y", "-i", src, "-vf", "scale=720:-2", "-c:v", "libx264",
+                        "-crf", "30", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-an", dst],
+                       check=True, capture_output=True)
+    return dst
 
 
 def render_videos_tab():
     import glob
+    import base64
     import streamlit.components.v1 as components
     st.markdown("Play the **Road Viewer** clip and the **3D LiDAR** clip **together** — one button runs "
                 "both in lock-step, stacked so you see both at once. Generate them first in the "
@@ -467,47 +502,30 @@ def render_videos_tab():
     if miss:
         st.info("Waiting on: " + " · ".join(miss) + ".")
 
+    synced = False
     if road and lidar and road[1] == "mp4" and lidar[1] == "mp4":
         h = st.slider("Viewport height (px)", 420, 1200, 720, 20, key="vids_h",
                       help="Total height for both stacked clips — set it so both fit without scrolling.")
-        rn, rv = _publish_static(road[0], "road")
-        ln, lv_ = _publish_static(lidar[0], "lidar")
-        html = """<!doctype html><html><head><meta charset="utf-8"><style>
-        html,body{height:100%;margin:0;background:#0e1117;font-family:system-ui,sans-serif;color:#cfd6e4}
-        .wrap{height:100%;display:flex;flex-direction:column;gap:6px;padding:6px;box-sizing:border-box}
-        .bar{flex:0 0 auto;text-align:center}
-        .bar button{background:#1f6feb;color:#fff;border:0;border-radius:7px;padding:7px 16px;margin:0 4px;font-size:14px;cursor:pointer}
-        .bar button.sec{background:#30363d}
-        .cell{flex:1 1 0;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
-        .cell label{font-size:11px;opacity:.65;margin-bottom:2px}
-        video{max-width:100%;max-height:calc(100% - 16px);object-fit:contain;background:#000;border-radius:6px}
-        </style></head><body><div class="wrap">
-        <div class="bar">
-          <button onclick="playBoth()">▶︎ Play both</button>
-          <button class="sec" onclick="pauseBoth()">⏸ Pause</button>
-          <button class="sec" onclick="restartBoth()">⟲ Restart</button>
-        </div>
-        <div class="cell"><label>🎥 Road Viewer</label><video id="v1" preload="auto" playsinline muted></video></div>
-        <div class="cell"><label>🧊 LiDAR labels (3D)</label><video id="v2" preload="auto" playsinline muted></video></div>
-        </div><script>
-        var ORIGIN=(function(){try{return window.parent.location.origin;}catch(e){return window.location.origin;}})();
-        var v1=document.getElementById('v1'),v2=document.getElementById('v2');
-        function setSrc(v,url){var s=document.createElement('source');s.src=url;s.type='video/mp4';v.appendChild(s);v.load();}
-        setSrc(v1,ORIGIN+'/app/static/__RN__?v=__RV__');
-        setSrc(v2,ORIGIN+'/app/static/__LN__?v=__LV__');
-        function playBoth(){v2.currentTime=v1.currentTime;v1.play();v2.play();}
-        function pauseBoth(){v1.pause();v2.pause();}
-        function restartBoth(){v1.currentTime=0;v2.currentTime=0;v1.play();v2.play();}
-        setInterval(function(){if(!v1.paused&&Math.abs(v2.currentTime-v1.currentTime)>0.15)v2.currentTime=v1.currentTime;},200);
-        </script></body></html>"""
-        html = (html.replace("__RN__", rn).replace("__RV__", str(rv))
-                    .replace("__LN__", ln).replace("__LV__", str(lv_)))
-        components.html(html, height=int(h) + 8, scrolling=False)
-        st.caption(f"Road: `{os.path.basename(road[0])}` · LiDAR: `{os.path.basename(lidar[0])}`  ·  "
-                   "both muted (silent clips); **Play both** starts them together and they auto-resync "
-                   "if they drift. For a tight sync, render both with the **same FPS**.")
-    else:
-        # Fallback: show whatever exists with native players (sync needs both as MP4).
+        try:
+            with st.spinner("Preparing the synced players…"):
+                rc, lc = _compact_clip(road[0], "road"), _compact_clip(lidar[0], "lidar")
+
+                def _uri(p):
+                    with open(p, "rb") as f:
+                        return "data:video/mp4;base64," + base64.b64encode(f.read()).decode()
+
+                html = _SYNC_PLAYER_HTML.replace("__V1__", _uri(rc)).replace("__V2__", _uri(lc))
+            components.html(html, height=int(h) + 8, scrolling=False)
+            st.caption(f"Road: `{os.path.basename(road[0])}` · LiDAR: `{os.path.basename(lidar[0])}`  ·  "
+                       "smooth in-page sync uses compact 720p copies (full-res clips stay in road_videos). "
+                       "**Play both** starts them together and auto-resyncs on drift — render both at the "
+                       "**same FPS** for a tight match.")
+            synced = True
+        except Exception as e:
+            st.warning(f"Couldn't build the synced player ({e}). Showing separate players below.")
+
+    if not synced:
+        # Fallback: show whatever exists with native players.
         if road:
             st.markdown("#### 🎥 Road Viewer")
             if road[1] == "mp4":
@@ -520,8 +538,6 @@ def render_videos_tab():
                 st.video(lidar[0])
             else:
                 st.image(lidar[0], caption="3D LiDAR (GIF)")
-        if road and lidar:
-            st.caption("One-button synced playback needs **both** clips as MP4 (install imageio-ffmpeg).")
 
 
 tab_cam, tab_lidar, tab_videos, tab_real = st.tabs(
