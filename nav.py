@@ -29,6 +29,7 @@ SECTIONS = [
     ("🚨 Wrong-way driving", [
         ("pages/5_Lane_Editor.py",   "🛣️", "Lane Editor",   "Build/adjust the lane directions used for WWD.", []),
         ("pages/6_WWD_Simulator.py", "🚨", "WWD Simulator", "Spawn a synthetic wrong-way driver; fire the V2X alert.", []),
+        ("pages/8_V2X_Dashboard.py", "📡", "V2X Dashboard", "Live wrong-way alert: map, J2735 TIM, pipeline & receivers.", []),
     ]),
 ]
 
@@ -147,4 +148,5 @@ def tool_states(ds):
         "pages/4_Evaluation.py":                     "done" if ev else "todo",
         "pages/5_Lane_Editor.py":                    "done" if s["lanes"] else "todo",
         "pages/6_WWD_Simulator.py":                  "done" if (s["lanes"] and s["filtered"]) else "todo",
+        "pages/8_V2X_Dashboard.py":                  "anytime",
     }

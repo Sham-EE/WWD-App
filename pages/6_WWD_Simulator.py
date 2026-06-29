@@ -3,14 +3,12 @@ import os
 import streamlit as st
 import numpy as np
 
-import streamlit.components.v1 as components
 import plotly.graph_objects as go
 
 from wwd_detection import load_lane_config, lanes_calibrated, detect_wrong_way
 from wwd_simulator import (wrong_way_options, make_wrong_way_track,
                            build_sim_det_frames, simulator_figure, SIM_TID,
-                           v2x_dashboard_html, math_heading_to_compass,
-                           build_v2x_intersection)
+                           math_heading_to_compass, build_v2x_intersection)
 import viewer_ui as vu
 import geo_reference as geo
 import dataset_manager as dm
@@ -311,45 +309,50 @@ st.session_state.setdefault("v2x_armed", False)
 st.session_state.setdefault("v2x_event", None)
 
 if not is_flagged:
-    st.caption("No wrong-way flag yet — once detected, broadcast it to your V2X dashboard here.")
+    st.caption("No wrong-way flag yet — once detected, broadcast it to the **📡 V2X Dashboard** tab.")
 else:
+    _confirm_step = (confirm_frame - start_frame) if confirm_frame is not None else None
     bc1, bc2 = st.columns([2, 1])
-    if bc1.button("📡 Broadcast detection to the V2X Dashboard", type="primary",
-                  disabled=not flagged_now,
-                  help="Fires your dashboard's full J2735 TIM / C-V2X / nav-push pipeline with the "
-                       "detected speed, true compass heading & geo-location. Play to the detection "
-                       "step to enable."):
+    if bc1.button("📡 Broadcast to the V2X Dashboard", type="primary", disabled=not flagged_now,
+                  help="Builds the J2735 TIM alert + an accurate map from the detector's exact "
+                       "georeferenced output and opens it in the 📡 V2X Dashboard tab. Play to the "
+                       "confirmation step to enable."):
+        import uuid as _uuid
         _intersection = build_v2x_intersection(
             sim_track, lambda x, y: geo.sensor_xy_to_latlon(x, y, "south"), geo.site_name())
+        _sensors_ll = []
+        for _s in reg.lidar_markers(ds, "south"):
+            _p = _s.get("pos", [0, 0, 0])
+            _ll = geo.sensor_xy_to_latlon(float(_p[0]), float(_p[1]), "south")
+            if _ll is not None:
+                _sensors_ll.append([round(_ll[0], 7), round(_ll[1], 7)])
         st.session_state.v2x_event = {
             "speed": round(float(speed), 1), "heading": round(float(_true_bearing)),
-            "lane": opt["lane_id"], "direction": opt["wrong_name"],
+            "lane": opt["lane_id"], "direction": opt["wrong_name"], "legal_name": opt["legal_name"],
             "lat": round(float(_loc[0]), 6), "lon": round(float(_loc[1]), 6),
             "lat_exact": _latlon is not None, "site": geo.site_name(),
-            "intersection": _intersection,
+            "intersection": _intersection, "sensors": _sensors_ll,
+            "event_uuid": str(_uuid.uuid4()),
+            "confirm": {"frames": int(conf_frames),
+                        "seconds": round(_confirm_step / float(fps), 1) if _confirm_step is not None else None,
+                        "max_angle": round(float(sim_res.get("max_angle_deg", 0)))},
         }
         st.session_state.v2x_armed = True
         st.rerun()
-    if st.session_state.v2x_armed and bc2.button("✖ Close dashboard", use_container_width=True):
+    if st.session_state.v2x_armed and bc2.button("✖ Clear broadcast", use_container_width=True):
         st.session_state.v2x_armed = False
         st.session_state.v2x_event = None
         st.rerun()
-    if not flagged_now and not st.session_state.v2x_armed and confirm_frame is not None:
+    if not flagged_now and confirm_frame is not None:
         st.caption(f"Scrub to step {confirm_frame - start_frame} (the confirmation moment) to enable the broadcast.")
 
 if st.session_state.v2x_armed and st.session_state.v2x_event:
-    html = v2x_dashboard_html(st.session_state.v2x_event)
-    if html is None:
-        st.warning("V2X dashboard not found. Save your single-file app to "
-                   "`assets/wwd_v2x_dashboard.html` (see assets/README.md), then broadcast again.")
-    else:
-        ev = st.session_state.v2x_event
-        _loc_txt = (f"{ev['lat']:.6f}, {ev['lon']:.6f}"
-                    + ("" if ev.get("lat_exact") else " (approx)"))
-        st.success(f"🚨 Broadcasting: {ev['direction']}-bound in the {ev['lane']} lane · "
-                   f"{ev['speed']} m/s · heading {ev['heading']}° (true) · 📍 {_loc_txt} — "
-                   "the dashboard fired its alert pipeline below.")
-        components.html(html, height=1500, scrolling=True)
+    ev = st.session_state.v2x_event
+    _loc_txt = (f"{ev['lat']:.6f}, {ev['lon']:.6f}" + ("" if ev.get("lat_exact") else " (approx)"))
+    st.success(f"🚨 Broadcasting: {ev['direction']}-bound in the {ev['lane']} lane · "
+               f"{ev['speed']} m/s · heading {ev['heading']}° (true) · 📍 {_loc_txt}")
+    st.page_link("pages/8_V2X_Dashboard.py",
+                 label="📡 Open the V2X Dashboard — live map, J2735 TIM, pipeline & receivers", icon="📡")
 
 # auto-advance (paused while the dashboard is embedded to avoid re-render churn)
 if playing and step < n_steps - 1 and not st.session_state.v2x_armed:
