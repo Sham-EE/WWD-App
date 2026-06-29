@@ -344,21 +344,21 @@ def render_lidar_tab():
                "with the mouse** to explore, then lock the camera with the sliders (the render uses the "
                "sliders). Found the look? Note the values and I'll hardcode them.")
     a1, a2, a3 = st.columns(3)
-    c_az = a1.slider("Azimuth°", -180, 180, 45, key="vid3d_az",
+    c_az = a1.slider("Azimuth°", -180, 180, 180, key="vid3d_az",
                      help="Spin the camera around the scene (compass heading).")
     c_el = a2.slider("Elevation°", 0, 89, 30, key="vid3d_el",
                      help="Camera height above the ground plane. Low ≈ eye-level / camera-like.")
     c_roll = a3.slider("Roll°", -45, 45, 0, key="vid3d_roll", help="Tilt the horizon.")
     z1, z2, z3 = st.columns(3)
-    c_zoom = z1.slider("Zoom", 0.4, 4.0, 1.0, 0.05, key="vid3d_zoom",
+    c_zoom = z1.slider("Zoom", 0.4, 4.0, 2.05, 0.05, key="vid3d_zoom",
                        help="Higher = closer (moves the camera in). True 3D zoom — no distortion or glitch.")
-    c_px = z2.slider("Pan X", -1.0, 1.0, 0.0, 0.05, key="vid3d_px",
+    c_px = z2.slider("Pan X", -1.0, 1.0, 0.05, 0.05, key="vid3d_px",
                      help="Shift the look-at point left/right (normalized scene units).")
-    c_py = z3.slider("Pan Y", -1.0, 1.0, 0.0, 0.05, key="vid3d_py",
+    c_py = z3.slider("Pan Y", -1.0, 1.0, -0.05, 0.05, key="vid3d_py",
                      help="Shift the look-at point forward/back (normalized scene units).")
     s1, s2, s3 = st.columns(3)
     v_fps = s1.slider("FPS", 1, 30, 10, key="vid3d_fps")
-    v_pts = s2.select_slider("Points", [3000, 6000, 12000, 20000], value=6000, key="vid3d_pts")
+    v_pts = s2.select_slider("Points", [3000, 6000, 12000, 20000], value=20000, key="vid3d_pts")
     v_max = s3.number_input("Max frames (0 = all)", 0, n, 0, key="vid3d_max")
 
     camera = lv.orbit_camera(azimuth=c_az, elevation=c_el, zoom=c_zoom,
