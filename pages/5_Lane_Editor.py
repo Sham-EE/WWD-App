@@ -5,7 +5,7 @@ import streamlit as st
 import numpy as np
 
 from lane_tools import (
-    load_tracks, moving_points, auto_lanes,
+    load_tracks, moving_points, auto_lanes, lane_heading_from_tracks,
     lanes_to_geojson, geojson_to_lanes, build_preview, load_pcd_background,
 )
 
@@ -50,12 +50,18 @@ src = uploaded if uploaded is not None else (DEFAULT_TRACKS if os.path.exists(DE
 min_speed = top[1].slider("Min speed", 0.0, 10.0, 1.0, 0.5, help="m/s; exclude slow/parked points.")
 k = top[2].number_input("# lanes", 1, 8, 4, help="Lanes to auto-detect.")
 
-points = None
+points, _df = None, None
 if src is not None:
     try:
-        points = moving_points(load_tracks(src), min_speed=min_speed)
+        _df = load_tracks(src)                       # keep the full df (has tid) for heading-from-data
+        points = moving_points(_df, min_speed=min_speed)
     except Exception as e:
         st.error(f"Could not read tracks: {e}")
+
+# A toast queued by a "Set heading from data" action on the previous run.
+_hd_msg = st.session_state.pop("_hd_toast", None)
+if _hd_msg:
+    st.toast(_hd_msg)
 
 if top[3].button("✨ Auto-generate", use_container_width=True,
                  disabled=points is None or len(points) == 0,
@@ -79,6 +85,25 @@ if top[5].button("🔄 Default lanes", use_container_width=True,
                       "in case you messed up your edits."):
     with open(_ds.default_lanes_path) as f:
         st.session_state.le_lanes = geojson_to_lanes(json.load(f))
+    st.session_state.le_v += 1
+    st.rerun()
+
+# ---- Set EVERY lane's heading from the measured vehicle flow (bulk) ----
+gcol = st.columns([2.3, 1.5, 1.3])
+g_mode = gcol[1].radio("Measure all headings", ["All vehicles", "Straight only"], horizontal=True,
+                       key=f"gmode_{st.session_state.le_v}", label_visibility="collapsed",
+                       help="Set every lane's heading from the vehicles in its box. **Straight only** "
+                            "excludes turning vehicles (the through-flow only) — usually more realistic.")
+gcol[0].caption("📐 **Measure headings from data** — set each lane's direction from the vehicles in its box:")
+if gcol[2].button("📐 Apply to all lanes", use_container_width=True,
+                  disabled=_df is None or not st.session_state.le_lanes):
+    _n = 0
+    for _l in st.session_state.le_lanes:
+        _hd, _nu, _ne = lane_heading_from_tracks(
+            _df, _l, min_speed=min_speed, exclude_turning=g_mode.startswith("Straight"))
+        if _hd is not None:
+            _l['heading_deg'] = round(_hd, 1); _n += 1
+    st.session_state["_hd_toast"] = f"Measured {_n} lane heading(s) from data ({g_mode.lower()})."
     st.session_state.le_v += 1
     st.rerun()
 
@@ -129,6 +154,29 @@ with left:
                                                format="%.1f", key=f"ymin_{i}_{v}")
                 l['ymax'] = yc[1].number_input("Y max", value=float(l['ymax']), step=1.0,
                                                format="%.1f", key=f"ymax_{i}_{v}")
+                # ---- measure the heading from the vehicles in this box ----
+                hc = st.columns([1.7, 1])
+                _hmode = hc[0].radio("Set heading from vehicles in this box", ["All", "Straight only"],
+                                     key=f"hmode_{i}_{v}", horizontal=True,
+                                     help="Measure this lane's heading from the tracked vehicles inside "
+                                          "the box. **Straight only** drops vehicles that turn (the ones "
+                                          "that *change colour*), so only the through-flow sets the "
+                                          "direction — the realistic choice for a through-lane.")
+                hc[1].markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
+                if hc[1].button("📐 Measure", key=f"sethd_{i}_{v}", use_container_width=True,
+                                disabled=_df is None,
+                                help=None if _df is not None else "Load a tracks.csv first."):
+                    _hd, _nu, _ne = lane_heading_from_tracks(
+                        _df, l, min_speed=min_speed, exclude_turning=_hmode.startswith("Straight"))
+                    if _hd is None:
+                        st.session_state["_hd_toast"] = f"No vehicles inside the “{l['lane_id']}” box."
+                    else:
+                        l['heading_deg'] = round(_hd, 1)
+                        st.session_state["_hd_toast"] = (
+                            f"“{l['lane_id']}” → {_hd:.1f}° from {_nu} vehicle(s)"
+                            + (f" · {_ne} turning excluded" if _ne else ""))
+                    st.session_state.le_v += 1
+                    st.rerun()
                 if st.button("↺ Reset this lane to default", key=f"rst_{i}_{v}",
                              use_container_width=True, disabled=dft is None,
                              help=("Restore just this lane's box + heading from "

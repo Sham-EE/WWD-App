@@ -74,6 +74,59 @@ def auto_lanes(points: np.ndarray, k: int = 4, buffer_m: float = 2.0):
     return lanes
 
 
+def lane_heading_from_tracks(df: pd.DataFrame, lane, min_speed: float = 1.0,
+                             exclude_turning: bool = True, turn_spread_deg: float = 40.0,
+                             min_track_pts: int = 3):
+    """Measured travel heading (degrees) for a lane box, from the tracked vehicles.
+
+    Filters moving points (speed ≥ ``min_speed``, valid heading) inside the lane box,
+    then takes their circular-mean heading.
+
+    ``exclude_turning`` drops whole tracks that **turn** — those whose heading sweeps
+    more than ``turn_spread_deg`` across the track (i.e. the vehicles that *change
+    colour* in the editor) — so only the straight-through flow defines the lane
+    direction. Returns ``(heading_deg | None, n_vehicles_used, n_vehicles_excluded)``.
+    """
+    if df is None or len(df) == 0:
+        return None, 0, 0
+    d = df
+    if 'heading' not in d.columns or d['heading'].isna().all():
+        if {'vx', 'vy'}.issubset(d.columns):
+            d = d.assign(heading=np.arctan2(pd.to_numeric(d['vy'], errors='coerce'),
+                                            pd.to_numeric(d['vx'], errors='coerce')))
+    d = d[d['heading'].notna()]
+    if 'speed' in d.columns:
+        d = d[pd.to_numeric(d['speed'], errors='coerce') >= float(min_speed)]
+    xmin, xmax = sorted((float(lane['xmin']), float(lane['xmax'])))
+    ymin, ymax = sorted((float(lane['ymin']), float(lane['ymax'])))
+    d = d[(d['cx'] >= xmin) & (d['cx'] <= xmax) & (d['cy'] >= ymin) & (d['cy'] <= ymax)]
+    if len(d) == 0:
+        return None, 0, 0
+
+    used = []          # headings (rad) that define the direction
+    n_used = n_excl = 0
+    if exclude_turning and 'tid' in d.columns:
+        for _tid, g in d.groupby('tid'):
+            h = g['heading'].to_numpy(dtype=float)
+            if len(h) < min_track_pts:           # too short to judge → keep
+                used.extend(h); n_used += 1; continue
+            mh = np.arctan2(np.sin(h).mean(), np.cos(h).mean())
+            spread = np.degrees(np.abs((h - mh + np.pi) % (2 * np.pi) - np.pi)).max()
+            if spread <= turn_spread_deg:        # straight-through → keep
+                used.extend(h); n_used += 1
+            else:                                # turner → drop
+                n_excl += 1
+    else:
+        used = d['heading'].to_numpy(dtype=float).tolist()
+        n_used = int(d['tid'].nunique()) if 'tid' in d.columns else len(used)
+
+    if not used:
+        return None, 0, n_excl
+    H = np.asarray(used, dtype=float)
+    mh = np.degrees(np.arctan2(np.sin(H).mean(), np.cos(H).mean()))
+    return float(mh), n_used, n_excl
+
+
 def lanes_to_geojson(lanes) -> dict:
     feats = []
     for l in lanes:
