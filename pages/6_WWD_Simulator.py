@@ -119,8 +119,11 @@ except Exception:
 def _add_compass(fig, cx, cy, r, north_deg, z=None):
     """Draw a true-North compass rose (N/E/S/W) centred at (cx, cy[, z]) — Scatter3d
     when `z` is given (rotates with the 3D scene), else Scattergl on the BEV."""
-    for lab, ang, is_n in (("N", north_deg, True), ("E", north_deg - 90, False),
-                           ("S", north_deg + 180, False), ("W", north_deg + 90, False)):
+    # E/W swapped vs a naive rose: the georef's east/west is mirrored relative to
+    # reality (the first-frame truck heads sensor +X = georef "West" but really drives
+    # East toward the Jägerhof). Reflection across N–S keeps N/S, fixes E↔W.
+    for lab, ang, is_n in (("N", north_deg, True), ("E", north_deg + 90, False),
+                           ("S", north_deg + 180, False), ("W", north_deg - 90, False)):
         a = np.radians(ang)
         ex, ey = cx + r * np.cos(a), cy + r * np.sin(a)
         lx, ly = cx + 1.3 * r * np.cos(a), cy + 1.3 * r * np.sin(a)

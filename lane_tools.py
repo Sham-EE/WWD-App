@@ -209,8 +209,13 @@ _TRUE_CARDINAL = [("N", '#2ca02c'), ("E", '#d62728'), ("S", '#ff7f0e'), ("W", '#
 
 
 def true_cardinal_buckets(heading_deg, north_deg):
-    """Label sensor-frame math headings (deg) by TRUE compass cardinal N/E/S/W."""
-    comp = (float(north_deg) - np.asarray(heading_deg, dtype=float)) % 360.0
+    """Label sensor-frame math headings (deg) by TRUE compass cardinal N/E/S/W.
+
+    The georeference's east/west is mirrored relative to reality (verified: the
+    first-frame truck heads sensor +X, which the georef calls West, but on the map
+    it drives East toward the Jägerhof). So compass = heading − north (a reflection
+    across the N–S axis: N/S unchanged, E↔W swapped)."""
+    comp = (np.asarray(heading_deg, dtype=float) - float(north_deg)) % 360.0
     lab = np.empty(comp.shape, dtype=object)
     lab[(comp < 45) | (comp >= 315)] = 'N'
     lab[(comp >= 45) & (comp < 135)] = 'E'
@@ -228,9 +233,11 @@ def _cardinal_scheme(true_north_deg):
 
 
 def _compass_dirs(north_deg):
-    """Math angle (CCW from +X, deg) of each true-cardinal arrow tip on screen."""
-    return [('N', north_deg, True), ('E', north_deg - 90.0, False),
-            ('S', north_deg + 180.0, False), ('W', north_deg + 90.0, False)]
+    """Math angle (CCW from +X, deg) of each true-cardinal arrow tip on screen.
+    E/W swapped vs a naive rose because the georef's east/west is mirrored (see
+    true_cardinal_buckets) — keeps N/S, puts East where the scene's east really is."""
+    return [('N', north_deg, True), ('E', north_deg + 90.0, False),
+            ('S', north_deg + 180.0, False), ('W', north_deg - 90.0, False)]
 
 
 def lane_display_colors(lanes, color_mode: str, true_north_deg=None):
