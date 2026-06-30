@@ -53,7 +53,17 @@ def auto_lanes(points: np.ndarray, k: int = 4, buffer_m: float = 2.0):
         pts = points[labels == c]
         if len(pts) == 0:
             continue
-        mh = np.arctan2(np.sin(pts[:, 2]).mean(), np.cos(pts[:, 2]).mean())
+        # Robust circular mean of the travel heading: start from the plain mean,
+        # then iteratively drop points whose heading is far from it. TURNING
+        # vehicles sweep through headings and would otherwise pull the lane's
+        # direction diagonal — this keeps it on the straight-through flow.
+        Hc = pts[:, 2]
+        mh = np.arctan2(np.sin(Hc).mean(), np.cos(Hc).mean())
+        for _ in range(4):
+            dev = np.abs((np.degrees(Hc - mh) + 180.0) % 360.0 - 180.0)
+            keep = dev <= 30.0
+            if keep.sum() >= max(5, int(0.25 * len(Hc))):
+                mh = np.arctan2(np.sin(Hc[keep]).mean(), np.cos(Hc[keep]).mean())
         lanes.append(dict(
             lane_id=f"lane_{c+1}",
             xmin=float(pts[:, 0].min() - buffer_m), xmax=float(pts[:, 0].max() + buffer_m),

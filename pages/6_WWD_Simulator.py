@@ -215,7 +215,9 @@ def _scene_fig(stp, with_points, max_pts, height=620):
     pts = _sim_load_pts(_pcds[scene_i], int(max_pts))
     gt_objs = lp.load_objects(_labels[scene_i]) if scene_i < len(_labels) else []
     road = dp.road_polygon(0.0) if st.session_state.sim3d_road else None
-    sensors = reg.lidar_markers(ds, "south") if st.session_state.sim3d_lidar else None
+    # "registered" = BOTH LiDARs (south + north) placed in the south frame the WWD
+    # scene lives in, so the north station is shown too (south-only hid it).
+    sensors = reg.lidar_markers(ds, "registered") if st.session_state.sim3d_lidar else None
     hdmap = geo.hdmap_lanes_sensor_frame("south", 130.0) if st.session_state.sim3d_hdmap else None
     fig = lv.build_figure(pts if with_points else np.zeros((0, 3)),
                           gt_objs if st.session_state.sim3d_boxes else [],
@@ -328,7 +330,7 @@ else:
             if _l is not None:
                 _path_ll.append([round(_l[0], 7), round(_l[1], 7)])
         _sensors_ll = []
-        for _s in reg.lidar_markers(ds, "south"):
+        for _s in reg.lidar_markers(ds, "registered"):
             _p = _s.get("pos", [0, 0, 0])
             _ll = geo.sensor_xy_to_latlon(float(_p[0]), float(_p[1]), "south")
             if _ll is not None:
