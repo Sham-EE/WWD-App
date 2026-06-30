@@ -6,7 +6,8 @@ import numpy as np
 
 from lane_tools import (
     load_tracks, moving_points, auto_lanes, snap_to_cardinal,
-    lanes_to_geojson, geojson_to_lanes, build_preview, load_pcd_background,
+    lanes_to_geojson, geojson_to_lanes, build_preview, build_draw_figure,
+    simplify_path, load_pcd_background,
 )
 
 import nav
@@ -123,16 +124,20 @@ with left:
                 a[2].markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
                 if a[2].button("🗑", key=f"del_{i}_{v}", help="Delete lane"):
                     delete_idx = i
-                xc = st.columns(2)
-                l['xmin'] = xc[0].number_input("X min", value=float(l['xmin']), step=1.0,
-                                               format="%.1f", key=f"xmin_{i}_{v}")
-                l['xmax'] = xc[1].number_input("X max", value=float(l['xmax']), step=1.0,
-                                               format="%.1f", key=f"xmax_{i}_{v}")
-                yc = st.columns(2)
-                l['ymin'] = yc[0].number_input("Y min", value=float(l['ymin']), step=1.0,
-                                               format="%.1f", key=f"ymin_{i}_{v}")
-                l['ymax'] = yc[1].number_input("Y max", value=float(l['ymax']), step=1.0,
-                                               format="%.1f", key=f"ymax_{i}_{v}")
+                if l.get('polygon'):
+                    st.caption(f"✏️ Drawn polygon · {len(l['polygon'])} vertices — re-shape it in "
+                               "**✏️ Draw mode** (right) via *Replace selected lane*.")
+                else:
+                    xc = st.columns(2)
+                    l['xmin'] = xc[0].number_input("X min", value=float(l['xmin']), step=1.0,
+                                                   format="%.1f", key=f"xmin_{i}_{v}")
+                    l['xmax'] = xc[1].number_input("X max", value=float(l['xmax']), step=1.0,
+                                                   format="%.1f", key=f"xmax_{i}_{v}")
+                    yc = st.columns(2)
+                    l['ymin'] = yc[0].number_input("Y min", value=float(l['ymin']), step=1.0,
+                                                   format="%.1f", key=f"ymin_{i}_{v}")
+                    l['ymax'] = yc[1].number_input("Y max", value=float(l['ymax']), step=1.0,
+                                                   format="%.1f", key=f"ymax_{i}_{v}")
                 bc = st.columns(2)
                 if bc[0].button("🧭 Snap to cardinal", key=f"snap_{i}_{v}", use_container_width=True,
                                 help="Point this lane's arrow straight along the nearest cardinal "
@@ -154,6 +159,7 @@ with left:
             st.rerun()
         if reset_action is not None:
             idx, dft = reset_action
+            lanes[idx].pop('polygon', None)   # defaults are boxes → back to a box lane
             lanes[idx].update(xmin=dft['xmin'], xmax=dft['xmax'], ymin=dft['ymin'],
                               ymax=dft['ymax'], heading_deg=dft['heading_deg'])
             st.session_state.le_v += 1
@@ -195,7 +201,7 @@ with left:
                    "'🔄 Default lanes' now restores these.")
 
 with right:
-    head = st.columns([3, 1.4])
+    head = st.columns([2.6, 1, 1])
     color_choice = head[0].segmented_control(
         "Color points by", ["Cardinal", "Lane", "Heading"], default="Cardinal",
         help="How the vehicle dots are colored:\n\n"
@@ -204,16 +210,19 @@ with right:
              "Good for checking which boxes capture which vehicles.\n\n"
              "• Heading — continuous color by exact heading angle.") or "Cardinal"
     color_mode = {"Cardinal": "cardinal", "Lane": "lane", "Heading": "heading"}[color_choice]
-    top_down = head[1].toggle("⬇️ Top-down", value=True,
-                              help="On = bird's-eye. Off = oblique 3D.")
+    draw_mode = head[1].toggle("✏️ Draw", value=False,
+                               help="Flat top-down view where you **lasso/box-draw** a lane polygon. "
+                                    "Off = the normal 3D preview.")
+    top_down = head[2].toggle("⬇️ Top-down", value=True, disabled=draw_mode,
+                              help="On = bird's-eye. Off = oblique 3D. (Draw mode is always top-down.)")
 
     bgc, hmc = st.columns(2)
-    show_bg = bgc.checkbox("🛰️ Point cloud background", value=True)
+    show_bg = bgc.checkbox("🛰️ Point cloud background", value=True, disabled=draw_mode)
     show_hdmap = hmc.checkbox("🗺️ Intersection (HD map)", value=True,
                               help="Overlay the real intersection's road network (the dev-kit HD map) "
-                                   "so you can line lane boxes up with the actual roads.")
+                                   "so you can line lanes up with the actual roads.")
     bg_xyz = None
-    if show_bg and os.path.isdir(DEFAULT_PCD_BG):
+    if show_bg and not draw_mode and os.path.isdir(DEFAULT_PCD_BG):
         try:
             bg_xyz = _cached_background(DEFAULT_PCD_BG, 15)
         except Exception as e:
@@ -229,8 +238,52 @@ with right:
         except Exception:
             hdmap_lanes = None
 
-    fig = build_preview(points if points is not None else np.zeros((0, 3)),
-                        lanes, color_mode=color_mode, bg_xyz=bg_xyz, top_down=top_down,
-                        hdmap_lanes=hdmap_lanes)
-    fig.update_layout(height=PREVIEW_H)
-    st.plotly_chart(fig, use_container_width=True, key="le_preview")
+    _pts = points if points is not None else np.zeros((0, 3))
+    if draw_mode:
+        try:
+            from geometry_config import get_research_polygon
+            _bx0, _by0, _bx1, _by1 = get_research_polygon().bounds
+            _m = 5.0
+            _xr, _yr = [_bx0 - _m, _bx1 + _m], [_by0 - _m, _by1 + _m]
+        except Exception:
+            _xr = _yr = None
+        dfig = build_draw_figure(_pts, lanes, hdmap_lanes=hdmap_lanes, color_mode=color_mode,
+                                 xrange=_xr, yrange=_yr)
+        ev = st.plotly_chart(dfig, use_container_width=True, key="le_draw", on_select="rerun",
+                             config={"scrollZoom": True, "displaylogo": False,
+                                     "modeBarButtonsToRemove": ["autoScale2d"]})
+        poly = None
+        try:
+            sel = ev.get("selection") or {}
+            lasso, boxsel = sel.get("lasso") or [], sel.get("box") or []
+            if lasso:
+                poly = simplify_path(lasso[0]["x"], lasso[0]["y"])
+            elif boxsel:
+                xs, ys = boxsel[0]["x"], boxsel[0]["y"]
+                x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+                poly = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+        except Exception:
+            poly = None
+        if poly and len(poly) >= 3:
+            st.caption(f"✏️ Drawn shape · {len(poly)} vertices — add it as a lane, or replace an existing one.")
+            d1, d2, d3 = st.columns([1.3, 1.6, 1])
+            if d1.button("➕ Add as new lane", use_container_width=True):
+                lanes.append(dict(lane_id=f"lane_{len(lanes)+1}", polygon=poly, heading_deg=0.0, n=0))
+                st.session_state.le_v += 1
+                st.rerun()
+            if lanes:
+                _ri = d2.selectbox("replace which lane", list(range(len(lanes))),
+                                   format_func=lambda j: str(lanes[j]['lane_id']),
+                                   key=f"le_repl_{v}", label_visibility="collapsed")
+                if d3.button("✏️ Replace", use_container_width=True):
+                    lanes[_ri]['polygon'] = poly
+                    st.session_state.le_v += 1
+                    st.rerun()
+        else:
+            st.caption("Pick the **Lasso** (or **Box Select**) tool at the top-right of the chart, then "
+                       "drag a shape around the lane — the outline becomes the lane polygon.")
+    else:
+        fig = build_preview(_pts, lanes, color_mode=color_mode, bg_xyz=bg_xyz, top_down=top_down,
+                            hdmap_lanes=hdmap_lanes)
+        fig.update_layout(height=PREVIEW_H)
+        st.plotly_chart(fig, use_container_width=True, key="le_preview")
