@@ -203,35 +203,69 @@ def assign_points_to_lanes(points: np.ndarray, lanes) -> np.ndarray:
     return a
 
 
-def lane_display_colors(lanes, color_mode: str):
+# TRUE geographic cardinals (used when a georeference is available). `north_deg` is
+# the sensor-frame math heading (CCW from +X) that points at true North.
+_TRUE_CARDINAL = [("N", '#2ca02c'), ("E", '#d62728'), ("S", '#ff7f0e'), ("W", '#1f77b4')]
+
+
+def true_cardinal_buckets(heading_deg, north_deg):
+    """Label sensor-frame math headings (deg) by TRUE compass cardinal N/E/S/W."""
+    comp = (float(north_deg) - np.asarray(heading_deg, dtype=float)) % 360.0
+    lab = np.empty(comp.shape, dtype=object)
+    lab[(comp < 45) | (comp >= 315)] = 'N'
+    lab[(comp >= 45) & (comp < 135)] = 'E'
+    lab[(comp >= 135) & (comp < 225)] = 'S'
+    lab[(comp >= 225) & (comp < 315)] = 'W'
+    return lab
+
+
+def _cardinal_scheme(true_north_deg):
+    """(bucket_fn(heading_deg_array) -> labels, palette[(label,color)]) for the active
+    cardinal convention: TRUE compass when `true_north_deg` is set, else sensor-frame."""
+    if true_north_deg is None:
+        return (lambda h: _cardinal_bucket(np.asarray(h))), _CARDINAL
+    return (lambda h: true_cardinal_buckets(h, true_north_deg)), _TRUE_CARDINAL
+
+
+def _compass_dirs(north_deg):
+    """Math angle (CCW from +X, deg) of each true-cardinal arrow tip on screen."""
+    return [('N', north_deg, True), ('E', north_deg - 90.0, False),
+            ('S', north_deg + 180.0, False), ('W', north_deg + 90.0, False)]
+
+
+def lane_display_colors(lanes, color_mode: str, true_north_deg=None):
     """One display color per lane, chosen so boxes match the vehicle dots:
-    'lane' -> per-lane palette; otherwise -> the lane heading's cardinal color."""
-    card = dict(_CARDINAL)
+    'lane' -> per-lane palette; otherwise -> the lane heading's cardinal color
+    (TRUE compass cardinal when `true_north_deg` is given, else sensor-frame)."""
+    bucket_fn, palette = _cardinal_scheme(true_north_deg)
+    card = dict(palette)
     cols = []
     for i, l in enumerate(lanes):
         if color_mode == 'lane':
             cols.append(_PALETTE[i % len(_PALETTE)])
         else:
-            lab = _cardinal_bucket(np.array([l['heading_deg']]))[0]
+            lab = bucket_fn([l['heading_deg']])[0]
             cols.append(card.get(lab, '#888888'))
     return cols
 
 
 def build_preview(points: np.ndarray, lanes, color_mode: str = 'cardinal',
                   bg_xyz: np.ndarray = None, top_down: bool = True,
-                  hdmap_lanes=None) -> go.Figure:
+                  hdmap_lanes=None, true_north_deg=None) -> go.Figure:
     """3D bird's-eye preview (same mouse UX as the detection viewer): optional
     point-cloud backdrop + vehicle positions + lane boxes with direction arrows.
     Box colors always match the dot colors. ``top_down`` toggles the camera.
 
     ``hdmap_lanes`` (list of sensor-frame polylines [[x, y], ...]) draws the real
     intersection's HD-map road network underneath, so lane boxes can be aligned to
-    the actual roads.
+    the actual roads. ``true_north_deg`` (sensor math-heading of true North) switches
+    the cardinal colouring to TRUE compass directions and draws a compass rose.
 
     color_mode: 'cardinal' (dots by direction bucket), 'lane' (dots by which box
     they fall in; gray if outside all), or 'heading' (continuous HSV)."""
     Z_DOT, Z_BOX = -6.0, -7.2
     fig = go.Figure()
+    bucket_fn, palette = _cardinal_scheme(true_north_deg)
 
     # Real intersection roads (HD map) — one batched trace, under everything.
     if hdmap_lanes:
@@ -254,13 +288,13 @@ def build_preview(points: np.ndarray, lanes, color_mode: str = 'cardinal',
             marker=dict(size=1.5, color='#9a9a9a', opacity=0.35),
             name='point cloud', hoverinfo='skip'))
 
-    lane_cols = lane_display_colors(lanes, color_mode)
+    lane_cols = lane_display_colors(lanes, color_mode, true_north_deg)
 
     if len(points):
         zc = np.full(len(points), Z_DOT)
         if color_mode == 'cardinal':
-            buckets = _cardinal_bucket(np.degrees(points[:, 2]))
-            for label, col in _CARDINAL:
+            buckets = bucket_fn(np.degrees(points[:, 2]))
+            for label, col in palette:
                 m = buckets == label
                 if m.any():
                     fig.add_trace(go.Scatter3d(
@@ -328,6 +362,23 @@ def build_preview(points: np.ndarray, lanes, color_mode: str = 'cardinal',
         xrange, yrange = [bx0 - m, bx1 + m], [by0 - m, by1 + m]
     except Exception:
         xrange = yrange = None
+
+    # True-North compass rose in the bottom-right corner (data coords @ box plane).
+    if true_north_deg is not None and xrange and yrange:
+        cxc = xrange[1] - 0.10 * (xrange[1] - xrange[0])
+        cyc = yrange[0] + 0.12 * (yrange[1] - yrange[0])
+        r = 0.06 * min(xrange[1] - xrange[0], yrange[1] - yrange[0])
+        for lab, ang, is_n in _compass_dirs(true_north_deg):
+            a = np.radians(ang)
+            ex, ey = cxc + r * np.cos(a), cyc + r * np.sin(a)
+            c = '#ffffff' if is_n else '#9aa3b2'
+            fig.add_trace(go.Scatter3d(x=[cxc, ex], y=[cyc, ey], z=[Z_BOX, Z_BOX], mode='lines',
+                                       line=dict(color=c, width=5 if is_n else 2),
+                                       showlegend=False, hoverinfo='skip'))
+            fig.add_trace(go.Scatter3d(x=[cxc + 1.25 * r * np.cos(a)], y=[cyc + 1.25 * r * np.sin(a)],
+                                       z=[Z_BOX], mode='text', text=[lab],
+                                       textfont=dict(color=c, size=13), showlegend=False, hoverinfo='skip'))
+
     fig.update_layout(
         height=680, margin=dict(l=0, r=0, t=30, b=0),
         uirevision=uirev,
@@ -350,11 +401,14 @@ def simplify_path(xs, ys, max_pts: int = 24, min_pts: int = 3):
 
 
 def build_draw_figure(points: np.ndarray, lanes, hdmap_lanes=None,
-                      color_mode: str = 'cardinal', xrange=None, yrange=None) -> go.Figure:
+                      color_mode: str = 'cardinal', xrange=None, yrange=None,
+                      true_north_deg=None) -> go.Figure:
     """Flat top-down 2D figure for DRAWING lane polygons: vehicle dots + HD-map roads
     + existing lane rings, with lasso/box select enabled (the drawn path becomes a new
-    lane polygon). Equal aspect so shapes aren't distorted."""
+    lane polygon). Equal aspect so shapes aren't distorted. ``true_north_deg`` switches
+    the cardinal colouring to TRUE compass directions and draws a compass rose."""
     fig = go.Figure()
+    bucket_fn, palette = _cardinal_scheme(true_north_deg)
     if hdmap_lanes:
         hx, hy = [], []
         for poly in hdmap_lanes:
@@ -365,8 +419,8 @@ def build_draw_figure(points: np.ndarray, lanes, hdmap_lanes=None,
                                    opacity=0.6, name='intersection (HD map)', hoverinfo='skip'))
     if points is not None and len(points):
         if color_mode == 'cardinal':
-            buckets = _cardinal_bucket(np.degrees(points[:, 2]))
-            for label, col in _CARDINAL:
+            buckets = bucket_fn(np.degrees(points[:, 2]))
+            for label, col in palette:
                 m = buckets == label
                 if m.any():
                     fig.add_trace(go.Scattergl(x=points[m, 0], y=points[m, 1], mode='markers',
@@ -374,12 +428,29 @@ def build_draw_figure(points: np.ndarray, lanes, hdmap_lanes=None,
         else:
             fig.add_trace(go.Scattergl(x=points[:, 0], y=points[:, 1], mode='markers',
                                        marker=dict(size=4, color='#8a93a5'), name='vehicles', hoverinfo='skip'))
-    lane_cols = lane_display_colors(lanes, color_mode)
+    lane_cols = lane_display_colors(lanes, color_mode, true_north_deg)
     for i, l in enumerate(lanes):
         ring = lane_ring(l)
         fig.add_trace(go.Scattergl(x=[p[0] for p in ring], y=[p[1] for p in ring], mode='lines',
                                    line=dict(color=lane_cols[i], width=3),
                                    name=str(l['lane_id']), hoverinfo='skip'))
+
+    # True-North compass rose, bottom-right (data coords; equal aspect keeps angles true).
+    if true_north_deg is not None and xrange and yrange:
+        cxc = xrange[1] - 0.10 * (xrange[1] - xrange[0])
+        cyc = yrange[0] + 0.12 * (yrange[1] - yrange[0])
+        r = 0.06 * min(xrange[1] - xrange[0], yrange[1] - yrange[0])
+        for lab, ang, is_n in _compass_dirs(true_north_deg):
+            a = np.radians(ang)
+            ex, ey = cxc + r * np.cos(a), cyc + r * np.sin(a)
+            c = '#ffffff' if is_n else '#9aa3b2'
+            fig.add_trace(go.Scattergl(x=[cxc, ex], y=[cyc, ey], mode='lines',
+                                       line=dict(color=c, width=4 if is_n else 1.5),
+                                       hoverinfo='skip', showlegend=False))
+            fig.add_trace(go.Scattergl(x=[cxc + 1.28 * r * np.cos(a)], y=[cyc + 1.28 * r * np.sin(a)],
+                                       mode='text', text=[lab], textfont=dict(color=c, size=13),
+                                       hoverinfo='skip', showlegend=False))
+
     fig.update_layout(
         height=680, margin=dict(l=0, r=0, t=30, b=0), dragmode='lasso',
         xaxis=dict(title='X (m)', range=xrange),

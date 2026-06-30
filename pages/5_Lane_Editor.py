@@ -216,11 +216,30 @@ with right:
     top_down = head[2].toggle("⬇️ Top-down", value=True, disabled=draw_mode,
                               help="On = bird's-eye. Off = oblique 3D. (Draw mode is always top-down.)")
 
-    bgc, hmc = st.columns(2)
-    show_bg = bgc.checkbox("🛰️ Point cloud background", value=True, disabled=draw_mode)
+    import geo_reference as geo
+    _gref = "north" if _le_sensor == "north" else "south"
+    _has_geo = False
+    try:
+        _has_geo = geo.has_georef(_gref)
+    except Exception:
+        _has_geo = False
+
+    bgc, hmc, tnc = st.columns(3)
+    show_bg = bgc.checkbox("🛰️ Point cloud", value=True, disabled=draw_mode)
     show_hdmap = hmc.checkbox("🗺️ Intersection (HD map)", value=True,
                               help="Overlay the real intersection's road network (the dev-kit HD map) "
                                    "so you can line lanes up with the actual roads.")
+    true_cardinals = tnc.checkbox("🧭 True cardinals", value=_has_geo, disabled=not _has_geo,
+                                  help="Colour vehicles/lanes by REAL compass direction (N/E/S/W from the "
+                                       "georeference) and show a compass rose, instead of the sensor-frame "
+                                       "axes. Needs a georeference for this sensor."
+                                       if _has_geo else "No georeference for this sensor.")
+    true_north_deg = None
+    if true_cardinals and _has_geo:
+        try:
+            true_north_deg = geo.heading_to_true_bearing(0.0, _gref)  # sensor math-heading of true North
+        except Exception:
+            true_north_deg = None
     bg_xyz = None
     if show_bg and not draw_mode and os.path.isdir(DEFAULT_PCD_BG):
         try:
@@ -248,7 +267,7 @@ with right:
         except Exception:
             _xr = _yr = None
         dfig = build_draw_figure(_pts, lanes, hdmap_lanes=hdmap_lanes, color_mode=color_mode,
-                                 xrange=_xr, yrange=_yr)
+                                 xrange=_xr, yrange=_yr, true_north_deg=true_north_deg)
         ev = st.plotly_chart(dfig, use_container_width=True, key="le_draw", on_select="rerun",
                              config={"scrollZoom": True, "displaylogo": False,
                                      "modeBarButtonsToRemove": ["autoScale2d"]})
@@ -284,6 +303,6 @@ with right:
                        "drag a shape around the lane — the outline becomes the lane polygon.")
     else:
         fig = build_preview(_pts, lanes, color_mode=color_mode, bg_xyz=bg_xyz, top_down=top_down,
-                            hdmap_lanes=hdmap_lanes)
+                            hdmap_lanes=hdmap_lanes, true_north_deg=true_north_deg)
         fig.update_layout(height=PREVIEW_H)
         st.plotly_chart(fig, use_container_width=True, key="le_preview")
