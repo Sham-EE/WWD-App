@@ -5,7 +5,7 @@ import streamlit as st
 import numpy as np
 
 from lane_tools import (
-    load_tracks, moving_points, auto_lanes, lane_heading_from_tracks,
+    load_tracks, moving_points, auto_lanes, snap_to_cardinal,
     lanes_to_geojson, geojson_to_lanes, build_preview, load_pcd_background,
 )
 
@@ -50,18 +50,12 @@ src = uploaded if uploaded is not None else (DEFAULT_TRACKS if os.path.exists(DE
 min_speed = top[1].slider("Min speed", 0.0, 10.0, 1.0, 0.5, help="m/s; exclude slow/parked points.")
 k = top[2].number_input("# lanes", 1, 8, 4, help="Lanes to auto-detect.")
 
-points, _df = None, None
+points = None
 if src is not None:
     try:
-        _df = load_tracks(src)                       # keep the full df (has tid) for heading-from-data
-        points = moving_points(_df, min_speed=min_speed)
+        points = moving_points(load_tracks(src), min_speed=min_speed)
     except Exception as e:
         st.error(f"Could not read tracks: {e}")
-
-# A toast queued by a "Set heading from data" action on the previous run.
-_hd_msg = st.session_state.pop("_hd_toast", None)
-if _hd_msg:
-    st.toast(_hd_msg)
 
 if top[3].button("✨ Auto-generate", use_container_width=True,
                  disabled=points is None or len(points) == 0,
@@ -85,25 +79,6 @@ if top[5].button("🔄 Default lanes", use_container_width=True,
                       "in case you messed up your edits."):
     with open(_ds.default_lanes_path) as f:
         st.session_state.le_lanes = geojson_to_lanes(json.load(f))
-    st.session_state.le_v += 1
-    st.rerun()
-
-# ---- Set EVERY lane's heading from the measured vehicle flow (bulk) ----
-gcol = st.columns([2.3, 1.5, 1.3])
-g_mode = gcol[1].radio("Measure all headings", ["All vehicles", "Straight only"], horizontal=True,
-                       key=f"gmode_{st.session_state.le_v}", label_visibility="collapsed",
-                       help="Set every lane's heading from the vehicles in its box. **Straight only** "
-                            "excludes turning vehicles (the through-flow only) — usually more realistic.")
-gcol[0].caption("📐 **Measure headings from data** — set each lane's direction from the vehicles in its box:")
-if gcol[2].button("📐 Apply to all lanes", use_container_width=True,
-                  disabled=_df is None or not st.session_state.le_lanes):
-    _n = 0
-    for _l in st.session_state.le_lanes:
-        _hd, _nu, _ne = lane_heading_from_tracks(
-            _df, _l, min_speed=min_speed, exclude_turning=g_mode.startswith("Straight"))
-        if _hd is not None:
-            _l['heading_deg'] = round(_hd, 1); _n += 1
-    st.session_state["_hd_toast"] = f"Measured {_n} lane heading(s) from data ({g_mode.lower()})."
     st.session_state.le_v += 1
     st.rerun()
 
@@ -133,9 +108,13 @@ with left:
             st.info("No lanes yet — use ✨ Auto-generate above, or ➕ Add lane below.")
         delete_idx = None
         reset_action = None  # (idx, default_lane) — applied after the loop
+        snap_idx = None      # idx — snap this lane's heading to a cardinal, after the loop
         for i, l in enumerate(lanes):
             dft = _def_lanes_by_id.get(str(l['lane_id']))
-            with st.expander(f"🛣️ {l['lane_id']}  ·  {float(l['heading_deg']):.0f}°", expanded=False):
+            # NOTE: the heading is deliberately NOT in the expander title — putting a
+            # value that changes on every edit there changes the expander's identity,
+            # so Streamlit collapses it on each +/click. Title is the (stable) lane id.
+            with st.expander(f"🛣️ {l['lane_id']}", expanded=False):
                 a = st.columns([3, 2, 0.8])
                 l['lane_id'] = a[0].text_input("Lane", value=str(l['lane_id']), key=f"id_{i}_{v}")
                 l['heading_deg'] = a[1].number_input("Heading°", value=float(l['heading_deg']),
@@ -154,37 +133,23 @@ with left:
                                                format="%.1f", key=f"ymin_{i}_{v}")
                 l['ymax'] = yc[1].number_input("Y max", value=float(l['ymax']), step=1.0,
                                                format="%.1f", key=f"ymax_{i}_{v}")
-                # ---- measure the heading from the vehicles in this box ----
-                hc = st.columns([1.7, 1])
-                _hmode = hc[0].radio("Set heading from vehicles in this box", ["All", "Straight only"],
-                                     key=f"hmode_{i}_{v}", horizontal=True,
-                                     help="Measure this lane's heading from the tracked vehicles inside "
-                                          "the box. **Straight only** drops vehicles that turn (the ones "
-                                          "that *change colour*), so only the through-flow sets the "
-                                          "direction — the realistic choice for a through-lane.")
-                hc[1].markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
-                if hc[1].button("📐 Measure", key=f"sethd_{i}_{v}", use_container_width=True,
-                                disabled=_df is None,
-                                help=None if _df is not None else "Load a tracks.csv first."):
-                    _hd, _nu, _ne = lane_heading_from_tracks(
-                        _df, l, min_speed=min_speed, exclude_turning=_hmode.startswith("Straight"))
-                    if _hd is None:
-                        st.session_state["_hd_toast"] = f"No vehicles inside the “{l['lane_id']}” box."
-                    else:
-                        l['heading_deg'] = round(_hd, 1)
-                        st.session_state["_hd_toast"] = (
-                            f"“{l['lane_id']}” → {_hd:.1f}° from {_nu} vehicle(s)"
-                            + (f" · {_ne} turning excluded" if _ne else ""))
-                    st.session_state.le_v += 1
-                    st.rerun()
-                if st.button("↺ Reset this lane to default", key=f"rst_{i}_{v}",
-                             use_container_width=True, disabled=dft is None,
-                             help=("Restore just this lane's box + heading from "
-                                   "config/defaults/lanes.geojson." if dft is not None
-                                   else "No default with this lane name to restore from.")):
+                bc = st.columns(2)
+                if bc[0].button("🧭 Snap to cardinal", key=f"snap_{i}_{v}", use_container_width=True,
+                                help="Point this lane's arrow straight along the nearest cardinal "
+                                     "direction — E 0°, N 90°, W 180°, S −90° (ignores vehicle scatter)."):
+                    snap_idx = i
+                if bc[1].button("↺ Reset to default", key=f"rst_{i}_{v}",
+                                use_container_width=True, disabled=dft is None,
+                                help=("Restore just this lane's box + heading from "
+                                      "config/defaults/lanes.geojson." if dft is not None
+                                      else "No default with this lane name to restore from.")):
                     reset_action = (i, dft)
         if delete_idx is not None:
             lanes.pop(delete_idx)
+            st.session_state.le_v += 1
+            st.rerun()
+        if snap_idx is not None:
+            lanes[snap_idx]['heading_deg'] = snap_to_cardinal(lanes[snap_idx]['heading_deg'])
             st.session_state.le_v += 1
             st.rerun()
         if reset_action is not None:
@@ -193,6 +158,13 @@ with left:
                               ymax=dft['ymax'], heading_deg=dft['heading_deg'])
             st.session_state.le_v += 1
             st.rerun()
+
+    if st.button("🧭 Snap ALL headings to cardinal", use_container_width=True, disabled=not lanes,
+                 help="Point every lane's arrow straight along its nearest cardinal direction (E/N/W/S)."):
+        for _l in lanes:
+            _l['heading_deg'] = snap_to_cardinal(_l['heading_deg'])
+        st.session_state.le_v += 1
+        st.rerun()
 
     add, dl, sv, sd = st.columns([1.4, 1, 1, 1.2])
     if add.button("➕ Add lane", use_container_width=True):
