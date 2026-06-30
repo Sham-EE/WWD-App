@@ -17,7 +17,7 @@ import numpy as np
 
 SIM_TID = 90001  # high id so it never collides with real track ids
 
-V2X_HTML_PATH = os.path.join(os.path.dirname(__file__), "assets", "wwd_v2x_dashboard.html")
+V2X_HTML_PATH = os.path.join(os.path.dirname(__file__), "assets", "index.html")
 
 # JS injected into the V2X React app: when window.__WWD_EVENT__ is present, swap in
 # OUR real intersection (so the Leaflet map shows the actual WWD site + lane, not the
