@@ -207,7 +207,11 @@ with right:
     top_down = head[1].toggle("⬇️ Top-down", value=True,
                               help="On = bird's-eye. Off = oblique 3D.")
 
-    show_bg = st.checkbox("🛰️ Point cloud background", value=True)
+    bgc, hmc = st.columns(2)
+    show_bg = bgc.checkbox("🛰️ Point cloud background", value=True)
+    show_hdmap = hmc.checkbox("🗺️ Intersection (HD map)", value=True,
+                              help="Overlay the real intersection's road network (the dev-kit HD map) "
+                                   "so you can line lane boxes up with the actual roads.")
     bg_xyz = None
     if show_bg and os.path.isdir(DEFAULT_PCD_BG):
         try:
@@ -215,7 +219,18 @@ with right:
         except Exception as e:
             st.warning(f"Background load failed: {e}")
 
+    hdmap_lanes = None
+    if show_hdmap:
+        try:
+            import geo_reference as geo
+            hdmap_lanes = geo.hdmap_lanes_sensor_frame("north" if _le_sensor == "north" else "south", 130.0)
+            if not hdmap_lanes:
+                st.caption("ℹ️ HD-map overlay needs `map/lane_samples.json` (from the dev-kit's map.zip).")
+        except Exception:
+            hdmap_lanes = None
+
     fig = build_preview(points if points is not None else np.zeros((0, 3)),
-                        lanes, color_mode=color_mode, bg_xyz=bg_xyz, top_down=top_down)
+                        lanes, color_mode=color_mode, bg_xyz=bg_xyz, top_down=top_down,
+                        hdmap_lanes=hdmap_lanes)
     fig.update_layout(height=PREVIEW_H)
     st.plotly_chart(fig, use_container_width=True, key="le_preview")

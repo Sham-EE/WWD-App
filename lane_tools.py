@@ -194,15 +194,31 @@ def lane_display_colors(lanes, color_mode: str):
 
 
 def build_preview(points: np.ndarray, lanes, color_mode: str = 'cardinal',
-                  bg_xyz: np.ndarray = None, top_down: bool = True) -> go.Figure:
+                  bg_xyz: np.ndarray = None, top_down: bool = True,
+                  hdmap_lanes=None) -> go.Figure:
     """3D bird's-eye preview (same mouse UX as the detection viewer): optional
     point-cloud backdrop + vehicle positions + lane boxes with direction arrows.
     Box colors always match the dot colors. ``top_down`` toggles the camera.
+
+    ``hdmap_lanes`` (list of sensor-frame polylines [[x, y], ...]) draws the real
+    intersection's HD-map road network underneath, so lane boxes can be aligned to
+    the actual roads.
 
     color_mode: 'cardinal' (dots by direction bucket), 'lane' (dots by which box
     they fall in; gray if outside all), or 'heading' (continuous HSV)."""
     Z_DOT, Z_BOX = -6.0, -7.2
     fig = go.Figure()
+
+    # Real intersection roads (HD map) — one batched trace, under everything.
+    if hdmap_lanes:
+        hx, hy, hz = [], [], []
+        for poly in hdmap_lanes:
+            for px, py in poly:
+                hx.append(float(px)); hy.append(float(py)); hz.append(Z_BOX)
+            hx.append(None); hy.append(None); hz.append(None)
+        fig.add_trace(go.Scatter3d(
+            x=hx, y=hy, z=hz, mode='lines', line=dict(color='#5b6573', width=1),
+            opacity=0.65, name='intersection (HD map)', hoverinfo='skip'))
 
     if bg_xyz is not None and len(bg_xyz):
         bg_xyz = np.asarray(bg_xyz)
