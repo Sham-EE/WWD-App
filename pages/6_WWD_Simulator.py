@@ -105,8 +105,46 @@ vu.ensure_toggle_defaults({
     "sim_show_legend": True, "sim_show_hdmap_bev": True,
     # 3D-scan view
     "sim3d_points": True, "sim3d_boxes": True, "sim3d_road": True,
-    "sim3d_hdmap": True, "sim3d_lidar": True, "sim3d_lanes": True,
+    "sim3d_hdmap": True, "sim3d_lidar": True, "sim3d_lanes": True, "sim3d_compass": True,
 })
+
+# True-North (sensor math-heading that points at true North) for the south frame the
+# WWD scene lives in — drives the georeferenced compass rose. None if no georeference.
+try:
+    _TRUE_N = geo.heading_to_true_bearing(0.0, "south") if geo.has_georef("south") else None
+except Exception:
+    _TRUE_N = None
+
+
+def _add_compass(fig, cx, cy, r, north_deg, z=None):
+    """Draw a true-North compass rose (N/E/S/W) centred at (cx, cy[, z]) — Scatter3d
+    when `z` is given (rotates with the 3D scene), else Scattergl on the BEV."""
+    for lab, ang, is_n in (("N", north_deg, True), ("E", north_deg - 90, False),
+                           ("S", north_deg + 180, False), ("W", north_deg + 90, False)):
+        a = np.radians(ang)
+        ex, ey = cx + r * np.cos(a), cy + r * np.sin(a)
+        lx, ly = cx + 1.3 * r * np.cos(a), cy + 1.3 * r * np.sin(a)
+        c = "#ffffff" if is_n else "#aab2c0"
+        if z is not None:
+            fig.add_trace(go.Scatter3d(x=[cx, ex], y=[cy, ey], z=[z, z], mode="lines",
+                                       line=dict(color=c, width=6 if is_n else 2),
+                                       hoverinfo="skip", showlegend=False))
+            fig.add_trace(go.Scatter3d(x=[lx], y=[ly], z=[z], mode="text", text=[lab],
+                                       textfont=dict(color=c, size=14), hoverinfo="skip", showlegend=False))
+        else:
+            fig.add_trace(go.Scattergl(x=[cx, ex], y=[cy, ey], mode="lines",
+                                       line=dict(color=c, width=4 if is_n else 1.5),
+                                       hoverinfo="skip", showlegend=False))
+            fig.add_trace(go.Scattergl(x=[lx], y=[ly], mode="text", text=[lab],
+                                       textfont=dict(color=c, size=14), hoverinfo="skip", showlegend=False))
+
+
+def _compass_xy():
+    """Corner placement (cx, cy, r) for the compass, from the lane extent."""
+    cx = x_range[1] - 0.10 * (x_range[1] - x_range[0])
+    cy = y_range[0] + 0.12 * (y_range[1] - y_range[0])
+    r = 0.07 * min(x_range[1] - x_range[0], y_range[1] - y_range[0])
+    return cx, cy, r
 have_real = bool(st.session_state.get("detection_results"))
 
 with st.expander("⚙️ Simulation setup", expanded=True):
@@ -151,6 +189,10 @@ with st.expander("⚙️ Simulation setup", expanded=True):
             q2.toggle("🛣️ Road outline", key="sim3d_road")
             q2.toggle("🗺️ HD-map roads", key="sim3d_hdmap")
             q3.toggle("📍 LiDAR stations", key="sim3d_lidar")
+            q3.toggle("🧭 True-N compass", key="sim3d_compass",
+                      disabled=_TRUE_N is None,
+                      help="Show a georeferenced compass rose (real N/E/S/W) in the corner."
+                           if _TRUE_N is not None else "No georeference for this site.")
         else:
             st.caption("Show / hide overlays on the abstract BEV view.")
             _disp_keys = ["sim_show_lanes", "sim_show_legal_arrows", "sim_show_path",
@@ -232,6 +274,9 @@ def _scene_fig(stp, with_points, max_pts, height=620):
     _add_ground_polyline(fig, [(dd["cx"], dd["cy"]) for dd in sim_track[:stp + 1]],
                          gz, col, "driver path", width=4)
     _add_box(fig, _driver_val(sim_track[stp], gz + 0.8), col, "WWD driver", width=7)
+    if st.session_state.get("sim3d_compass", True) and _TRUE_N is not None:
+        _cx, _cy, _cr = _compass_xy()
+        _add_compass(fig, _cx, _cy, _cr, _TRUE_N, z=gz)
     return fig, scene_i, len(pts), len(gt_objs)
 
 
@@ -266,6 +311,9 @@ with left:
                                show_grid=st.session_state.sim_show_grid,
                                show_legend=st.session_state.sim_show_legend,
                                hdmap_lanes=_hdmap_bev)
+        if st.session_state.get("sim3d_compass", True) and _TRUE_N is not None:
+            _cx, _cy, _cr = _compass_xy()
+            _add_compass(fig, _cx, _cy, _cr, _TRUE_N)
         st.plotly_chart(fig, use_container_width=True, key="sim_fig",
                         config={"scrollZoom": True})
 
