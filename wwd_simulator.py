@@ -171,7 +171,20 @@ def cardinal_color(heading_rad) -> str:
     return _vc(heading_rad)
 
 
-def cardinal_name(deg: float) -> str:
+def cardinal_name(deg: float, sensor: str = "south") -> str:
+    """Compass name (East/North/West/South) of a sensor-frame math heading. Uses the
+    TRUE compass frame when a georeference exists — the same bucketing the Lane Editor
+    uses for its Eastbound/Westbound/… names — so lane labels match across pages. Falls
+    back to the raw sensor axes (E=+X, N=+Y, …) when there's no georeference."""
+    try:
+        import geo_reference as geo
+        north = geo.heading_to_true_bearing(0.0, sensor) if geo.has_georef(sensor) else None
+    except Exception:
+        north = None
+    if north is not None:
+        from lane_tools import true_cardinal_buckets
+        letter = str(true_cardinal_buckets([deg], north)[0])
+        return {"N": "North", "E": "East", "S": "South", "W": "West"}[letter]
     d = (float(deg) + 180.0) % 360.0 - 180.0
     if -45 <= d < 45:
         return "East"
@@ -282,11 +295,19 @@ def simulator_figure(lanes, sim_track, frame_idx, flagged, base_dets=None,
                                    line=dict(color="rgba(200,200,210,0.35)", width=1),
                                    name="HD map", hoverinfo="skip", showlegend=False))
 
-    # lanes: outline coloured by the lane's LEGAL travel direction (so the legend
-    # is just the lanes, each in its direction colour) + a matching legal arrow.
+    # lanes: outline coloured by the lane's LEGAL travel direction, using the SAME
+    # true-compass palette as the Lane Editor (so the two pages read identically) +
+    # a matching legal arrow.
     if show_lanes:
-        for ln in lanes:
-            lcol = cardinal_color(np.radians(ln["heading_deg"]))
+        try:
+            import geo_reference as geo
+            _tn = geo.heading_to_true_bearing(0.0, "south") if geo.has_georef("south") else None
+        except Exception:
+            _tn = None
+        from lane_tools import lane_display_colors
+        lane_cols = lane_display_colors(lanes, "cardinal", _tn)
+        for i, ln in enumerate(lanes):
+            lcol = lane_cols[i]
             xs, ys = ln["polygon"].exterior.xy
             fig.add_trace(go.Scatter(x=list(xs), y=list(ys), mode="lines",
                                      line=dict(color=lcol, width=2),
