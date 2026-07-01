@@ -5,7 +5,8 @@ import streamlit as st
 import numpy as np
 
 from lane_tools import (
-    load_tracks, moving_points, auto_lanes, snap_to_cardinal,
+    load_tracks, moving_points, auto_lanes,
+    LANE_DIRECTIONS, direction_to_heading, heading_to_direction,
     lanes_to_geojson, geojson_to_lanes, build_preview, build_draw_figure,
     simplify_path, load_pcd_background,
 )
@@ -43,6 +44,22 @@ DEFAULT_TRACKS = os.path.join(_ds.detection_dir_for_sensor(_le_sensor, _le_src),
 DEFAULT_PCD_BG = _ds.input_pcd_for_sensor(_le_sensor, _le_src)
 st.caption(f"🛰️ {_le_sensor.capitalize()} · {'Cropped' if _le_src=='cropped' else 'Full'}  ·  "
            f"tracks: `{'found' if os.path.exists(DEFAULT_TRACKS) else 'none — run Detection'}`")
+
+# Georeference for THIS sensor — used to map lane directions (Eastbound/…) to the
+# real compass heading, so the dropdown/colors reflect true-life cardinals. Falls
+# back to sensor-frame axes when no georeference exists.
+import geo_reference as geo
+_gref = "north" if _le_sensor == "north" else "south"
+try:
+    _has_geo = geo.has_georef(_gref)
+except Exception:
+    _has_geo = False
+_dir_north = None
+if _has_geo:
+    try:
+        _dir_north = geo.heading_to_true_bearing(0.0, _gref)  # sensor math-heading of true North
+    except Exception:
+        _dir_north = None
 
 # ---------------- Top bar: data + template actions ----------------
 top = st.columns([2.3, 1.1, 1.1, 1.3, 1.3, 1.3])
@@ -109,20 +126,23 @@ with left:
             st.info("No lanes yet — use ✨ Auto-generate above, or ➕ Add lane below.")
         delete_idx = None
         reset_action = None  # (idx, default_lane) — applied after the loop
-        snap_idx = None      # idx — snap this lane's heading to a cardinal, after the loop
         for i, l in enumerate(lanes):
             dft = _def_lanes_by_id.get(str(l['lane_id']))
-            # NOTE: the heading is deliberately NOT in the expander title — putting a
-            # value that changes on every edit there changes the expander's identity,
-            # so Streamlit collapses it on each +/click. Title is the (stable) lane id.
+            # NOTE: the direction is deliberately NOT in the expander title — putting a
+            # value that changes on selection there changes the expander's identity,
+            # so Streamlit collapses it on each change. Title is the (stable) lane id.
+            _cur_dir = heading_to_direction(l['heading_deg'], _dir_north)
             with st.expander(f"🛣️ {l['lane_id']}", expanded=False):
-                a = st.columns([3, 2, 0.8])
-                l['lane_id'] = a[0].text_input("Lane", value=str(l['lane_id']), key=f"id_{i}_{v}")
-                l['heading_deg'] = a[1].number_input("Heading°", value=float(l['heading_deg']),
-                                                     step=1.0, format="%.1f", key=f"hd_{i}_{v}",
-                                                     help="0=+X, 90=+Y, 180=-X, -90=-Y")
-                a[2].markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
-                if a[2].button("🗑", key=f"del_{i}_{v}", help="Delete lane"):
+                a = st.columns([3, 0.8])
+                # A lane is a travel direction: the dropdown sets heading + color to the
+                # matching real compass cardinal (Eastbound/Westbound/Northbound/Southbound).
+                _sel_dir = a[0].selectbox("Direction", LANE_DIRECTIONS,
+                                          index=LANE_DIRECTIONS.index(_cur_dir), key=f"dir_{i}_{v}",
+                                          help="Lane travel direction — sets the heading and color to the "
+                                               "real-life compass cardinal for this intersection.")
+                l['heading_deg'] = direction_to_heading(_sel_dir, _dir_north)
+                a[1].markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
+                if a[1].button("🗑", key=f"del_{i}_{v}", help="Delete lane"):
                     delete_idx = i
                 if l.get('polygon'):
                     st.caption(f"✏️ Drawn polygon · {len(l['polygon'])} vertices — re-shape it in "
@@ -138,23 +158,14 @@ with left:
                                                    format="%.1f", key=f"ymin_{i}_{v}")
                     l['ymax'] = yc[1].number_input("Y max", value=float(l['ymax']), step=1.0,
                                                    format="%.1f", key=f"ymax_{i}_{v}")
-                bc = st.columns(2)
-                if bc[0].button("🧭 Snap to cardinal", key=f"snap_{i}_{v}", use_container_width=True,
-                                help="Point this lane's arrow straight along the nearest cardinal "
-                                     "direction — E 0°, N 90°, W 180°, S −90° (ignores vehicle scatter)."):
-                    snap_idx = i
-                if bc[1].button("↺ Reset to default", key=f"rst_{i}_{v}",
-                                use_container_width=True, disabled=dft is None,
-                                help=("Restore just this lane's box + heading from "
-                                      "config/defaults/lanes.geojson." if dft is not None
-                                      else "No default with this lane name to restore from.")):
+                if st.button("↺ Reset to default", key=f"rst_{i}_{v}",
+                             use_container_width=True, disabled=dft is None,
+                             help=("Restore just this lane's box + heading from "
+                                   "config/defaults/lanes.geojson." if dft is not None
+                                   else "No default with this lane name to restore from.")):
                     reset_action = (i, dft)
         if delete_idx is not None:
             lanes.pop(delete_idx)
-            st.session_state.le_v += 1
-            st.rerun()
-        if snap_idx is not None:
-            lanes[snap_idx]['heading_deg'] = snap_to_cardinal(lanes[snap_idx]['heading_deg'])
             st.session_state.le_v += 1
             st.rerun()
         if reset_action is not None:
@@ -165,17 +176,11 @@ with left:
             st.session_state.le_v += 1
             st.rerun()
 
-    if st.button("🧭 Snap ALL headings to cardinal", use_container_width=True, disabled=not lanes,
-                 help="Point every lane's arrow straight along its nearest cardinal direction (E/N/W/S)."):
-        for _l in lanes:
-            _l['heading_deg'] = snap_to_cardinal(_l['heading_deg'])
-        st.session_state.le_v += 1
-        st.rerun()
-
     add, dl, sv, sd = st.columns([1.4, 1, 1, 1.2])
-    if add.button("➕ Add lane", use_container_width=True):
-        lanes.append(dict(lane_id=f"lane_{len(lanes)+1}", xmin=-5.0, xmax=5.0,
-                          ymin=-5.0, ymax=5.0, heading_deg=0.0))
+    if add.button("➕ Add lane", use_container_width=True,
+                  help="Add a new Eastbound lane box you can then re-point (direction dropdown) and resize."):
+        lanes.append(dict(lane_id=f"lane_{len(lanes)+1}", xmin=-5.0, xmax=5.0, ymin=-5.0, ymax=5.0,
+                          heading_deg=direction_to_heading("Eastbound", _dir_north)))
         st.session_state.le_v += 1
         st.rerun()
     txt = json.dumps(lanes_to_geojson(lanes), indent=2) if lanes else ""
@@ -216,14 +221,6 @@ with right:
     top_down = head[2].toggle("⬇️ Top-down", value=True, disabled=draw_mode,
                               help="On = bird's-eye. Off = oblique 3D. (Draw mode is always top-down.)")
 
-    import geo_reference as geo
-    _gref = "north" if _le_sensor == "north" else "south"
-    _has_geo = False
-    try:
-        _has_geo = geo.has_georef(_gref)
-    except Exception:
-        _has_geo = False
-
     bgc, hmc, tnc = st.columns(3)
     show_bg = bgc.checkbox("🛰️ Point cloud", value=True, disabled=draw_mode)
     show_hdmap = hmc.checkbox("🗺️ Intersection (HD map)", value=True,
@@ -234,12 +231,7 @@ with right:
                                        "georeference) and show a compass rose, instead of the sensor-frame "
                                        "axes. Needs a georeference for this sensor."
                                        if _has_geo else "No georeference for this sensor.")
-    true_north_deg = None
-    if true_cardinals and _has_geo:
-        try:
-            true_north_deg = geo.heading_to_true_bearing(0.0, _gref)  # sensor math-heading of true North
-        except Exception:
-            true_north_deg = None
+    true_north_deg = _dir_north if (true_cardinals and _has_geo) else None
     bg_xyz = None
     if show_bg and not draw_mode and os.path.isdir(DEFAULT_PCD_BG):
         try:
@@ -287,7 +279,8 @@ with right:
             st.caption(f"✏️ Drawn shape · {len(poly)} vertices — add it as a lane, or replace an existing one.")
             d1, d2, d3 = st.columns([1.3, 1.6, 1])
             if d1.button("➕ Add as new lane", use_container_width=True):
-                lanes.append(dict(lane_id=f"lane_{len(lanes)+1}", polygon=poly, heading_deg=0.0, n=0))
+                lanes.append(dict(lane_id=f"lane_{len(lanes)+1}", polygon=poly, n=0,
+                                  heading_deg=direction_to_heading("Eastbound", _dir_north)))
                 st.session_state.le_v += 1
                 st.rerun()
             if lanes:

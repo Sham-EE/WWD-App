@@ -81,6 +81,37 @@ def snap_to_cardinal(deg: float) -> float:
     return float(min(cards, key=lambda c: abs((float(deg) - c + 180.0) % 360.0 - 180.0)))
 
 
+# A lane is just a travel direction: pick one and the heading + color follow.
+LANE_DIRECTIONS = ["Eastbound", "Westbound", "Northbound", "Southbound"]
+_DIR_LETTER = {"Eastbound": "E", "Westbound": "W", "Northbound": "N", "Southbound": "S"}
+_LETTER_DIR = {"E": "Eastbound", "W": "Westbound", "N": "Northbound", "S": "Southbound"}
+
+
+def cardinal_heading(letter: str, true_north_deg=None) -> float:
+    """Sensor-frame math heading (deg) whose arrow points along the given TRUE
+    compass cardinal (N/E/S/W). With a georeference (`true_north_deg` set) this is
+    the real-world direction; without one it falls back to the sensor axes
+    (E=0, N=90, W=180, S=−90). Kept consistent with true_cardinal_buckets (E/W
+    swap already baked in via +90 for East, −90 for West)."""
+    if true_north_deg is None:
+        return {"E": 0.0, "N": 90.0, "W": 180.0, "S": -90.0}[letter]
+    off = {"N": 0.0, "E": 90.0, "S": 180.0, "W": -90.0}[letter]
+    return float(((float(true_north_deg) + off + 180.0) % 360.0) - 180.0)
+
+
+def direction_to_heading(direction: str, true_north_deg=None) -> float:
+    """Heading (deg) for a lane travel-direction name (Eastbound/Westbound/…)."""
+    return cardinal_heading(_DIR_LETTER[direction], true_north_deg)
+
+
+def heading_to_direction(heading_deg: float, true_north_deg=None) -> str:
+    """Which travel-direction name a heading currently reads as (real compass when
+    `true_north_deg` is given, else sensor-frame)."""
+    bucket_fn, _ = _cardinal_scheme(true_north_deg)
+    letter = str(bucket_fn([heading_deg])[0])[0]
+    return _LETTER_DIR.get(letter, "Eastbound")
+
+
 def lane_ring(lane):
     """Closed [[x,y], ...] ring for a lane — its drawn ``polygon`` if present, else
     the axis-aligned box from xmin/xmax/ymin/ymax."""
