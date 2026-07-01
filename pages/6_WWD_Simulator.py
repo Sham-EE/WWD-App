@@ -48,9 +48,10 @@ m = 6.0
 x_range = (min(allx) - m, max(allx) + m)
 y_range = (min(ally) - m, max(ally) + m)
 
-# Real LiDAR frames (south/cropped — the frame the lanes + sim driver live in).
-_pcds = rv.list_by_frame(ds.input_pcd_for_sensor("south", "cropped"), [".pcd"])
-_labels = rv.list_by_frame(ds.labels_dir_for("south", "scorable"), [".json"])
+# Real LiDAR frames — REGISTERED/cropped (both LiDARs fused, anchored to the south
+# frame the lanes + sim driver live in), so the scene shows the full fused cloud.
+_pcds = rv.list_by_frame(ds.input_pcd_for_sensor("registered", "cropped"), [".pcd"])
+_labels = rv.list_by_frame(ds.labels_dir_for("registered", "scorable"), [".json"])
 _n_frames = len(_pcds)
 
 
@@ -202,7 +203,7 @@ with st.expander("⚙️ Simulation setup", expanded=True):
         st.divider()
         if view_mode.startswith("🧊"):
             st.caption("3D scan overlays.")
-            _pts_shown = st.select_slider("Points shown", [10000, 20000, 30000, 50000], value=20000,
+            _pts_shown = st.select_slider("Points shown", [10000, 20000, 30000, 50000], value=50000,
                                           key="sim3d_maxpts")
             st.caption("(The 🧊 Point cloud toggle is above the view — turn it off for smooth playback.)")
             q1, q2, q3 = st.columns(3)
@@ -314,7 +315,7 @@ with left:
                   help="Turn the LiDAR points OFF for smoother live playback — or render a smooth "
                        "video below. Only the lightweight boxes / lanes / driver animate when off.")
         fig, scene_i, npts, nboxes = _scene_fig(step, st.session_state.sim3d_points,
-                                                st.session_state.get("sim3d_maxpts", 20000))
+                                                st.session_state.get("sim3d_maxpts", 50000))
         st.plotly_chart(fig, use_container_width=True, key="sim_fig3d")
         st.caption(f"Real frame {scene_i + 1}/{_n_frames} · {nboxes} GT boxes · {npts:,} points · "
                    f"driver step {step + 1}/{n_steps} "
