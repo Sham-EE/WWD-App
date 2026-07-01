@@ -60,6 +60,12 @@ if _has_geo:
         _dir_north = geo.heading_to_true_bearing(0.0, _gref)  # sensor math-heading of true North
     except Exception:
         _dir_north = None
+# The "🧭 True cardinals" toggle (rendered in the right panel) also governs the
+# frame the direction dropdown/name map in — read its remembered state up here so
+# names, colors and the compass all stay in the same frame. Off / no georeference
+# → sensor-frame axes (E=+X, N=+Y, …).
+_use_true = bool(st.session_state.get("le_true_card", _has_geo)) and _has_geo
+_active_north = _dir_north if _use_true else None
 
 # ---------------- Top bar: data + template actions ----------------
 top = st.columns([2.3, 1.1, 1.1, 1.3, 1.3, 1.3])
@@ -128,19 +134,21 @@ with left:
         reset_action = None  # (idx, default_lane) — applied after the loop
         for i, l in enumerate(lanes):
             dft = _def_lanes_by_id.get(str(l['lane_id']))
-            # NOTE: the direction is deliberately NOT in the expander title — putting a
-            # value that changes on selection there changes the expander's identity,
-            # so Streamlit collapses it on each change. Title is the (stable) lane id.
-            _cur_dir = heading_to_direction(l['heading_deg'], _dir_north)
-            with st.expander(f"🛣️ {l['lane_id']}", expanded=False):
+            # A lane IS a travel direction: the dropdown sets the heading, name and
+            # color to the matching compass cardinal. Read the dropdown's remembered
+            # value (if any) so the expander title reflects the pick immediately.
+            _wkey = f"dir_{i}_{v}"
+            _cur_dir = heading_to_direction(l['heading_deg'], _active_north)
+            _name = st.session_state.get(_wkey, _cur_dir)
+            _name = _name if _name in LANE_DIRECTIONS else _cur_dir
+            with st.expander(f"🛣️ {_name}", expanded=False):
                 a = st.columns([3, 0.8])
-                # A lane is a travel direction: the dropdown sets heading + color to the
-                # matching real compass cardinal (Eastbound/Westbound/Northbound/Southbound).
                 _sel_dir = a[0].selectbox("Direction", LANE_DIRECTIONS,
-                                          index=LANE_DIRECTIONS.index(_cur_dir), key=f"dir_{i}_{v}",
-                                          help="Lane travel direction — sets the heading and color to the "
+                                          index=LANE_DIRECTIONS.index(_cur_dir), key=_wkey,
+                                          help="Lane travel direction — sets the heading, name and color to the "
                                                "real-life compass cardinal for this intersection.")
-                l['heading_deg'] = direction_to_heading(_sel_dir, _dir_north)
+                l['heading_deg'] = direction_to_heading(_sel_dir, _active_north)
+                l['lane_id'] = _sel_dir  # the lane's name is its direction
                 a[1].markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
                 if a[1].button("🗑", key=f"del_{i}_{v}", help="Delete lane"):
                     delete_idx = i
@@ -179,8 +187,8 @@ with left:
     add, dl, sv, sd = st.columns([1.4, 1, 1, 1.2])
     if add.button("➕ Add lane", use_container_width=True,
                   help="Add a new Eastbound lane box you can then re-point (direction dropdown) and resize."):
-        lanes.append(dict(lane_id=f"lane_{len(lanes)+1}", xmin=-5.0, xmax=5.0, ymin=-5.0, ymax=5.0,
-                          heading_deg=direction_to_heading("Eastbound", _dir_north)))
+        lanes.append(dict(lane_id="Eastbound", xmin=-5.0, xmax=5.0, ymin=-5.0, ymax=5.0,
+                          heading_deg=direction_to_heading("Eastbound", _active_north)))
         st.session_state.le_v += 1
         st.rerun()
     txt = json.dumps(lanes_to_geojson(lanes), indent=2) if lanes else ""
@@ -227,11 +235,14 @@ with right:
                               help="Overlay the real intersection's road network (the dev-kit HD map) "
                                    "so you can line lanes up with the actual roads.")
     true_cardinals = tnc.checkbox("🧭 True cardinals", value=_has_geo, disabled=not _has_geo,
+                                  key="le_true_card",
                                   help="Colour vehicles/lanes by REAL compass direction (N/E/S/W from the "
                                        "georeference) and show a compass rose, instead of the sensor-frame "
-                                       "axes. Needs a georeference for this sensor."
+                                       "axes. Also drives the lane direction dropdown/names. Needs a "
+                                       "georeference for this sensor."
                                        if _has_geo else "No georeference for this sensor.")
-    true_north_deg = _dir_north if (true_cardinals and _has_geo) else None
+    # Same frame the direction dropdown/names used above, so display stays consistent.
+    true_north_deg = _active_north
     bg_xyz = None
     if show_bg and not draw_mode and os.path.isdir(DEFAULT_PCD_BG):
         try:
@@ -279,8 +290,8 @@ with right:
             st.caption(f"✏️ Drawn shape · {len(poly)} vertices — add it as a lane, or replace an existing one.")
             d1, d2, d3 = st.columns([1.3, 1.6, 1])
             if d1.button("➕ Add as new lane", use_container_width=True):
-                lanes.append(dict(lane_id=f"lane_{len(lanes)+1}", polygon=poly, n=0,
-                                  heading_deg=direction_to_heading("Eastbound", _dir_north)))
+                lanes.append(dict(lane_id="Eastbound", polygon=poly, n=0,
+                                  heading_deg=direction_to_heading("Eastbound", _active_north)))
                 st.session_state.le_v += 1
                 st.rerun()
             if lanes:
