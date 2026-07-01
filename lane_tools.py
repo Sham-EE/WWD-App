@@ -218,71 +218,6 @@ def load_pcd_background(pcd_dir: str, n_frames: int = 15, grid: float = 0.5,
     return xyz
 
 
-def load_track_paths(df, min_frames: int = 4):
-    """Per-object trajectories from a tracks DataFrame (needs tid, cx, cy; frame to
-    order). Each item: {tid, xy:(N,2), bearing (deg, start->end), disp (m),
-    straight (0..1)}. Restricts to vehicles when an is_vehicle column is present.
-
-    The net start->end bearing is used (not the per-frame heading column, which is
-    unreliable on this dataset); `straight` = displacement / path-length flags
-    turners/loiterers (≈1 straight-through, low = curved/parked)."""
-    out = []
-    if df is None or not {'tid', 'cx', 'cy'}.issubset(df.columns):
-        return out
-    d0 = df
-    if 'is_vehicle' in d0.columns:
-        iv = d0['is_vehicle']
-        d0 = d0[(iv == True) | iv.astype(str).str.lower().isin(['true', '1', '1.0'])]  # noqa: E712
-    for tid, d in d0.groupby('tid'):
-        if 'frame' in d.columns:
-            d = d.sort_values('frame')
-        xy = d[['cx', 'cy']].to_numpy(dtype=float)
-        if len(xy) < min_frames:
-            continue
-        dvec = xy[-1] - xy[0]
-        disp = float(np.hypot(dvec[0], dvec[1]))
-        seg = np.diff(xy, axis=0)
-        path_len = float(np.hypot(seg[:, 0], seg[:, 1]).sum())
-        out.append(dict(
-            tid=tid, xy=xy, disp=disp,
-            bearing=float(np.degrees(np.arctan2(dvec[1], dvec[0]))),
-            straight=(disp / path_len if path_len > 1e-6 else 0.0)))
-    return out
-
-
-def _circular_mean_deg(degs) -> float:
-    a = np.radians(np.asarray(degs, dtype=float))
-    return float(np.degrees(np.arctan2(np.sin(a).mean(), np.cos(a).mean())))
-
-
-def heading_from_tracks_in_lane(lane, paths, min_disp: float = 3.0,
-                                min_straight: float = 0.7, min_frac_inside: float = 0.5,
-                                tol_deg: float = 40.0):
-    """Robust travel heading (deg, sensor frame) for a lane from the through-traffic
-    whose path lies inside its polygon. Takes each qualifying car's net start->end
-    bearing and returns the dominant direction (trimmed circular mean, so the opposite
-    / cross flow is rejected). Returns (heading, n_used); (None, 0) when nothing
-    qualifies — e.g. a lane only turned into/out of has no straight-through sample."""
-    from matplotlib.path import Path
-    poly = Path(np.asarray(lane_ring(lane), dtype=float))
-    bearings = [p['bearing'] for p in paths
-                if p['disp'] >= min_disp and p['straight'] >= min_straight
-                and poly.contains_points(p['xy']).mean() >= min_frac_inside]
-    if not bearings:
-        return None, 0
-    b = np.asarray(bearings, dtype=float)
-    # Seed from the DENSEST bearing (the car with the most like-directed neighbours), so
-    # a lane carrying both a correct and an opposing/cross flow locks onto the majority
-    # direction instead of averaging to something in between.
-    within = lambda ref: np.abs((b - ref + 180.0) % 360.0 - 180.0) <= tol_deg
-    seed = b[int(np.argmax([within(x).sum() for x in b]))]
-    m = _circular_mean_deg(b[within(seed)])
-    for _ in range(2):  # settle the mean on that cluster
-        if within(m).any():
-            m = _circular_mean_deg(b[within(m)])
-    return float(m), int(within(m).sum())
-
-
 def assign_points_to_lanes(points: np.ndarray, lanes) -> np.ndarray:
     """First-match lane index for each point (point-in-polygon, handles boxes AND
     drawn polygons); -1 if the point is outside every lane."""
@@ -503,15 +438,50 @@ def simplify_path(xs, ys, max_pts: int = 24, min_pts: int = 3):
     return [[float(xs[i]), float(ys[i])] for i in idx]
 
 
+def path_heading(xs, ys):
+    """Overall travel heading (deg, sensor frame) of a drawn multi-point stroke.
+
+    Fits the principal axis (a least-squares line) through ALL the drawn points — so
+    adding points to trace a bending road refines the fit — and takes the forward
+    sign from the draw order (first point = 'from' end, last = 'to' end; falls back to
+    the along-axis trend if the stroke closes on itself). Returns None if degenerate."""
+    P = np.column_stack([np.asarray(xs, dtype=float), np.asarray(ys, dtype=float)])
+    if len(P) < 2:
+        return None
+    Q = P - P.mean(axis=0)
+    try:
+        axis = np.linalg.svd(Q, full_matrices=False)[2][0]
+    except Exception:
+        return None
+    nrm = np.hypot(axis[0], axis[1])
+    if nrm < 1e-9:
+        return None
+    axis = axis / nrm
+    proj = Q @ axis
+    order = float(proj[-1] - proj[0])          # forward = how far the draw progressed along the axis
+    if abs(order) < 1e-6:                        # closed/degenerate order → use the trend vs point index
+        cc = np.corrcoef(np.arange(len(P)), proj)
+        order = cc[0, 1] if np.isfinite(cc[0, 1]) else 1.0
+    if order < 0:
+        axis = -axis
+    return float(np.degrees(np.arctan2(axis[1], axis[0])))
+
+
 def build_draw_figure(points: np.ndarray, lanes, hdmap_lanes=None,
                       color_mode: str = 'cardinal', xrange=None, yrange=None,
-                      true_north_deg=None) -> go.Figure:
-    """Flat top-down 2D figure for DRAWING lane polygons: vehicle dots + HD-map roads
-    + existing lane rings, with lasso/box select enabled (the drawn path becomes a new
-    lane polygon). Equal aspect so shapes aren't distorted. ``true_north_deg`` switches
-    the cardinal colouring to TRUE compass directions and draws a compass rose."""
+                      true_north_deg=None, bg_xyz: np.ndarray = None) -> go.Figure:
+    """Flat top-down 2D figure for DRAWING on the scene: optional point-cloud backdrop
+    + vehicle dots + HD-map roads + existing lane rings (with direction arrows), with
+    lasso/box select enabled. Equal aspect so shapes aren't distorted. ``true_north_deg``
+    switches the cardinal colouring to TRUE compass directions and draws a compass rose.
+    The same scene as the 3D preview, flattened so you can draw on top of it."""
     fig = go.Figure()
     bucket_fn, palette = _cardinal_scheme(true_north_deg)
+    if bg_xyz is not None and len(bg_xyz):
+        bg_xyz = np.asarray(bg_xyz)
+        fig.add_trace(go.Scattergl(x=bg_xyz[:, 0], y=bg_xyz[:, 1], mode='markers',
+                                   marker=dict(size=1.5, color='#9a9a9a', opacity=0.35),
+                                   name='point cloud', hoverinfo='skip'))
     if hdmap_lanes:
         hx, hy = [], []
         for poly in hdmap_lanes:
@@ -534,9 +504,22 @@ def build_draw_figure(points: np.ndarray, lanes, hdmap_lanes=None,
     lane_cols = lane_display_colors(lanes, color_mode, true_north_deg)
     for i, l in enumerate(lanes):
         ring = lane_ring(l)
-        fig.add_trace(go.Scattergl(x=[p[0] for p in ring], y=[p[1] for p in ring], mode='lines',
-                                   line=dict(color=lane_cols[i], width=3),
+        rx = [p[0] for p in ring]; ry = [p[1] for p in ring]
+        fig.add_trace(go.Scattergl(x=rx, y=ry, mode='lines', line=dict(color=lane_cols[i], width=3),
                                    name=str(l['lane_id']), hoverinfo='skip'))
+        # current heading arrow, so you can see each lane's direction while drawing
+        vx = np.asarray(rx[:-1]); vy = np.asarray(ry[:-1])
+        if len(vx):
+            cx, cy = float(vx.mean()), float(vy.mean())
+            hd = np.radians(float(l['heading_deg']))
+            L = 0.35 * min(vx.max() - vx.min(), vy.max() - vy.min()) + 3.0
+            tx, ty = cx + L * np.cos(hd), cy + L * np.sin(hd)
+            wl, wa = 2.4, np.radians(28)
+            fig.add_trace(go.Scattergl(
+                x=[cx, tx, tx - wl * np.cos(hd - wa), tx, tx - wl * np.cos(hd + wa)],
+                y=[cy, ty, ty - wl * np.sin(hd - wa), ty, ty - wl * np.sin(hd + wa)],
+                mode='lines', line=dict(color=lane_cols[i], width=4),
+                showlegend=False, hoverinfo='skip'))
 
     # True-North compass rose, bottom-right (data coords; equal aspect keeps angles true).
     if true_north_deg is not None and xrange and yrange:

@@ -7,9 +7,8 @@ import numpy as np
 from lane_tools import (
     load_tracks, moving_points, auto_lanes,
     LANE_DIRECTIONS, direction_to_heading, heading_to_direction,
-    load_track_paths, heading_from_tracks_in_lane,
     lanes_to_geojson, geojson_to_lanes, build_preview, build_draw_figure,
-    simplify_path, load_pcd_background,
+    simplify_path, path_heading, load_pcd_background,
 )
 
 import nav
@@ -98,13 +97,10 @@ src = uploaded if uploaded is not None else (DEFAULT_TRACKS if os.path.exists(DE
 min_speed = top[1].slider("Min speed", 0.0, 10.0, 1.0, 0.5, help="m/s; exclude slow/parked points.")
 k = top[2].number_input("# lanes", 1, 8, 4, help="Lanes to auto-detect.")
 
-points, paths = None, []
+points = None
 if src is not None:
     try:
-        _df_tracks = load_tracks(src)
-        points = moving_points(_df_tracks, min_speed=min_speed)
-        # Full per-car trajectories (start->end bearings) for "set heading from vehicles".
-        paths = load_track_paths(_df_tracks)
+        points = moving_points(load_tracks(src), min_speed=min_speed)
     except Exception as e:
         st.error(f"Could not read tracks: {e}")
 
@@ -153,16 +149,12 @@ if os.path.exists(_ds.default_lanes_path):
 
 with left:
     st.markdown("##### Lanes")
-    _m = st.session_state.pop('le_veh_msg', None)   # from a "set heading from vehicles" action
-    if _m:
-        (st.success if _m[0] == 'success' else st.warning)(_m[1])
     box = st.container(height=PREVIEW_H, border=False)
     with box:
         if not lanes:
             st.info("No lanes yet — use ✨ Auto-generate above, or ➕ Add lane below.")
         delete_idx = None
         reset_action = None  # (idx, default_lane) — applied after the loop
-        veh_idx = None       # idx — set this lane's heading from the vehicles inside it
         for i, l in enumerate(lanes):
             dft = _def_lanes_by_id.get(str(l['lane_id']))
             # A lane IS a travel direction. The dropdown snaps to a compass cardinal;
@@ -203,36 +195,14 @@ with left:
                                                    format="%.1f", key=f"ymin_{i}_{v}")
                     l['ymax'] = yc[1].number_input("Y max", value=float(l['ymax']), step=1.0,
                                                    format="%.1f", key=f"ymax_{i}_{v}")
-                rc = st.columns(2)
-                if rc[0].button("🚗 Heading from vehicles", key=f"veh_{i}_{v}",
-                                use_container_width=True, disabled=not paths,
-                                help="Set this lane's heading to the dominant travel direction of the "
-                                     "cars whose path runs through it (their real start→end bearing, "
-                                     "ignoring turners). Turn-only lanes have no through-traffic to use — "
-                                     "you'll be told to set those by hand." if paths
-                                     else "No track trajectories loaded."):
-                    veh_idx = i
-                if rc[1].button("↺ Reset to default", key=f"rst_{i}_{v}",
-                                use_container_width=True, disabled=dft is None,
-                                help=("Restore just this lane's box + heading from "
-                                      "config/defaults/lanes.geojson." if dft is not None
-                                      else "No default with this lane name to restore from.")):
+                if st.button("↺ Reset to default", key=f"rst_{i}_{v}",
+                             use_container_width=True, disabled=dft is None,
+                             help=("Restore just this lane's box + heading from "
+                                   "config/defaults/lanes.geojson." if dft is not None
+                                   else "No default with this lane name to restore from.")):
                     reset_action = (i, dft)
         if delete_idx is not None:
             lanes.pop(delete_idx)
-            st.session_state.le_v += 1
-            st.rerun()
-        if veh_idx is not None:
-            _h, _n = heading_from_tracks_in_lane(lanes[veh_idx], paths)
-            _lid = lanes[veh_idx]['lane_id']
-            if _h is None:
-                st.session_state['le_veh_msg'] = ('warning',
-                    f"No straight-through vehicles inside “{_lid}” — it's likely only turned "
-                    f"into/out of. Set its Heading° by hand (or copy a neighbouring lane).")
-            else:
-                lanes[veh_idx]['heading_deg'] = _h
-                st.session_state['le_veh_msg'] = ('success',
-                    f"Set “{_lid}” heading to {_h:.1f}° from {_n} vehicle(s) through the lane.")
             st.session_state.le_v += 1
             st.rerun()
         if reset_action is not None:
@@ -242,26 +212,6 @@ with left:
                               ymax=dft['ymax'], heading_deg=dft['heading_deg'])
             st.session_state.le_v += 1
             st.rerun()
-
-    if st.button("🚗 Set ALL lane headings from their vehicles", use_container_width=True,
-                 disabled=not lanes or not paths,
-                 help="Recompute every lane's heading from the through-traffic inside it (real "
-                      "start→end bearings). Lanes with no straight-through cars (turn-only) are "
-                      "left as-is and listed for you to set by hand."):
-        _changed, _skipped = 0, []
-        for _l in lanes:
-            _h, _n = heading_from_tracks_in_lane(_l, paths)
-            if _h is None:
-                _skipped.append(str(_l['lane_id']))
-            else:
-                _l['heading_deg'] = _h
-                _changed += 1
-        _msg = f"Set {_changed} lane heading(s) from vehicles."
-        if _skipped:
-            _msg += f" No through-traffic for: {', '.join(_skipped)} — set those by hand."
-        st.session_state['le_veh_msg'] = ('warning' if _skipped else 'success', _msg)
-        st.session_state.le_v += 1
-        st.rerun()
 
     add, dl, sv, sd = st.columns([1.4, 1, 1, 1.2])
     if add.button("➕ Add lane", use_container_width=True,
@@ -303,13 +253,14 @@ with right:
              "• Heading — continuous color by exact heading angle.") or "Cardinal"
     color_mode = {"Cardinal": "cardinal", "Lane": "lane", "Heading": "heading"}[color_choice]
     draw_mode = head[1].toggle("✏️ Draw", value=False,
-                               help="Flat top-down view where you **lasso/box-draw** a lane polygon. "
-                                    "Off = the normal 3D preview.")
+                               help="Flat top-down view (the same scene, drawn on top of) where you "
+                                    "**lasso/box-draw a lane** or **draw a direction line** to set a "
+                                    "lane's heading. Off = the normal 3D preview.")
     top_down = head[2].toggle("⬇️ Top-down", value=True, disabled=draw_mode,
                               help="On = bird's-eye. Off = oblique 3D. (Draw mode is always top-down.)")
 
     bgc, hmc, tnc = st.columns(3)
-    show_bg = bgc.checkbox("🛰️ Point cloud", value=True, disabled=draw_mode)
+    show_bg = bgc.checkbox("🛰️ Point cloud", value=True)
     show_hdmap = hmc.checkbox("🗺️ Intersection (HD map)", value=True,
                               help="Overlay the real intersection's road network (the dev-kit HD map) "
                                    "so you can line lanes up with the actual roads.")
@@ -323,7 +274,7 @@ with right:
     # Same frame the direction dropdown/names used above, so display stays consistent.
     true_north_deg = _active_north
     bg_xyz = None
-    if show_bg and not draw_mode and os.path.isdir(DEFAULT_PCD_BG):
+    if show_bg and os.path.isdir(DEFAULT_PCD_BG):
         try:
             bg_xyz = _cached_background(DEFAULT_PCD_BG, 15)
         except Exception as e:
@@ -341,6 +292,15 @@ with right:
 
     _pts = points if points is not None else np.zeros((0, 3))
     if draw_mode:
+        _dm = st.session_state.pop('le_dir_msg', None)   # feedback from a set-direction action
+        if _dm:
+            st.success(_dm)
+        draw_what = st.radio("Draw", ["🟦 Lane shape", "➡️ Direction line"], horizontal=True,
+                             key="le_draw_what", label_visibility="collapsed",
+                             help="🟦 Lane shape — lasso/box a lane polygon.\n\n"
+                                  "➡️ Direction line — draw a stroke ALONG a lane (first point = 'from' "
+                                  "end, last = 'to' end; add points to follow bends) to set its heading.")
+        _is_dir = draw_what.startswith("➡️")
         try:
             from geometry_config import get_research_polygon
             _bx0, _by0, _bx1, _by1 = get_research_polygon().bounds
@@ -349,41 +309,71 @@ with right:
         except Exception:
             _xr = _yr = None
         dfig = build_draw_figure(_pts, lanes, hdmap_lanes=hdmap_lanes, color_mode=color_mode,
-                                 xrange=_xr, yrange=_yr, true_north_deg=true_north_deg)
+                                 xrange=_xr, yrange=_yr, true_north_deg=true_north_deg, bg_xyz=bg_xyz)
         ev = st.plotly_chart(dfig, use_container_width=True, key="le_draw", on_select="rerun",
                              config={"scrollZoom": True, "displaylogo": False,
                                      "modeBarButtonsToRemove": ["autoScale2d"]})
-        poly = None
+        sel = {}
         try:
             sel = ev.get("selection") or {}
-            lasso, boxsel = sel.get("lasso") or [], sel.get("box") or []
-            if lasso:
-                poly = simplify_path(lasso[0]["x"], lasso[0]["y"])
-            elif boxsel:
-                xs, ys = boxsel[0]["x"], boxsel[0]["y"]
-                x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
-                poly = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
         except Exception:
+            sel = {}
+        lasso, boxsel = sel.get("lasso") or [], sel.get("box") or []
+
+        if _is_dir:
+            # ---- Direction line: fit a heading from the drawn stroke ----
+            hd = path_heading(lasso[0]["x"], lasso[0]["y"]) if lasso else None
+            if hd is not None:
+                _dir_name = heading_to_direction(hd, _active_north)
+                st.caption(f"➡️ Drawn direction ≈ **{hd:.1f}°** ({_dir_name}) — apply it to a lane:")
+                g1, g2 = st.columns([2, 1])
+                if lanes:
+                    _di = g1.selectbox("apply to lane", list(range(len(lanes))),
+                                       format_func=lambda j: str(lanes[j]['lane_id']),
+                                       key=f"le_dir_{v}", label_visibility="collapsed")
+                    if g2.button("➡️ Set heading", use_container_width=True):
+                        lanes[_di]['heading_deg'] = hd
+                        st.session_state['le_dir_msg'] = (
+                            f"Set “{lanes[_di]['lane_id']}” heading to {hd:.1f}° from the drawn line.")
+                        st.session_state.le_v += 1
+                        st.rerun()
+                else:
+                    st.info("Add a lane first (➕ Add lane), then draw its direction here.")
+            else:
+                st.caption("Pick the **Lasso** tool (top-right of the chart) and drag a stroke ALONG the "
+                           "lane — from the entry end to the exit end. Add points to trace a bend. The "
+                           "line's direction becomes the lane heading.")
+        else:
+            # ---- Lane shape: the drawn outline becomes a lane polygon ----
             poly = None
-        if poly and len(poly) >= 3:
-            st.caption(f"✏️ Drawn shape · {len(poly)} vertices — add it as a lane, or replace an existing one.")
-            d1, d2, d3 = st.columns([1.3, 1.6, 1])
-            if d1.button("➕ Add as new lane", use_container_width=True):
-                lanes.append(dict(lane_id="Eastbound", polygon=poly, n=0,
-                                  heading_deg=direction_to_heading("Eastbound", _active_north)))
-                st.session_state.le_v += 1
-                st.rerun()
-            if lanes:
-                _ri = d2.selectbox("replace which lane", list(range(len(lanes))),
-                                   format_func=lambda j: str(lanes[j]['lane_id']),
-                                   key=f"le_repl_{v}", label_visibility="collapsed")
-                if d3.button("✏️ Replace", use_container_width=True):
-                    lanes[_ri]['polygon'] = poly
+            try:
+                if lasso:
+                    poly = simplify_path(lasso[0]["x"], lasso[0]["y"])
+                elif boxsel:
+                    xs, ys = boxsel[0]["x"], boxsel[0]["y"]
+                    x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+                    poly = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+            except Exception:
+                poly = None
+            if poly and len(poly) >= 3:
+                st.caption(f"✏️ Drawn shape · {len(poly)} vertices — add it as a lane, or replace an existing one.")
+                d1, d2, d3 = st.columns([1.3, 1.6, 1])
+                if d1.button("➕ Add as new lane", use_container_width=True):
+                    lanes.append(dict(lane_id="Eastbound", polygon=poly, n=0,
+                                      heading_deg=direction_to_heading("Eastbound", _active_north)))
                     st.session_state.le_v += 1
                     st.rerun()
-        else:
-            st.caption("Pick the **Lasso** (or **Box Select**) tool at the top-right of the chart, then "
-                       "drag a shape around the lane — the outline becomes the lane polygon.")
+                if lanes:
+                    _ri = d2.selectbox("replace which lane", list(range(len(lanes))),
+                                       format_func=lambda j: str(lanes[j]['lane_id']),
+                                       key=f"le_repl_{v}", label_visibility="collapsed")
+                    if d3.button("✏️ Replace", use_container_width=True):
+                        lanes[_ri]['polygon'] = poly
+                        st.session_state.le_v += 1
+                        st.rerun()
+            else:
+                st.caption("Pick the **Lasso** (or **Box Select**) tool at the top-right of the chart, then "
+                           "drag a shape around the lane — the outline becomes the lane polygon.")
     else:
         fig = build_preview(_pts, lanes, color_mode=color_mode, bg_xyz=bg_xyz, top_down=top_down,
                             hdmap_lanes=hdmap_lanes, true_north_deg=true_north_deg)
