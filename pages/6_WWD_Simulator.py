@@ -203,8 +203,11 @@ with st.expander("⚙️ Simulation setup", expanded=True):
         st.divider()
         if view_mode.startswith("🧊"):
             st.caption("3D scan overlays.")
-            _pts_shown = st.select_slider("Points shown", [10000, 20000, 30000, 50000], value=50000,
-                                          key="sim3d_maxpts")
+            _pts_shown = st.select_slider("Points shown", [10000, 20000, 30000, 50000, 80000, 100000],
+                                          value=50000, key="sim3d_maxpts",
+                                          format_func=lambda n: "All" if n >= 100000 else f"{n // 1000}k",
+                                          help="Max LiDAR points rendered per frame. The registered/cropped "
+                                               "cloud is ~80–83k points; 'All' shows the full cloud.")
             st.caption("(The 🧊 Point cloud toggle is above the view — turn it off for smooth playback.)")
             q1, q2, q3 = st.columns(3)
             q1.toggle("📦 GT boxes", key="sim3d_boxes")
