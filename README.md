@@ -23,12 +23,15 @@ sections (Data & setup · Detection pipeline · Wrong-way driving). The pages
 4. **Evaluation** — score detection/tracking against ground-truth cuboids
    (precision / recall / F1, MOTA / MOTP / ID-switches) with a side-by-side
    GT-vs-detection visual comparison.
-5. **Lane Editor** — build/adjust the wrong-way lane geometry from data and
-   export it.
-6. **WWD Simulator** — spawn a synthetic wrong-way driver through the real
-   detector and fire the V2X dashboard's messaging on detection. Includes a live,
-   **georeferenced** map of the real intersection (true compass bearings, exact
-   lat/lon — the site is the TUMTraf s110 junction in Garching-Hochbrück, Munich).
+5. **Lane Editor** — build/adjust the wrong-way lane geometry: axis boxes **or drawn
+   polygons**, a **direction dropdown + numeric heading**, and a **draw-the-direction-line**
+   tool (trace a lane → its bearing becomes the heading), over the point cloud + **HD-map**
+   overlay with **georeferenced true cardinals** and a compass rose.
+6. **WWD Simulator** — spawn a synthetic wrong-way driver through the real detector and fire
+   the V2X dashboard's messaging on detection. Renders the **registered/cropped** fused cloud
+   with **lanes coloured + a heading arrow per lane** matching the Lane Editor, a
+   **georeferenced** true-North compass, and a live map of the real intersection (true compass
+   bearings, exact lat/lon — the TUMTraf s110 junction in Garching-Hochbrück, Munich).
 7. **Visualizer** — three tabs: a **camera** viewer (both cameras side by side with
    generated bounding-box / point-cloud overlays + track-history trails + video),
    a **3D LiDAR** viewer (the scan + ground-truth boxes + the **real HD-map
@@ -324,7 +327,7 @@ streamlit run Home.py
 | `wwd_detection.py` | **Wrong-way logic** (velocity vs. lane direction) |
 | `evaluation.py` | CLEAR-MOT metrics + BEV figures + class/ROI filters |
 | `geometry_config.py` | Loads the active dataset's scene geometry + point-in-polygon |
-| `lane_tools.py` | Lane Editor helpers (auto-cluster, geojson, 3D preview) |
+| `lane_tools.py` | Lane Editor helpers (auto-cluster, **drawable polygons**, **direction-line heading fit** `path_heading`, **true-cardinal colours/compass**, geojson round-trip, 3D + draw previews) |
 | `visualization.py` | 3D interactive view + matplotlib GIF (cardinal arrows) |
 | `label_projection.py` | OpenLABEL boxes/point-cloud → camera image (calibration from JSON) |
 | `lidar_viewer.py` | 3D LiDAR scan + GT boxes + HD-map overlay (oblique view) via Plotly |
@@ -332,7 +335,7 @@ streamlit run Home.py
 | `datasets/<id>/map/lane_samples.json` | Per-dataset HD-map road network (from dev-kit `src/map/map.zip`; gitignored — resolved via `dataset_manager`) |
 | `viewer_ui.py` | Shared compact viewer controls (one-line nav + bulk overlay toggles) |
 | `road_viewer.py` | Camera browsing + side-by-side video helpers |
-| `wwd_simulator.py` | Synthetic wrong-way track + V2X dashboard integration |
+| `wwd_simulator.py` | Synthetic wrong-way track + V2X dashboard integration (georef-aware lane names, editor-matched lane colours, `default_scenario_index`) |
 | `datasets/<id>/config/site_geometry.json` | Per-dataset scene geometry (research/road/exclusion) |
 | `datasets/<id>/config/lanes.geojson` | Per-dataset **lane directions for WWD** |
 | `datasets/<id>/config/georef.json` | Per-dataset **georeference** (site name + map→base / base→cloud transforms) |
@@ -357,8 +360,11 @@ WWD parameters live on the Detection page: *Angle vs. flow*, *Min speed*,
 steadiness*.
 
 ### Visualization
-- Object markers and their heading **arrows are color-coded by cardinal
-  direction** (E=red, N=green, W=blue, S=orange); stationary/undefined = gray.
+- Object markers and their heading **arrows are colour-coded by cardinal direction**.
+  The **Detection view** uses the sensor-frame palette (E blue · N cyan · W purple · S
+  pink); stationary/undefined = grey. *(The **Lane Editor** and **WWD Simulator** use a
+  separate **georeferenced true-compass** palette — N green · E red · S orange · W blue —
+  matching each other.)*
 - Wrong-way vehicles show an **orange diamond + "WRONG WAY"** label.
 - Lane boxes + expected-direction arrows can be overlaid (toggle on the page).
 
@@ -366,24 +372,38 @@ steadiness*.
 
 ## Calibrating lane geometry (Lane Editor — page 5)
 
-Each dataset's `config/lanes.geojson` defines, per road region, the **expected
-legal direction of travel** (degrees, math convention: `0=+X`, `90=+Y`, `180/-180=-X`, `-90=-Y`,
-i.e. `atan2(vy,vx)` in the sensor frame). The file is **currently calibrated**
-(eastbound / westbound / northbound / southbound). To recalibrate or retarget:
+Each dataset's `config/lanes.geojson` defines, per road region (an axis box **or an
+arbitrary drawn polygon**), the **expected legal direction of travel** (degrees, math
+convention: `0=+X`, `90=+Y`, `180/-180=-X`, `-90=-Y`, i.e. `atan2(vy,vx)` in the sensor
+frame). The file is **currently calibrated** (eastbound / westbound / northbound /
+southbound). To recalibrate or retarget:
 
 1. Run a detection first (produces `outputs/detection/object_detection/<sensor>/<crop>/tracks.csv`).
-2. Open the **Lane Editor**. Click **Auto-generate** to cluster the observed
-   traffic into N directions and create starting boxes with measured headings.
-3. **Adjust** each lane's box (X/Y min/max) and heading in the table; watch the
-   live top-down preview (color points by *Cardinal*, *Lane membership*, or
-   *Heading*; toggle the point-cloud backdrop; pan/scroll-zoom).
-4. **Save to config** (overwrites the active dataset's `config/lanes.geojson`).
-5. **Validate:** re-run on normal traffic → expect zero wrong-way flags; run a
-   known wrong-way clip → expect it flagged. Tune the WWD sliders.
+2. Open the **Lane Editor**. Start from **✨ Auto-generate** (cluster the observed traffic
+   into N directions → starter boxes), **📂 Load saved**, or **➕ Add lane**.
+3. **Shape** each lane and **set its direction**, watching the live preview (colour points
+   by *Cardinal* / *Lane membership* / *Heading*; toggle the point-cloud backdrop and the
+   **🗺️ Intersection HD-map** overlay; pan/scroll-zoom):
+   - The **Direction dropdown** (Eastbound / Westbound / Northbound / Southbound) snaps the
+     heading + name + colour to a compass cardinal; the numeric **Heading°** field
+     fine-tunes it (the two stay in sync); the **X/Y** fields size a box lane.
+   - **✏️ Draw** mode (a flat top-down view of the *same* scene) offers **🟦 Lane shape**
+     (lasso/box a polygon) and **➡️ Direction line** — drag a stroke along the lane and its
+     bearing becomes the heading (fit through **all** the drawn points, so it follows
+     bends). This is the most accurate way to set a heading and works even for **turn-only
+     lanes** with no straight-through traffic to measure.
+   - With a georeference, **🧭 True cardinals** colours/names lanes by **real compass
+     direction** and shows a compass rose.
+4. **💾 Save** (overwrites the active dataset's `config/lanes.geojson`); optionally **📌 Set
+   as new default**.
+5. **Validate:** re-run on normal traffic → expect zero wrong-way flags; run a known
+   wrong-way clip → expect it flagged. Tune the WWD sliders.
 
-> The names (eastbound, etc.) are a convention — `+Y` is the sensor's axis, not
-> verified geographic north. It doesn't affect WWD correctness (only relative
-> direction matters), just the labels.
+> **Cardinals are georeferenced.** With a georeference present, the lane names and colours
+> reflect **true compass directions** — and the **WWD Simulator** and **V2X Dashboard** use
+> the same naming + palette, so the three read identically. WWD correctness depends only on
+> relative direction, so the names are cosmetic, but they now match the real map. Without a
+> georeference the editor falls back to the sensor axes (`+X`≈East, `+Y`≈North).
 
 ---
 
@@ -494,7 +514,44 @@ false alarms matter more than recall); further gains need a learned detector, no
 
 ## Changelog (highlights since the pipeline came together)
 
-**Home / navigation refresh (latest)**
+**Lane calibration + WWD Simulator polish (latest)**
+- **Draw-the-direction lane calibration.** The Lane Editor's flat **✏️ Draw** canvas now
+  renders the *same* scene as the 3D preview (point-cloud backdrop + HD-map roads + lane
+  arrows) and offers two tools: **🟦 Lane shape** (lasso/box a lane polygon) and **➡️
+  Direction line** — drag a stroke *along* a lane (first point = "from", last = "to") and
+  its bearing becomes the lane heading. The direction is fit by least-squares through
+  **all** the drawn points (`lane_tools.path_heading`), so a bending road is traced exactly
+  and hand-wobble is averaged out; the travel sign comes from the draw order. (This
+  replaced an earlier, less reliable "set the heading from the vehicles in the lane"
+  attempt — the tracked per-frame heading is too noisy on this data.)
+- **Lanes are travel directions.** Each lane has a **Direction dropdown** (Eastbound /
+  Westbound / Northbound / Southbound) that snaps its heading + name + colour to a compass
+  cardinal, alongside the numeric **Heading°** field (fine-tune; the two stay in sync) and
+  the X/Y box fields. Arbitrary drawn **polygons** are supported end-to-end (`lane_ring`,
+  point-in-polygon lane assignment, geojson round-trip).
+- **True (georeferenced) cardinals + compass rose.** With a georeference, the editor
+  colours/names lanes by **real compass direction** and draws a mini compass rose; a **🧭
+  True cardinals** toggle governs the frame everywhere (dropdown, names, colours, compass).
+  **E/W mirror fix:** the georeference's east/west was mirrored vs reality (the first-frame
+  truck heads sensor +X, which the georef called "West" but really drives **East** toward
+  the Jägerhof) — corrected by a reflection across N–S (`true_cardinal_buckets`), so
+  cardinals now match the map.
+- **WWD Simulator ↔ Lane Editor parity.** The simulator now (a) draws lanes in the **same
+  true-compass palette** as the editor (N green / E red / S orange / W blue) in **both** the
+  3D scene and the BEV, (b) shows a **colour-matched heading arrow per lane** in the 3D
+  scene, (c) uses **georeference-aware lane names** (`cardinal_name`) so a lane called
+  "Northbound" reads "legal direction: North" (not the old sensor-frame "South"), and (d)
+  carries a **georeferenced true-North compass** in the viewer.
+- **Registered cloud by default + denser view.** The simulator scene now renders the
+  **registered/cropped** fused cloud + its labels (was south/cropped) in the same south
+  frame; **Points shown** defaults to **50k** and reaches **"All"** (~80–83k, the full fused
+  cloud).
+- **Default scenario = East-bound in a Westbound lane** (legal direction West), the
+  canonical wrong-way case, pre-selected in **both** the WWD Simulator and the V2X Dashboard
+  (`default_scenario_index`); the V2X page still honours a scenario handed over from the
+  simulator.
+
+**Home / navigation refresh**
 - **Collapsible sidebar** (`nav.py` + `.streamlit/config.toml` `showSidebarNavigation = false`):
   Home at top, then expandable sections — **Data & setup**, **Detection pipeline**,
   **Wrong-way driving** — replacing Streamlit's flat page list. Every page calls
@@ -736,6 +793,11 @@ the junction more reliable — and because it's in the south frame with a union 
 straight into the existing scorable-GT + evaluation flow.
 
 ## Other open follow-ups
+- **Georeference E/W at the transform level.** The cardinal *display* (compass + lane
+  colours/names in the Lane Editor and WWD Simulator) is corrected for the georef's mirrored
+  east/west, but the underlying `sensor_xy_to_latlon` **position** mapping — used to place
+  lanes on the **V2X Dashboard** map — still carries that mirror. Worth confirming, and
+  fixing at the source, if the V2X map reads east-west flipped.
 - Reduce **ID switches** further (association / `max_missed` tuning).
 - Remaining **GT leakage** for the bundled A9 dataset: the background filter still
   uses GT cuboids to set per-region z-bands when GT is present (new datasets
