@@ -29,6 +29,29 @@ PREVIEW_H = 640
 st.session_state.setdefault('le_lanes', [])
 st.session_state.setdefault('le_v', 0)  # widget key version (bump to reseed)
 
+
+# The direction dropdown and the numeric Heading° field are two views of the SAME
+# lane heading — edit either and the other follows (via these on_change callbacks).
+def _sync_dir_to_heading(idx, dirkey, hdkey, north):
+    """Dropdown picked → snap heading to that compass cardinal; mirror into the number."""
+    h = direction_to_heading(st.session_state[dirkey], north)
+    st.session_state.le_lanes[idx]['heading_deg'] = h
+    st.session_state[hdkey] = h
+
+
+def _sync_heading_to_dir(idx, hdkey, dirkey, north):
+    """Heading number edited → store it; mirror the matching direction into the dropdown."""
+    h = float(st.session_state[hdkey])
+    st.session_state.le_lanes[idx]['heading_deg'] = h
+    st.session_state[dirkey] = heading_to_direction(h, north)
+
+
+def _reseed_lane_widgets():
+    """Bump the widget-key version so the dropdown/heading re-derive in the newly
+    selected cardinal frame (used when the True-cardinals toggle flips)."""
+    st.session_state.le_v += 1
+
+
 st.title("🛣️ Lane Editor")
 
 # Follow the same sensor/source as the rest of the app (shared pipeline_* state), so the
@@ -134,24 +157,30 @@ with left:
         reset_action = None  # (idx, default_lane) — applied after the loop
         for i, l in enumerate(lanes):
             dft = _def_lanes_by_id.get(str(l['lane_id']))
-            # A lane IS a travel direction: the dropdown sets the heading, name and
-            # color to the matching compass cardinal. Read the dropdown's remembered
-            # value (if any) so the expander title reflects the pick immediately.
-            _wkey = f"dir_{i}_{v}"
-            _cur_dir = heading_to_direction(l['heading_deg'], _active_north)
-            _name = st.session_state.get(_wkey, _cur_dir)
-            _name = _name if _name in LANE_DIRECTIONS else _cur_dir
+            # A lane IS a travel direction. The dropdown snaps to a compass cardinal;
+            # the Heading° field fine-tunes it — both are kept in sync (they seed from
+            # the lane heading; the version key `v` re-seeds them on load/reset/toggle).
+            _wkey, _hdkey = f"dir_{i}_{v}", f"hd_{i}_{v}"
+            st.session_state.setdefault(_hdkey, float(l['heading_deg']))
+            st.session_state.setdefault(_wkey, heading_to_direction(l['heading_deg'], _active_north))
+            _name = st.session_state[_wkey]
+            _name = _name if _name in LANE_DIRECTIONS else heading_to_direction(l['heading_deg'], _active_north)
             with st.expander(f"🛣️ {_name}", expanded=False):
-                a = st.columns([3, 0.8])
-                _sel_dir = a[0].selectbox("Direction", LANE_DIRECTIONS,
-                                          index=LANE_DIRECTIONS.index(_cur_dir), key=_wkey,
-                                          help="Lane travel direction — sets the heading, name and color to the "
-                                               "real-life compass cardinal for this intersection.")
-                l['heading_deg'] = direction_to_heading(_sel_dir, _active_north)
-                l['lane_id'] = _sel_dir  # the lane's name is its direction
-                a[1].markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
-                if a[1].button("🗑", key=f"del_{i}_{v}", help="Delete lane"):
+                a = st.columns([1.9, 1.3, 0.8])
+                a[0].selectbox("Direction", LANE_DIRECTIONS, key=_wkey,
+                               on_change=_sync_dir_to_heading, args=(i, _wkey, _hdkey, _active_north),
+                               help="Snap the lane to a compass cardinal — sets its heading, name and color.")
+                a[1].number_input("Heading°", step=1.0, format="%.1f", key=_hdkey,
+                                  on_change=_sync_heading_to_dir, args=(i, _hdkey, _wkey, _active_north),
+                                  help="Fine-tune the exact heading (0=+X, 90=+Y, 180=−X, −90=−Y). "
+                                       "The direction dropdown + name follow it.")
+                a[2].markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
+                if a[2].button("🗑", key=f"del_{i}_{v}", help="Delete lane"):
                     delete_idx = i
+                # Reconcile the lane object with the (possibly just-edited) widgets so the
+                # preview + save use the live values.
+                l['heading_deg'] = float(st.session_state[_hdkey])
+                l['lane_id'] = st.session_state[_wkey]  # the lane's name is its direction
                 if l.get('polygon'):
                     st.caption(f"✏️ Drawn polygon · {len(l['polygon'])} vertices — re-shape it in "
                                "**✏️ Draw mode** (right) via *Replace selected lane*.")
@@ -235,7 +264,7 @@ with right:
                               help="Overlay the real intersection's road network (the dev-kit HD map) "
                                    "so you can line lanes up with the actual roads.")
     true_cardinals = tnc.checkbox("🧭 True cardinals", value=_has_geo, disabled=not _has_geo,
-                                  key="le_true_card",
+                                  key="le_true_card", on_change=_reseed_lane_widgets,
                                   help="Colour vehicles/lanes by REAL compass direction (N/E/S/W from the "
                                        "georeference) and show a compass rose, instead of the sensor-frame "
                                        "axes. Also drives the lane direction dropdown/names. Needs a "
