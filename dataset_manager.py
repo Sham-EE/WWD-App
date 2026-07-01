@@ -42,7 +42,7 @@ REGISTRY_PATH = os.path.join(DATASETS_DIR, "registry.json")
 TEMPLATES = [
     {
         "id": "A9_r02_s02",
-        "name": "TUMTraf s110 · Garching intersection (A9 r02_s02) — template",
+        "name": "TUMTraf s110 Garching intersection (A9 r02_s02)",
         "template": True,
         "pcd_dir": "datasets/A9_r02_s02/data/derived/point_clouds/cropped/south",
         "gt_dir": "datasets/A9_r02_s02/data/derived/labels/scorable/south",

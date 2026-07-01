@@ -10,10 +10,6 @@ st.markdown(
     """
     <div style="padding:6px 0 2px 0">
       <h1 style="margin-bottom:0">🚗 LiDAR Wrong-Way Driving Toolkit</h1>
-      <p style="color:#8b97a7;margin-top:4px;font-size:1.02rem">
-        Roadside-LiDAR pipeline — background filtering · detection &amp; tracking ·
-        wrong-way detection · evaluation · V2X alerting.
-      </p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -22,21 +18,31 @@ st.markdown(
 # ---------------- Active dataset banner ----------------
 _active = dm.get_active()
 _status = _active.status()
-_chips = " ".join(c for c in [
-    "🟢 PCDs" if _status["pcd"] else "⚪ no PCDs",
-    "🏷️ GT" if _status["gt"] else "",
-    "🛣️ lanes" if _status["lanes"] else "",
-    "📦 model" if _status["model"] else "",
-    "✨ filtered" if _status["filtered"] else "",
-] if c)
+def _status_pill(label, ok):
+    """A rounded status pill matching the pipeline stepper — green + ✓ when the
+    artifact is present, red + ✕ when it's missing."""
+    bg, bd, tx, glyph = (("#101a13", "#2c5036", "#86d6a0", "✓") if ok
+                         else ("#1a1113", "#512c31", "#d98a90", "✕"))
+    return (f"<span style='display:inline-flex;align-items:center;gap:5px;background:{bg};"
+            f"border:1px solid {bd};border-radius:999px;padding:3px 12px;font-size:.78rem;"
+            f"font-weight:600;color:{tx};white-space:nowrap'>{label}"
+            f"<span style='opacity:.85'>{glyph}</span></span>")
+
+
+_chips = "".join(_status_pill(lbl, ok) for lbl, ok in [
+    ("PCDs", _status["pcd"]),
+    ("GT", _status["gt"]),
+    ("lanes", _status["lanes"]),
+    ("model", _status["model"]),
+    ("filtered", _status["filtered"]),
+])
 ab1, ab2 = st.columns([4, 1])
 with ab1:
     st.markdown(
-        f"""<div style="background:#14181f;border:1px solid #2a3340;border-radius:12px;padding:12px 16px">
-              <span style="color:#8b97a7;font-size:.8rem;text-transform:uppercase;letter-spacing:.05em">Active dataset</span><br>
-              <span style="font-size:1.15rem;font-weight:600">🗂️ {_active.name}</span>
-              <span style="color:#8b97a7"> · <code>{_active.id}</code></span><br>
-              <span style="color:#8b97a7;font-size:.9rem">{_chips}</span>
+        f"""<div style="background:#14181f;border:1px solid #2a3340;border-radius:12px;padding:14px 18px">
+              <div style="color:#8b97a7;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Active dataset</div>
+              <div style="font-size:1.15rem;font-weight:600;line-height:1.3">🗂️ {_active.name}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px">{_chips}</div>
             </div>""",
         unsafe_allow_html=True,
     )
@@ -54,22 +60,10 @@ _states = nav.tool_states(_active)
 _next_page = next((p for p in nav.PIPELINE if _states[p] == "todo"), None)
 
 st.markdown("#### 🧭 Pipeline")
-st.caption("The recommended order — status updates as the active dataset progresses.")
 nav.render_stepper([
     (nav.TOOLS[p][1], nav.TOOLS[p][2], "next" if p == _next_page else _states[p])
     for p in nav.PIPELINE
 ])
-
-if _next_page is None:
-    st.success("🎉 All set — every pipeline stage is complete. Jump into the **WWD Simulator** or **Evaluation**.")
-else:
-    _ni, _nicon, _nname, _ndesc, _ns = nav.TOOLS[_next_page]
-    nc1, nc2 = st.columns([4, 1])
-    nc1.info(f"👉 **Next step — {_nicon} {_nname}:** {_ndesc}")
-    with nc2:
-        st.write("")
-        if st.button(f"Go to {_nname} →", use_container_width=True, type="primary"):
-            st.switch_page(_next_page)
 
 st.write("")
 st.divider()
