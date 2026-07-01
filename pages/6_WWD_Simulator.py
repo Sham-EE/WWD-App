@@ -115,6 +115,11 @@ try:
 except Exception:
     _TRUE_N = None
 
+# Per-lane colours in the SAME true-compass palette as the Lane Editor, so the lanes
+# read identically here (both the 3D scene and the BEV) — N=green, E=red, S=orange, W=blue.
+from lane_tools import lane_display_colors
+_LANE_COLS = lane_display_colors(lanes, "cardinal", _TRUE_N)
+
 
 def _add_compass(fig, cx, cy, r, north_deg, z=None):
     """Draw a true-North compass rose (N/E/S/W) centred at (cx, cy[, z]) — Scatter3d
@@ -272,9 +277,10 @@ def _scene_fig(stp, with_points, max_pts, height=620):
                           sensors=sensors, hdmap_lanes=hdmap)
     gz = _ground_z(pts, gt_objs)
     if st.session_state.sim3d_lanes:
-        for ln in lanes:
+        for _li, ln in enumerate(lanes):
             xs, ys = ln["polygon"].exterior.xy
-            _add_ground_polyline(fig, list(zip(xs, ys)), gz, "#3884ff", f"lane {ln['lane_id']}", width=3)
+            _add_ground_polyline(fig, list(zip(xs, ys)), gz, _LANE_COLS[_li],
+                                 f"lane {ln['lane_id']}", width=3)
     col = "#ff2b2b" if (confirm_frame is not None and (start_frame + stp) >= confirm_frame) else "#ffa500"
     _add_ground_polyline(fig, [(dd["cx"], dd["cy"]) for dd in sim_track[:stp + 1]],
                          gz, col, "driver path", width=4)
@@ -415,7 +421,7 @@ if st.session_state.v2x_armed and st.session_state.v2x_event:
     st.success(f"🚨 Broadcasting: {ev['direction']}-bound in the {ev['lane']} lane · "
                f"{ev['speed']} m/s · heading {ev['heading']}° (true) · 📍 {_loc_txt}")
     st.page_link("pages/8_V2X_Dashboard.py",
-                 label="📡 Open the V2X Dashboard — live map, J2735 TIM, pipeline & receivers", icon="📡")
+                 label="Open the V2X Dashboard — live map, J2735 TIM, pipeline & receivers", icon="📡")
 
 # auto-advance (paused while the dashboard is embedded to avoid re-render churn)
 if playing and step < n_steps - 1 and not st.session_state.v2x_armed:
