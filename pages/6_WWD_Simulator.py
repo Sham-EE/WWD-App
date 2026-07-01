@@ -98,6 +98,18 @@ def _add_ground_polyline(fig, xy, z, color, name, width=3, closed=False):
                                hoverinfo="name", showlegend=False))
 
 
+def _add_ground_arrow(fig, cx, cy, heading_rad, z, color, name, L=6.0):
+    """A flat direction arrow (shaft + arrowhead) on the ground plane at height `z`,
+    pointing along `heading_rad` — used to show each lane's legal travel direction."""
+    tx, ty = cx + L * np.cos(heading_rad), cy + L * np.sin(heading_rad)
+    wl, wa = 0.32 * L, np.radians(28)
+    pts = [(cx, cy), (tx, ty),
+           (tx - wl * np.cos(heading_rad - wa), ty - wl * np.sin(heading_rad - wa)),
+           (tx, ty),
+           (tx - wl * np.cos(heading_rad + wa), ty - wl * np.sin(heading_rad + wa))]
+    _add_ground_polyline(fig, pts, z, color, name, width=6)
+
+
 # ---------------- Setup panel: one collapsible card, tabbed inside ----------------
 vu.ensure_toggle_defaults({
     "sim_show_lanes": True, "sim_show_legal_arrows": True, "sim_show_path": True,
@@ -281,6 +293,10 @@ def _scene_fig(stp, with_points, max_pts, height=620):
             xs, ys = ln["polygon"].exterior.xy
             _add_ground_polyline(fig, list(zip(xs, ys)), gz, _LANE_COLS[_li],
                                  f"lane {ln['lane_id']}", width=3)
+            if st.session_state.get("sim_show_legal_arrows", True):
+                _c = ln["polygon"].centroid
+                _add_ground_arrow(fig, _c.x, _c.y, np.radians(float(ln["heading_deg"])),
+                                  gz, _LANE_COLS[_li], f"lane {ln['lane_id']} dir")
     col = "#ff2b2b" if (confirm_frame is not None and (start_frame + stp) >= confirm_frame) else "#ffa500"
     _add_ground_polyline(fig, [(dd["cx"], dd["cy"]) for dd in sim_track[:stp + 1]],
                          gz, col, "driver path", width=4)
