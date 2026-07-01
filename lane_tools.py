@@ -218,6 +218,71 @@ def load_pcd_background(pcd_dir: str, n_frames: int = 15, grid: float = 0.5,
     return xyz
 
 
+def load_track_paths(df, min_frames: int = 4):
+    """Per-object trajectories from a tracks DataFrame (needs tid, cx, cy; frame to
+    order). Each item: {tid, xy:(N,2), bearing (deg, start->end), disp (m),
+    straight (0..1)}. Restricts to vehicles when an is_vehicle column is present.
+
+    The net start->end bearing is used (not the per-frame heading column, which is
+    unreliable on this dataset); `straight` = displacement / path-length flags
+    turners/loiterers (≈1 straight-through, low = curved/parked)."""
+    out = []
+    if df is None or not {'tid', 'cx', 'cy'}.issubset(df.columns):
+        return out
+    d0 = df
+    if 'is_vehicle' in d0.columns:
+        iv = d0['is_vehicle']
+        d0 = d0[(iv == True) | iv.astype(str).str.lower().isin(['true', '1', '1.0'])]  # noqa: E712
+    for tid, d in d0.groupby('tid'):
+        if 'frame' in d.columns:
+            d = d.sort_values('frame')
+        xy = d[['cx', 'cy']].to_numpy(dtype=float)
+        if len(xy) < min_frames:
+            continue
+        dvec = xy[-1] - xy[0]
+        disp = float(np.hypot(dvec[0], dvec[1]))
+        seg = np.diff(xy, axis=0)
+        path_len = float(np.hypot(seg[:, 0], seg[:, 1]).sum())
+        out.append(dict(
+            tid=tid, xy=xy, disp=disp,
+            bearing=float(np.degrees(np.arctan2(dvec[1], dvec[0]))),
+            straight=(disp / path_len if path_len > 1e-6 else 0.0)))
+    return out
+
+
+def _circular_mean_deg(degs) -> float:
+    a = np.radians(np.asarray(degs, dtype=float))
+    return float(np.degrees(np.arctan2(np.sin(a).mean(), np.cos(a).mean())))
+
+
+def heading_from_tracks_in_lane(lane, paths, min_disp: float = 3.0,
+                                min_straight: float = 0.7, min_frac_inside: float = 0.5,
+                                tol_deg: float = 40.0):
+    """Robust travel heading (deg, sensor frame) for a lane from the through-traffic
+    whose path lies inside its polygon. Takes each qualifying car's net start->end
+    bearing and returns the dominant direction (trimmed circular mean, so the opposite
+    / cross flow is rejected). Returns (heading, n_used); (None, 0) when nothing
+    qualifies — e.g. a lane only turned into/out of has no straight-through sample."""
+    from matplotlib.path import Path
+    poly = Path(np.asarray(lane_ring(lane), dtype=float))
+    bearings = [p['bearing'] for p in paths
+                if p['disp'] >= min_disp and p['straight'] >= min_straight
+                and poly.contains_points(p['xy']).mean() >= min_frac_inside]
+    if not bearings:
+        return None, 0
+    b = np.asarray(bearings, dtype=float)
+    # Seed from the DENSEST bearing (the car with the most like-directed neighbours), so
+    # a lane carrying both a correct and an opposing/cross flow locks onto the majority
+    # direction instead of averaging to something in between.
+    within = lambda ref: np.abs((b - ref + 180.0) % 360.0 - 180.0) <= tol_deg
+    seed = b[int(np.argmax([within(x).sum() for x in b]))]
+    m = _circular_mean_deg(b[within(seed)])
+    for _ in range(2):  # settle the mean on that cluster
+        if within(m).any():
+            m = _circular_mean_deg(b[within(m)])
+    return float(m), int(within(m).sum())
+
+
 def assign_points_to_lanes(points: np.ndarray, lanes) -> np.ndarray:
     """First-match lane index for each point (point-in-polygon, handles boxes AND
     drawn polygons); -1 if the point is outside every lane."""

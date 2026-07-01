@@ -7,6 +7,7 @@ import numpy as np
 from lane_tools import (
     load_tracks, moving_points, auto_lanes,
     LANE_DIRECTIONS, direction_to_heading, heading_to_direction,
+    load_track_paths, heading_from_tracks_in_lane,
     lanes_to_geojson, geojson_to_lanes, build_preview, build_draw_figure,
     simplify_path, load_pcd_background,
 )
@@ -97,10 +98,13 @@ src = uploaded if uploaded is not None else (DEFAULT_TRACKS if os.path.exists(DE
 min_speed = top[1].slider("Min speed", 0.0, 10.0, 1.0, 0.5, help="m/s; exclude slow/parked points.")
 k = top[2].number_input("# lanes", 1, 8, 4, help="Lanes to auto-detect.")
 
-points = None
+points, paths = None, []
 if src is not None:
     try:
-        points = moving_points(load_tracks(src), min_speed=min_speed)
+        _df_tracks = load_tracks(src)
+        points = moving_points(_df_tracks, min_speed=min_speed)
+        # Full per-car trajectories (start->end bearings) for "set heading from vehicles".
+        paths = load_track_paths(_df_tracks)
     except Exception as e:
         st.error(f"Could not read tracks: {e}")
 
@@ -149,12 +153,16 @@ if os.path.exists(_ds.default_lanes_path):
 
 with left:
     st.markdown("##### Lanes")
+    _m = st.session_state.pop('le_veh_msg', None)   # from a "set heading from vehicles" action
+    if _m:
+        (st.success if _m[0] == 'success' else st.warning)(_m[1])
     box = st.container(height=PREVIEW_H, border=False)
     with box:
         if not lanes:
             st.info("No lanes yet — use ✨ Auto-generate above, or ➕ Add lane below.")
         delete_idx = None
         reset_action = None  # (idx, default_lane) — applied after the loop
+        veh_idx = None       # idx — set this lane's heading from the vehicles inside it
         for i, l in enumerate(lanes):
             dft = _def_lanes_by_id.get(str(l['lane_id']))
             # A lane IS a travel direction. The dropdown snaps to a compass cardinal;
@@ -195,14 +203,36 @@ with left:
                                                    format="%.1f", key=f"ymin_{i}_{v}")
                     l['ymax'] = yc[1].number_input("Y max", value=float(l['ymax']), step=1.0,
                                                    format="%.1f", key=f"ymax_{i}_{v}")
-                if st.button("↺ Reset to default", key=f"rst_{i}_{v}",
-                             use_container_width=True, disabled=dft is None,
-                             help=("Restore just this lane's box + heading from "
-                                   "config/defaults/lanes.geojson." if dft is not None
-                                   else "No default with this lane name to restore from.")):
+                rc = st.columns(2)
+                if rc[0].button("🚗 Heading from vehicles", key=f"veh_{i}_{v}",
+                                use_container_width=True, disabled=not paths,
+                                help="Set this lane's heading to the dominant travel direction of the "
+                                     "cars whose path runs through it (their real start→end bearing, "
+                                     "ignoring turners). Turn-only lanes have no through-traffic to use — "
+                                     "you'll be told to set those by hand." if paths
+                                     else "No track trajectories loaded."):
+                    veh_idx = i
+                if rc[1].button("↺ Reset to default", key=f"rst_{i}_{v}",
+                                use_container_width=True, disabled=dft is None,
+                                help=("Restore just this lane's box + heading from "
+                                      "config/defaults/lanes.geojson." if dft is not None
+                                      else "No default with this lane name to restore from.")):
                     reset_action = (i, dft)
         if delete_idx is not None:
             lanes.pop(delete_idx)
+            st.session_state.le_v += 1
+            st.rerun()
+        if veh_idx is not None:
+            _h, _n = heading_from_tracks_in_lane(lanes[veh_idx], paths)
+            _lid = lanes[veh_idx]['lane_id']
+            if _h is None:
+                st.session_state['le_veh_msg'] = ('warning',
+                    f"No straight-through vehicles inside “{_lid}” — it's likely only turned "
+                    f"into/out of. Set its Heading° by hand (or copy a neighbouring lane).")
+            else:
+                lanes[veh_idx]['heading_deg'] = _h
+                st.session_state['le_veh_msg'] = ('success',
+                    f"Set “{_lid}” heading to {_h:.1f}° from {_n} vehicle(s) through the lane.")
             st.session_state.le_v += 1
             st.rerun()
         if reset_action is not None:
@@ -212,6 +242,26 @@ with left:
                               ymax=dft['ymax'], heading_deg=dft['heading_deg'])
             st.session_state.le_v += 1
             st.rerun()
+
+    if st.button("🚗 Set ALL lane headings from their vehicles", use_container_width=True,
+                 disabled=not lanes or not paths,
+                 help="Recompute every lane's heading from the through-traffic inside it (real "
+                      "start→end bearings). Lanes with no straight-through cars (turn-only) are "
+                      "left as-is and listed for you to set by hand."):
+        _changed, _skipped = 0, []
+        for _l in lanes:
+            _h, _n = heading_from_tracks_in_lane(_l, paths)
+            if _h is None:
+                _skipped.append(str(_l['lane_id']))
+            else:
+                _l['heading_deg'] = _h
+                _changed += 1
+        _msg = f"Set {_changed} lane heading(s) from vehicles."
+        if _skipped:
+            _msg += f" No through-traffic for: {', '.join(_skipped)} — set those by hand."
+        st.session_state['le_veh_msg'] = ('warning' if _skipped else 'success', _msg)
+        st.session_state.le_v += 1
+        st.rerun()
 
     add, dl, sv, sd = st.columns([1.4, 1, 1, 1.2])
     if add.button("➕ Add lane", use_container_width=True,
