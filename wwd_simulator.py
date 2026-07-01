@@ -200,6 +200,13 @@ def wrong_way_options(lanes):
     return opts
 
 
+def default_scenario_index(opts, prefer_legal="West"):
+    """Index of the default wrong-way scenario — the canonical case of an EAST-bound
+    driver in a WEST-bound lane (legal direction West). Falls back to the first option
+    when no lane has that legal direction."""
+    return next((i for i, o in enumerate(opts) if o.get("legal_name") == prefer_legal), 0)
+
+
 def make_wrong_way_track(lane, fps=10.0, speed=8.0, start_frac=0.0, lateral_frac=0.5,
                          max_frames=400):
     """Synthesise the per-step detections of a wrong-way driver crossing `lane`.

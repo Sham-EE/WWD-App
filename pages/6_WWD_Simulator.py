@@ -6,7 +6,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 from wwd_detection import load_lane_config, lanes_calibrated, detect_wrong_way
-from wwd_simulator import (wrong_way_options, make_wrong_way_track,
+from wwd_simulator import (wrong_way_options, default_scenario_index, make_wrong_way_track,
                            build_sim_det_frames, simulator_figure, SIM_TID,
                            math_heading_to_compass, build_v2x_intersection,
                            build_v2x_vehicles)
@@ -157,7 +157,9 @@ with st.expander("⚙️ Simulation setup", expanded=True):
         labels = [o["label"] for o in opts]
         c1, c2 = st.columns([3, 2])
         choice = c1.selectbox("Wrong-way scenario (only illegal directions are offered)", labels,
-                              help="Each option drives a vehicle OPPOSITE to a lane's legal heading.")
+                              index=default_scenario_index(opts),
+                              help="Each option drives a vehicle OPPOSITE to a lane's legal heading. "
+                                   "Defaults to the East-bound-in-a-Westbound-lane case.")
         opt = opts[labels.index(choice)]
         speed = c2.slider("Driver speed (m/s)", 1.0, 25.0, 9.0, 0.5)
         c3, c4, c5 = st.columns(3)
