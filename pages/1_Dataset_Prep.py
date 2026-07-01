@@ -260,7 +260,7 @@ with tab_crop:
         def _crop_preview():
             i, playing, delay = vu.nav_row("dp_frame", npv, "dp", label="🎞️ Crop frame")
             vu.ensure_toggle_defaults({"dp_road": True, "dp_height": False})
-            with st.expander("🎛️ Layers & overlays", expanded=True):
+            with st.expander("🎛️ Layers & overlays", expanded=False):
                 vu.bulk_toggle_buttons(["dp_road", "dp_height"], "dp_bulk")
                 tg = st.columns(2)
                 show_road = tg[0].toggle("🛣️ Road outline", key="dp_road",
@@ -328,7 +328,7 @@ with tab_gt:
     if _gt_sensor == "north":
         region = reg.transform_polygon(region, reg.south_to_sensor_4x4(ds, "north"))
 
-    with st.expander("⚙️ Keep / drop criteria", expanded=True):
+    with st.expander("⚙️ Keep / drop criteria", expanded=False):
         st.caption("Define exactly what counts as a scorable object. The region (above) is the ROI; "
                    "these conditions filter within it. Tune live against the preview below.")
         cc1, cc2, cc3 = st.columns(3)
@@ -380,7 +380,7 @@ with tab_gt:
             # Toggle each Geometry-Editor boundary onto the preview.
             vu.ensure_toggle_defaults({"gt_show_roi": True, "gt_show_road": False,
                                        "gt_show_excl": False, "gt_height": False})
-            with st.expander("🎛️ Layers & overlays", expanded=True):
+            with st.expander("🎛️ Layers & overlays", expanded=False):
                 vu.bulk_toggle_buttons(["gt_show_roi", "gt_show_road", "gt_show_excl", "gt_height"],
                                        "gt_bulk")
                 bt = st.columns(4)
@@ -474,7 +474,7 @@ with tab_geom:
     _ov_keys = ["geom_show_fg", "geom_show_gt", "geom_show_off", "geom_metric",
                 "geom_show_det", "geom_height", "geom_verts"]
     vu.ensure_toggle_defaults({k: False for k in _ov_keys})
-    with st.expander("🎛️ Layers & overlays", expanded=True):
+    with st.expander("🎛️ Layers & overlays", expanded=False):
         vu.bulk_toggle_buttons(_ov_keys, "geom_bulk", rerun_scope="app")
         gr1 = st.columns(3)
         show_fg = gr1[0].toggle("🔴 Foreground", key="geom_show_fg", disabled=not model_path,
@@ -852,7 +852,7 @@ with tab_reg:
         _reg_ov = ["reg_show_s", "reg_show_n", "reg_road", "reg_roi", "reg_sensors"]
         vu.ensure_toggle_defaults({"reg_show_s": True, "reg_show_n": True, "reg_road": False,
                                    "reg_roi": False, "reg_sensors": True, "reg_crop": True})
-        with st.expander("🎛️ Layers & overlays", expanded=True):
+        with st.expander("🎛️ Layers & overlays", expanded=False):
             vu.bulk_toggle_buttons(_reg_ov, "reg_bulk")  # fragment-scoped rerun
             rr1 = st.columns(3)
             show_s = rr1[0].toggle("🔵 South", key="reg_show_s", help="South cloud (blue).")

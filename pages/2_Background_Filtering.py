@@ -434,7 +434,7 @@ if st.session_state.bg_model:
                 off_object=(float(np.mean(offs)) if offs else 0.0),
                 frames=int(nframes))
 
-        with st.expander("📈 Run tracker — is it getting better?", expanded=True):
+        with st.expander("📈 Run tracker — is it getting better?", expanded=False):
             tc = st.columns(3)
             track_stride = int(tc[0].number_input("Sample every Nth frame", 1, 50, 10,
                 key="bf_track_stride", help="Higher = faster, coarser estimate."))
@@ -527,7 +527,7 @@ if st.session_state.bg_model:
             overlay_keys = ["bf_show_fg", "bf_show_orig", road_key, "bf_roi", "bf_excl",
                             "bf_gt", "bf_uncov", "bf_offfg", "bf_sensors", "bf_height"]
 
-            with st.expander("🎛️ Layers & overlays", expanded=True):
+            with st.expander("🎛️ Layers & overlays", expanded=False):
                 vu.bulk_toggle_buttons(overlay_keys, "bf_bulk")
                 r1 = st.columns(4)
                 show_fg_pts = r1[0].toggle("🔴 Foreground", key="bf_show_fg",

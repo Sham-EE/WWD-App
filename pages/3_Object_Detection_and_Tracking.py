@@ -281,7 +281,7 @@ if st.session_state.detection_results:
     # "All" also turns Height on (per request); top-down stays manual.
     overlay_keys = ["odt_orig", "odt_fg", "odt_objects", "odt_gt", "odt_missed", "odt_lanes",
                     "odt_road", "odt_roi", "odt_excl", "odt_sensors", "odt_height"]
-    with st.expander("🎛️ Layers & overlays", expanded=True):
+    with st.expander("🎛️ Layers & overlays", expanded=False):
         vu.bulk_toggle_buttons(overlay_keys, "odt_bulk", rerun_scope="app")
         r1 = st.columns(4)
         show_orig = r1[0].toggle("⚪ Point cloud", key="odt_orig", help="The original cloud (grey/Turbo).")

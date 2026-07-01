@@ -168,7 +168,7 @@ def _compass_xy():
     return cx, cy, r
 have_real = bool(st.session_state.get("detection_results"))
 
-with st.expander("⚙️ Simulation setup", expanded=True):
+with st.expander("⚙️ Simulation setup", expanded=False):
     t_scn, t_det, t_disp = st.tabs(["🚗 Scenario", "🛡️ Detector", "🎛️ Display"])
 
     with t_scn:

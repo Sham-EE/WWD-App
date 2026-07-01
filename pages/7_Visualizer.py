@@ -426,27 +426,42 @@ def render_real_tab():
 
 # ======================= Videos tab (synced playback) =======================
 _SYNC_PLAYER_HTML = """<!doctype html><html><head><meta charset="utf-8"><style>
-html,body{height:100%;margin:0;background:#0e1117;font-family:system-ui,sans-serif;color:#cfd6e4}
+html,body{height:100%;margin:0;background:#0e1117;color:#fafafa;
+  font-family:"Source Sans Pro",-apple-system,system-ui,sans-serif}
 .wrap{height:100%;display:flex;flex-direction:column;gap:6px;padding:6px;box-sizing:border-box}
-.bar{flex:0 0 auto;text-align:center}
-.bar button{background:#1f6feb;color:#fff;border:0;border-radius:7px;padding:7px 16px;margin:0 4px;font-size:14px;cursor:pointer}
-.bar button.sec{background:#30363d}
-.bar button.sp{padding:7px 10px;font-size:13px}
-.bar .sep{margin:0 6px;opacity:.4}
-.bar #st{font-size:11px;opacity:.6;margin-left:8px}
+.bar{flex:0 0 auto;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:10px;padding:2px 0 6px}
+.grp{display:inline-flex;gap:8px}
+.bar button{font-family:inherit;font-size:14px;font-weight:600;line-height:1.2;
+  border-radius:8px;padding:8px 16px;cursor:pointer;transition:all .15s ease}
+button.pri{background:#FF4B4B;color:#fff;border:1px solid #FF4B4B}
+button.pri:hover{background:#ff6b6b;border-color:#ff6b6b}
+button.sec{background:transparent;color:#fafafa;border:1px solid rgba(250,250,250,.25)}
+button.sec:hover{border-color:#FF4B4B;color:#FF4B4B}
+.lbl{font-size:12px;color:#a3a8b4}
+.seg{display:inline-flex;border:1px solid rgba(250,250,250,.2);border-radius:8px;overflow:hidden}
+.seg button{border:0;border-right:1px solid rgba(250,250,250,.12);border-radius:0;
+  background:transparent;color:#a3a8b4;font-size:13px;font-weight:600;padding:8px 12px;cursor:pointer;transition:all .15s ease}
+.seg button:last-child{border-right:0}
+.seg button:hover{color:#fafafa}
+.seg button.on{background:#FF4B4B;color:#fff}
+#st{font-size:11px;color:#7a8290;min-width:56px}
 .cell{flex:1 1 0;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
-.cell label{flex:0 0 auto;font-size:11px;opacity:.65;margin-bottom:2px}
-video{flex:1 1 auto;min-height:0;width:100%;object-fit:contain;background:#000;border-radius:6px}
+.cell label{flex:0 0 auto;font-size:11px;color:#a3a8b4;margin-bottom:3px}
+video{flex:1 1 auto;min-height:0;width:100%;object-fit:contain;background:#000;border-radius:8px}
 </style></head><body><div class="wrap">
 <div class="bar">
-  <button onclick="playBoth()">▶︎ Play both</button>
-  <button class="sec" onclick="pauseBoth()">⏸ Pause</button>
-  <button class="sec" onclick="restartBoth()">⟲ Restart</button>
-  <span class="sep">speed</span>
-  <button class="sp sec" data-r="0.25" onclick="setSpeed(0.25)">0.25×</button>
-  <button class="sp sec" data-r="0.5" onclick="setSpeed(0.5)">0.5×</button>
-  <button class="sp sec" data-r="0.75" onclick="setSpeed(0.75)">0.75×</button>
-  <button class="sp sec" data-r="1" onclick="setSpeed(1)">1×</button>
+  <div class="grp">
+    <button class="pri" onclick="playBoth()">▶ Play</button>
+    <button class="sec" onclick="pauseBoth()">⏸ Pause</button>
+    <button class="sec" onclick="restartBoth()">↺ Restart</button>
+  </div>
+  <span class="lbl">Speed</span>
+  <div class="seg">
+    <button class="sp" data-r="0.25" onclick="setSpeed(0.25)">0.25×</button>
+    <button class="sp" data-r="0.5" onclick="setSpeed(0.5)">0.5×</button>
+    <button class="sp" data-r="0.75" onclick="setSpeed(0.75)">0.75×</button>
+    <button class="sp" data-r="1" onclick="setSpeed(1)">1×</button>
+  </div>
   <span id="st"></span>
 </div>
 <div class="cell"><label>🎥 Road Viewer</label><video id="v1" preload="auto" playsinline muted src="__V1__"></video></div>
@@ -456,7 +471,7 @@ var v1=document.getElementById('v1'),v2=document.getElementById('v2'),st=documen
 v1.onerror=function(){st.textContent='⚠️ road clip failed to load';};
 v2.onerror=function(){st.textContent='⚠️ lidar clip failed to load';};
 function setSpeed(r){v1.playbackRate=r;v2.playbackRate=r;
-  var bs=document.querySelectorAll('.sp');for(var i=0;i<bs.length;i++){bs[i].style.background=(parseFloat(bs[i].dataset.r)===r)?'#1f6feb':'#30363d';}
+  var bs=document.querySelectorAll('.sp');for(var i=0;i<bs.length;i++){bs[i].classList.toggle('on',parseFloat(bs[i].dataset.r)===r);}
   st.textContent='speed '+r+'×';}
 function playBoth(){v2.currentTime=v1.currentTime;var p=v1.play();v2.play();if(p&&p.catch)p.catch(function(e){st.textContent='⚠️ '+e;});}
 function pauseBoth(){v1.pause();v2.pause();}

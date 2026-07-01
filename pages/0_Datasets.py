@@ -73,7 +73,7 @@ if choice != active.id:
 
 # ---------------- Active/selected dataset detail (collapsible) ----------------
 st.divider()
-with st.expander(f"📋 {ds.name} — details", expanded=True):
+with st.expander(f"📋 {ds.name} — details", expanded=False):
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("PCD frames", _pcd_count(ds.pcd_dir))
     m2.metric("GT label files", _gt_count(ds.gt_dir))
