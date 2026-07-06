@@ -127,7 +127,7 @@ def apply_geometry_crop(fg, geom):
 def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=None,
                    dragmode="pan", show_vertex_labels=False, fg_excluded_points=None,
                    color_by_height=False, height_span=4.0, off_object_points=None,
-                   det_objs=None, det_scatter=None):
+                   det_objs=None, det_scatter=None, hdmap_lanes=None):
     """BEV: point cloud + research (cyan dotted), road (green), exclusion (magenta).
     `fg_points` (kept foreground) is drawn red; `fg_excluded_points` (foreground that
     the current geometry crops out) is drawn grey. If `gt_objs` is given, overlay GT
@@ -139,10 +139,22 @@ def preview_figure(points, geom, height=640, title="", fg_points=None, gt_objs=N
     boxes; `det_scatter` = (centres Nx2, is_static bool N) for the all-frames aggregate
     drawn as ✕ markers. Moving detections are green, never-moving (static, FP/pole risk)
     are purple — so you can see where the detector keeps placing phantom objects.
-    `color_by_height` colours the backdrop cloud by z (Turbo) like the dev-kit."""
+    `color_by_height` colours the backdrop cloud by z (Turbo) like the dev-kit.
+    `hdmap_lanes` (list of sensor-frame polylines [[x, y], ...], from
+    geo_reference.hdmap_lanes_sensor_frame) draws the real intersection's HD-map road
+    network underneath everything else — the same reference backdrop the Lane Editor
+    uses — so research/road/exclusion polygons can be lined up against the actual roads."""
     import numpy as np
     import plotly.graph_objects as go
     fig = go.Figure()
+    if hdmap_lanes:
+        hx, hy = [], []
+        for poly in hdmap_lanes:
+            for px, py in poly:
+                hx.append(float(px)); hy.append(float(py))
+            hx.append(None); hy.append(None)
+        fig.add_trace(go.Scattergl(x=hx, y=hy, mode="lines", line=dict(color="#5b6573", width=1),
+                                   opacity=0.6, name="intersection (HD map)", hoverinfo="skip"))
     if points is not None and len(points):
         if len(points) > 40000:
             points = points[np.random.default_rng(0).choice(len(points), 40000, replace=False)]

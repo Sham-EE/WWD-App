@@ -457,6 +457,21 @@ with tab_geom:
     model_path = _g_model if (_g_model and os.path.exists(_g_model)) else _resolve_bg_model(geom_src)
     st.caption(f"🛰️ {_g_sensor.capitalize()} · {'Cropped' if _g_src=='cropped' else 'Full'}  ·  "
                f"model: `{os.path.basename(model_path) if model_path else 'none — build on Background Filtering'}`")
+
+    show_hdmap = st.checkbox("🗺️ Intersection (HD map) backdrop", value=True, key="geom_show_hdmap",
+                             help="Overlay the real intersection's road network (the dev-kit HD map) — the "
+                                  "same reference backdrop the Lane Editor uses — so you can line the "
+                                  "research/road/exclusion polygons up against the actual roads instead of "
+                                  "guessing from the point cloud alone.")
+    hdmap_lanes = None
+    if show_hdmap:
+        try:
+            import geo_reference as geo
+            hdmap_lanes = geo.hdmap_lanes_sensor_frame("north" if _g_sensor == "north" else "south", 130.0)
+            if not hdmap_lanes:
+                st.caption("ℹ️ HD-map overlay needs `map/lane_samples.json` (from the dev-kit's map.zip).")
+        except Exception:
+            hdmap_lanes = None
     step = st.select_slider("Stepper increment (m)", [0.5, 1.0, 2.0, 5.0], value=1.0, key="geom_step",
                             help="Step size for the +/- vertex / box editors below.")
     _nframes = len(geom_clouds) if geom_clouds else 0
@@ -676,7 +691,8 @@ with tab_geom:
                                                off_object_points=_off_disp,
                                                det_objs=det_objs, det_scatter=det_scatter,
                                                dragmode=dm_mode, show_vertex_labels=show_verts,
-                                               color_by_height=color_h, height_span=h_span),
+                                               color_by_height=color_h, height_span=h_span,
+                                               hdmap_lanes=hdmap_lanes),
                              use_container_width=True,
                              config={"scrollZoom": True, "displayModeBar": True, "displaylogo": False,
                                      "modeBarButtonsToRemove": ["lasso2d", "autoScale2d"]},
