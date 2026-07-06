@@ -141,6 +141,11 @@ collide and metrics stay comparable. GT auto-resolves to match the selected
 sensor.
 
 ### End-to-end workflow (regenerating a dataset from scratch)
+0. **Home**'s "🧨 Reset pipeline" button deletes everything the pipeline has
+   generated (`data/derived/` + `outputs/`) so you can genuinely test the steps
+   below from a clean slate — it never touches `data/raw/`, `map/`, or `config/`
+   (site geometry, lanes, georeference), and can optionally keep the slow-to-
+   regenerate Visualizer videos. Two-step confirm, since it's a real delete.
 1. **Dataset Prep** → Registration (optional) → Geometry Editor → Crop to road → Scorable GT.
 2. **Background Filtering** → pick Sensor + Input cloud → *Build Background Model*
    (with "Save filtered foreground points" checked).

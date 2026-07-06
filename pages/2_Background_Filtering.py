@@ -575,7 +575,7 @@ if st.session_state.bg_model:
                 metric_on = r3[2].toggle("📊 FG quality", key="bf_metric", disabled=not has_gt,
                                          help="Live foreground-vs-GT quality numbers (a tuning proxy)."
                                               if has_gt else "No ground truth for this dataset.")
-                min_pts = r3[3].number_input("≥ pts", 1, 200, 10, 1, key="bf_minpts",
+                min_pts = r3[3].number_input("≥ pts", 1, 200, 5, 1, key="bf_minpts",
                                              help="Foreground pts for a GT object to count as 'covered'.")
                 r4 = st.columns(4)
                 split_on = r4[0].toggle("🔵🟠 S/N split", key="bf_split",

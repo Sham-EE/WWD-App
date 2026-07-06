@@ -375,27 +375,6 @@ if st.session_state.detection_results:
                            f"❌ {ng - covered} missed — a GT box counts as detected if a track centre is "
                            f"within 2 m  ·  `{os.path.basename(_gt_dir.rstrip('/'))}`")
 
-        # Static-detection stat: a track that barely moves over its whole life (lifetime
-        # max speed under a noise-tolerant floor) is static — pole / clutter / parked, not a
-        # mover. Uses 1.5 m/s (≈ walking pace) so Kalman velocity noise on a truly-static
-        # object doesn't flip it to "moving". With GT, how many are unmatched (= static FP).
-        _cur = results["det_frames"][frame_idx]
-        if _cur:
-            _STATIC_V = 1.5
-            _lm = {}
-            for _dets in results["det_frames"]:
-                for _d in _dets:
-                    _t = _d.get("tid")
-                    _lm[_t] = max(_lm.get(_t, 0.0), float(_d.get("speed", 0.0)))
-            _is_static = lambda d: _lm.get(d.get("tid"), 9.9) < _STATIC_V
-            _n_static = sum(1 for d in _cur if _is_static(d))
-            _cap = f"🟣 {_n_static}/{len(_cur)} static (poles/parked)"
-            if gt_objs is not None:
-                _matched_det = {i for i, _, _ in matches}
-                _n_sfp = sum(1 for i, d in enumerate(_cur) if i not in _matched_det and _is_static(d))
-                _cap += f" · {_n_sfp} unmatched FP"
-            st.caption(_cap)
-
     # Auto-play: advance one frame and rerun until the end or until paused.
     if playing and frame_idx < n_frames - 1:
         import time
