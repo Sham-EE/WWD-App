@@ -21,18 +21,31 @@ active = dm.get_active()
 st.success(f"**Active dataset:** {active.name}")
 
 
-def _pcd_count(p):
+def _count(p, ext):
     try:
-        return len(glob.glob(os.path.join(p, "*.pcd")))
+        return len(glob.glob(os.path.join(p or "", ext)))
     except Exception:
         return 0
 
 
-def _gt_count(p):
-    try:
-        return len(glob.glob(os.path.join(p or "", "*.json")))
-    except Exception:
-        return 0
+def _pcd_count(ds):
+    # ds.pcd_dir defaults to south/cropped for the bundled template — fine as a
+    # pipeline-stage default elsewhere, but wrong for "does this dataset have any
+    # data at all" if you only ever ran e.g. Registered. Fall back to the raw
+    # sensor folders so this stays a real, always-meaningful count.
+    for p in (ds.pcd_dir, ds.raw_lidar_south_dir, ds.raw_lidar_north_dir):
+        n = _count(p, "*.pcd")
+        if n:
+            return n
+    return 0
+
+
+def _gt_count(ds):
+    for p in (ds.gt_dir, ds.raw_labels_south_dir, ds.raw_labels_north_dir):
+        n = _count(p, "*.json")
+        if n:
+            return n
+    return 0
 
 
 def _clear_session():
@@ -57,8 +70,8 @@ def _render_dataset_detail(ds):
     """The metrics + tabbed detail panel for one dataset — lives inside its
     '📁 Details' expander."""
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("PCD frames", _pcd_count(ds.pcd_dir))
-    m2.metric("GT label files", _gt_count(ds.gt_dir))
+    m1.metric("PCD frames", _pcd_count(ds))
+    m2.metric("GT label files", _gt_count(ds))
     m3.metric("Type", "template" if ds.is_template else "user")
     m4.metric("Created", (ds.d.get("created", "—") or "—").split("T")[0])
     if ds.d.get("description"):
@@ -331,7 +344,7 @@ with st.expander("➕ Add your own dataset", expanded=False):
             elif not pcd_dir.strip() or not os.path.isdir(pcd_dir.strip()):
                 st.error(f"PCD folder not found: {pcd_dir}")
             else:
-                n_pcd = _pcd_count(pcd_dir.strip())
+                n_pcd = _count(pcd_dir.strip(), "*.pcd")
                 new = dm.create_dataset(name, pcd_dir, gt_dir, description)
                 _clear_session()
                 st.success(f"Created **{new.name}** (`{new.id}`) with {n_pcd} PCD frames and set it active. "

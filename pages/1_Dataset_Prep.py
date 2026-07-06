@@ -231,7 +231,16 @@ with tab_crop:
                                        progress=lambda c, t: bar.progress(c / t, text=f"Cropping {c}/{t}"))
         bar.empty()
         pct = 100.0 * kept / max(tot, 1)
-        st.success(f"Wrote **{n}** cropped clouds → `{out_dir}`  (kept {kept:,} / {tot:,} points, {pct:.0f}%).")
+        # Rerun so the "Prep order" stepper above (computed once, at the top of the
+        # script, before this button's handler runs) picks up the just-written files
+        # immediately — otherwise it only catches up on the NEXT rerun (navigating
+        # away/back or a refresh), even though the crop itself already succeeded.
+        st.session_state["_crop_success_msg"] = (
+            f"Wrote **{n}** cropped clouds → `{out_dir}`  (kept {kept:,} / {tot:,} points, {pct:.0f}%)."
+        )
+        st.rerun()
+    if st.session_state.get("_crop_success_msg"):
+        st.success(st.session_state.pop("_crop_success_msg"))
 
     # ---- side-by-side preview: south | north, cropped/uncropped + road outline ----
     st.divider()
@@ -295,25 +304,23 @@ with tab_gt:
     st.caption("Build a **scorable** ground-truth set: keep only objects inside the processed region "
                "(the Research Polygon: ROI) that have sufficient LiDAR points. This created a fair evaluation metric for the algorithms")
 
-    # Source -> (raw labels dir, scorable-GT output dir, raw cloud dir for preview)
+    # Source -> (raw labels dir, scorable-GT output dir, raw cloud dir for preview).
+    # Registered's fused-GT folder may not exist yet on a fresh dataset (it's built by
+    # the Registration tab) — listed unconditionally anyway, matching Crop to road, so
+    # picking it always shows the same "register the clouds first" nudge below.
+    _reg_raw_labels = os.path.join(ds.derived_dir, "labels", "registered")  # fused GT
     gt_sources = {
         "South": (ds.raw_labels_south_dir, ds.gt_dir, ds.raw_lidar_south_dir),
         "North": (ds.raw_labels_north_dir, ds.scorable_gt_dir_for("north"),
                   ds.raw_lidar_north_dir),
+        "Registered (south + north)": (_reg_raw_labels, ds.scorable_gt_dir_for("registered"),
+                                       ds.registered_dir),
     }
-    _reg_raw_labels = os.path.join(ds.derived_dir, "labels", "registered")  # future fused GT
-    if os.path.isdir(_reg_raw_labels):
-        gt_sources["Registered (south + north)"] = (
-            _reg_raw_labels,
-            ds.scorable_gt_dir_for("registered"),
-            ds.registered_dir)
 
     gs1, gs2 = st.columns([1.3, 1])
-    # Default to Registered when it's available (the fused GT hasn't been generated
-    # yet on a fresh dataset, so this falls back to South until it is).
-    _gt_default_idx = (list(gt_sources).index("Registered (south + north)")
-                       if "Registered (south + north)" in gt_sources else 0)
-    gt_source = gs1.selectbox("Source LiDAR", list(gt_sources), index=_gt_default_idx, key="gt_source")
+    gt_source = gs1.selectbox("Source LiDAR", list(gt_sources),
+                              index=list(gt_sources).index("Registered (south + north)"),
+                              key="gt_source")
     gt_src, gt_out, gt_cloud_dir = gt_sources[gt_source]
     gt_margin = gs2.slider("Region margin (m)", 0.0, 15.0, 0.0, 1.0,
                            help="Expand the research/ROI region. Edit its SHAPE in the Geometry Editor; "
@@ -352,15 +359,24 @@ with tab_gt:
     st.code(gt_out, language="text")
     gt_labels = rv.list_by_frame(gt_src, [".json"])
     if not gt_labels:
-        st.warning(f"No label files in `{gt_src}`.")
+        st.warning(f"No label files in `{gt_src}`."
+                   + ("  — register the clouds first (Registration page)." if "Registered" in gt_source else ""))
     elif st.button("🏷️ Generate scorable GT", type="primary", use_container_width=True):
         bar = st.progress(0.0, text="Filtering labels…")
         nfiles, kept, total = dp.generate_scorable_gt(
             gt_src, gt_out, region, crit=crit,
             progress=lambda c, t: bar.progress(c / t, text=f"Filtering {c}/{t}"))
         bar.empty()
-        st.success(f"Wrote **{nfiles}** label files → `{gt_out}`  (kept {kept:,} / {total:,} objects, "
-                   f"{100*kept/max(total,1):.0f}%).")
+        # Rerun so the "Prep order" stepper (computed once, at the top of the script,
+        # before this button's handler runs) picks up the just-written files right
+        # away — see the matching comment on the Crop-to-road button above.
+        st.session_state["_scorable_gt_success_msg"] = (
+            f"Wrote **{nfiles}** label files → `{gt_out}`  (kept {kept:,} / {total:,} objects, "
+            f"{100*kept/max(total,1):.0f}%)."
+        )
+        st.rerun()
+    if st.session_state.get("_scorable_gt_success_msg"):
+        st.success(st.session_state.pop("_scorable_gt_success_msg"))
 
     # ---- preview: point cloud + kept (green) vs dropped (red) boxes ----
     st.divider()
@@ -999,9 +1015,17 @@ with tab_reg:
             refine=(np.array(batch_refine) if batch_refine is not None else None),
             progress=lambda c, t: bar.progress(c / t, text=f"Registering {c}/{t}"))
         bar.empty()
-        st.success(f"Wrote **{n}** fused clouds (south LiDAR frame) → `{reg_out}`  "
-                   "(manifest: `registration.json`). Now crop or score the **Registered (south + north)** "
-                   "source in the other tabs: it reuses the south GT, calibration, and polygons.")
+        # Rerun so the "Prep order" stepper (computed once, at the top of the script,
+        # before this button's handler runs) picks up the just-written clouds right
+        # away — see the matching comment on the Crop-to-road button above.
+        st.session_state["_register_success_msg"] = (
+            f"Wrote **{n}** fused clouds (south LiDAR frame) → `{reg_out}`  "
+            "(manifest: `registration.json`). Now crop or score the **Registered (south + north)** "
+            "source in the other tabs: it reuses the south GT, calibration, and polygons."
+        )
+        st.rerun()
+    if st.session_state.get("_register_success_msg"):
+        st.success(st.session_state.pop("_register_success_msg"))
 
     # --- fused GT labels (union of south + north boxes) ---
     st.divider()

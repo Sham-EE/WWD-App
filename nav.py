@@ -95,8 +95,8 @@ _STEP_STYLE = {
 
 
 # Dataset artifact chips (present/missing), styled like the stepper's done/todo pills.
-_STATUS_ITEMS = [("PCDs", "pcd"), ("GT", "gt"), ("lanes", "lanes"),
-                 ("model", "model"), ("filtered", "filtered")]
+_STATUS_ITEMS = [("Cropped PCDs", "pcd"), ("Scorable GT", "gt"), ("Lane geometry", "lanes"),
+                 ("Background model", "model"), ("Filtered PCDs", "filtered")]
 
 
 def status_pills_html(status):

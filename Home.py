@@ -42,10 +42,63 @@ _states = nav.tool_states(_active)
 _next_page = next((p for p in nav.PIPELINE if _states[p] == "todo"), None)
 
 st.markdown("#### 🧭 Pipeline")
-nav.render_stepper([
-    (nav.TOOLS[p][1], nav.TOOLS[p][2], "next" if p == _next_page else _states[p])
-    for p in nav.PIPELINE
-])
+
+# The reset button is styled to match the stepper's rounded pills (same radius
+# language), but smaller and in a neutral dashed-border tone.
+st.markdown(
+    """<style>
+    .st-key-reset_pill_btn button {
+        border-radius: 999px; padding: 1px 10px; font-size: .72rem; font-weight: 500;
+        background: #14181f; border: 1px dashed #3a4452; color: #9aa6b2; min-height: 0;
+    }
+    </style>""",
+    unsafe_allow_html=True,
+)
+pcol, rcol = st.columns([5.5, 1.3])
+with pcol:
+    nav.render_stepper([
+        (nav.TOOLS[p][1], nav.TOOLS[p][2], "next" if p == _next_page else _states[p])
+        for p in nav.PIPELINE
+    ])
+with rcol:
+    if st.button("🧨 Reset pipeline", key="reset_pill_btn", use_container_width=True,
+                 help="Delete everything the pipeline has generated for this dataset "
+                      "(data/derived/ + outputs/), so you can re-run it end-to-end from "
+                      "just the raw download. Raw data, the HD map, and your calibration "
+                      "(config/) are never touched."):
+        st.session_state["confirm_reset_pipeline"] = True
+
+if st.session_state.get("confirm_reset_pipeline"):
+    with st.container(border=True):
+        st.warning(
+            f"This permanently deletes **all generated data** for **{_active.name}**: cropped "
+            "clouds, the registered cloud, scorable GT, background models, filtered clouds, "
+            "detection tracks, evaluation reports, and tuning run history "
+            "(`data/derived/` + `outputs/`).\n\n"
+            "**Not touched:** the raw download (`data/raw/`), the HD map (`map/`), and your "
+            "calibration (`config/` site geometry, lanes, georeference).",
+            icon="🧨")
+        keep_videos = st.checkbox(
+            "Keep generated videos (road/3D videos, slow to regenerate)",
+            value=True, key="reset_keep_videos")
+        rc1, rc2 = st.columns(2)
+        if rc1.button("Yes, delete it all", type="primary", use_container_width=True):
+            info = dm.reset_pipeline(_active, keep_videos=keep_videos)
+            # Drop in-memory results that now point at deleted files.
+            for _k in ("bg_model", "bg_model_path", "detection_results", "ab_results",
+                       "road_video", "lidar_video"):
+                st.session_state.pop(_k, None)
+            st.cache_data.clear()
+            st.cache_resource.clear()
+            st.session_state["confirm_reset_pipeline"] = False
+            _msg = "Reset done — data/derived/ and outputs/ cleared."
+            if info["videos_kept"]:
+                _msg += f" Kept {info['videos_kept']} video file(s)."
+            st.success(_msg)
+            st.rerun()
+        if rc2.button("Cancel", use_container_width=True):
+            st.session_state["confirm_reset_pipeline"] = False
+            st.rerun()
 
 st.write("")
 st.divider()
