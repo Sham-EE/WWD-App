@@ -25,8 +25,8 @@ def _eval_metrics(s):
 def _render_eval_history(_ds, tag):
     """Persistent eval-run history: current-vs-previous deltas + a trend + a param diff +
     the full log, mirroring the Background-Filtering run tracker but for the real
-    detection metrics. Reads outputs/run_history/<tag>.jsonl."""
-    hist = rh.load_history(_ds, tag)
+    detection metrics. Reads outputs/run_history/eval/<tag>.jsonl."""
+    hist = rh.load_history(_ds, "eval", tag)
     if not hist:
         st.caption("No logged eval runs yet for this selection — each **Run Evaluation** appends one.")
         return
@@ -219,13 +219,13 @@ def _render_single_run():
                            "min_cluster_pts", "min_hits", "adaptive_eps", "dbscan_eps"):
                     if _k in _dp:
                         _eparams[_k] = _dp[_k]
-                rh.log_run(_ds, f"eval_{_sensor}_{_src}", _eval_metrics(s), _eparams, note=eval_note)
+                rh.log_run(_ds, "eval", f"{_sensor}_{_src}", _eval_metrics(s), _eparams, note=eval_note)
 
     st.divider()
     st.markdown("#### 📈 Eval history — this sensor · source")
     st.caption("Persistent log of every evaluation you've run for this selection (settings + metrics), "
-               "with current-vs-previous deltas. Stored in `outputs/run_history/`.")
-    _render_eval_history(_ds, f"eval_{_sensor}_{_src}")
+               "with current-vs-previous deltas. Stored in `outputs/run_history/eval/`.")
+    _render_eval_history(_ds, f"{_sensor}_{_src}")
 
     # ---------------- Visual evaluation: GT vs Detection, side-by-side top-down ----------------
     st.divider()
@@ -416,13 +416,13 @@ def _render_ab():
             out[s] = {"summary": rep["summary"], "rbd": rbd, "gt_dir": os.path.basename(gtdir.rstrip("/"))}
             # Log each arm to the persistent eval history (shared GT mode in the tag so
             # shared-vs-own-GT runs don't mix), so A/B runs are comparable over time too.
-            _abtag = f"eval_ab_{s}_{src}_{'shared' if shared_gt else 'own'}"
+            _abtag = f"ab_{s}_{src}_{'shared' if shared_gt else 'own'}"
             _abparams = {"match_dist": match_dist, "vehicles_only": bool(vehicles_only),
                          "roi": bool(roi_on), "gt_kind": gt_kind_key, "gt": out[s]["gt_dir"],
                          "strong_pts": _AB_PARAMS.get("strong_pts"),
                          "suppress_static": _AB_PARAMS.get("suppress_static"),
                          "truck_merge_dist": _AB_PARAMS.get("truck_merge_dist")}
-            rh.log_run(_ds, _abtag, _eval_metrics(rep["summary"]), _abparams,
+            rh.log_run(_ds, "eval", _abtag, _eval_metrics(rep["summary"]), _abparams,
                        note=f"A/B {s}·{src}·{'shared' if shared_gt else 'own'} GT")
         bar.empty()
         st.session_state.ab_results = {"results": out, "src": src_label, "match_dist": match_dist,
@@ -490,7 +490,7 @@ def _render_ab():
                    "cloud + scoring mode; switch those to see other histories.")
         for _s in _AB_SENSORS:
             st.markdown(f"**{_s.capitalize()}**")
-            _render_eval_history(_ds, f"eval_ab_{_s}_{src}_{'shared' if shared_gt else 'own'}")
+            _render_eval_history(_ds, f"ab_{_s}_{src}_{'shared' if shared_gt else 'own'}")
 
 
 tab_single, tab_ab = st.tabs(["📐 Single run", "📊 Registered vs South (A/B)"])

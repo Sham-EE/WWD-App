@@ -129,7 +129,7 @@ def _render_dataset_detail(ds):
 └── outputs/                         # generated — gitignored
     ├── background/{{background_model, background_filtering}}/<sensor>/<crop>/
     ├── detection/object_detection/<sensor>/<crop>/   # tracks.csv, animation, eval report
-    ├── run_history/<tag>.jsonl                       # logged BG-filter/eval runs, tracked over time
+    ├── run_history/{{bgfilter, eval}}/<tag>.jsonl     # logged BG-filter/eval(+A/B) runs, tracked over time
     └── visualizer/{{rendered, road_videos}}/""",
             language="text")
 

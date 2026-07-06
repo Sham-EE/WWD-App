@@ -323,9 +323,6 @@ def build_background_model(config: dict, pcd_files: list, gt_dir: str, progress_
     Cx, Cy = (int(np.ceil((rmaxx - rminx) / config['cell_size'])),
               int(np.ceil((rmaxy - rminy) / config['cell_size'])))
     cell_counts = np.zeros((Cx, Cy), dtype=np.uint16)
-    NX5, NY5 = config['coarse_5x5']['NX'], config['coarse_5x5']['NY']
-    runlen5 = np.zeros((NX5, NY5), dtype=np.int16)
-    has_run3 = np.zeros((NX5, NY5), dtype=bool)
 
     buildN = len(pcd_files) if config['build_frames'] == 0 else min(config['build_frames'], len(pcd_files))
     for i, pcd_path in enumerate(pcd_files[:buildN]):
@@ -372,18 +369,10 @@ def build_background_model(config: dict, pcd_files: list, gt_dir: str, progress_
                 cx, cy = int(np.floor((cen[0] - rminx) / config['cell_size'])), int(np.floor((cen[1] - rminy) / config['cell_size']))
                 if 0 <= cx < Cx and 0 <= cy < Cy: cell_counts[cx, cy] += 1
 
-        presence5 = np.zeros((NX5, NY5), dtype=bool)
-        ix5, iy5 = (np.floor((pre_pts[:,i] - offset) / size).astype(np.int32) for i,(offset,size) in enumerate([(rminx, (rmaxx-rminx)/NX5), (rminy, (rmaxy-rminy)/NY5)]))
-        valid5 = (ix5 >= 0) & (ix5 < NX5) & (iy5 >= 0) & (iy5 < NY5)
-        if np.any(valid5): presence5[ix5[valid5], iy5[valid5]] = True
-        runlen5 = (runlen5 + 1) * presence5
-        has_run3 |= (runlen5 >= 3)
-
     # Return a serializable model (without prepared geometries)
     return {
         'voxel_mask': presence_counts / float(buildN) >= config['bg_ratio'],
         'cell_mask': cell_counts / float(buildN) >= config['cell_ratio'],
-        '5x5_mask': ~has_run3,
         'z_ranges': z_ranges, 'z_floor': z_floor, 'z_ceil': z_ceil,
         'rminx': rminx, 'rminy': rminy, 'rmaxx': rmaxx, 'rmaxy': rmaxy,
         'road_poly': road_poly, 'edge_band': edge_band,
@@ -439,19 +428,7 @@ def filter_points_with_model(points: np.ndarray, bg_model: dict, config: dict):
     keep_v[valid] = ~bg_model['voxel_mask'][vx[valid], vy[valid], vz[valid]]
     fpts = remained[keep_v]
 
-    # Filtering stage 4: 5x5 coarse background (optional — blunt macro-grid; can be
-    # disabled to A/B whether it adds anything over the fine voxel mask)
-    if config.get('enable_5x5', True) and fpts.shape[0] > 0:
-        NX5, NY5 = bg_model['5x5_mask'].shape
-        ix5, iy5 = (np.floor((fpts[:,i] - offset) / size).astype(np.int32) for i,(offset,size) in enumerate([(bg_model['rminx'], (bg_model['rmaxx']-bg_model['rminx'])/NX5), (bg_model['rminy'], (bg_model['rmaxy']-bg_model['rminy'])/NY5)]))
-        valid5 = (ix5 >= 0) & (ix5 < NX5) & (iy5 >= 0) & (iy5 < NY5)
-        if np.any(valid5):
-            rm_mask = bg_model['5x5_mask'][ix5[valid5], iy5[valid5]]
-            f_keep = np.ones(fpts.shape[0], dtype=bool)
-            f_keep[np.where(valid5)[0]] = ~rm_mask
-            fpts = fpts[f_keep]
-
-    # Filtering stage 5: statistical outlier removal (denoise the surviving
+    # Filtering stage 4: statistical outlier removal (denoise the surviving
     # foreground — cuts scattered false-foreground that hurts detection precision)
     if config.get('enable_sor', False) and fpts.shape[0] > 0:
         fpts = statistical_outlier_removal(fpts, k=int(config.get('sor_k', 12)),

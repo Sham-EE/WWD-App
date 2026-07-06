@@ -64,8 +64,15 @@ with st.expander("📁 Input folders (advanced override)", expanded=False):
                               key=f"viz_label_{_sensor}_{_src}_{_gt_kind}")
     pcd_dir = st.text_input("Point-cloud folder", value=_pcd_default,
                             key=f"viz_pcd_{_sensor}_{_src}")
-st.caption(f"🛰️ **{_sensor_label} · {_src_label} · {_gt_label} GT** — cloud "
-           f"`{os.path.basename(pcd_dir.rstrip('/'))}` · GT `{os.path.basename(label_dir.rstrip('/'))}`"
+_pcd_base = os.path.basename(pcd_dir.rstrip('/'))
+_label_base = os.path.basename(label_dir.rstrip('/'))
+# Only name the folder when it reveals something the labels above don't already say
+# (e.g. the raw dev-kit folder `s110_lidar_ouster_south`) — for the common cropped/
+# scorable case the folder is just literally "south"/"registered" again.
+_parts = [f"cloud `{_pcd_base}`" if _pcd_base.lower() != _sensor else None,
+          f"GT `{_label_base}`" if _label_base.lower() != _sensor else None]
+_extra_txt = ": " + " · ".join(p for p in _parts if p) if any(_parts) else ""
+st.caption(f"🛰️ **{_sensor_label} · {_src_label} · {_gt_label} GT**{_extra_txt}"
            + ("" if os.path.isdir(label_dir) else "  ·  ⚠️ GT folder not found"))
 
 labels = rv.list_by_frame(label_dir, [".json"])
@@ -122,7 +129,14 @@ def render_camera_tab():
         return
     have_labels = len(labels) > 0
 
-    c1, c2, c3 = st.columns([1, 1, 1.4])
+    # Shrink just the regenerate-cache icon button (scoped to its widget key, so no
+    # other button on the page is affected).
+    st.markdown(
+        "<style>.st-key-viz_regen_btn button "
+        "{ padding: 0.15rem 0.5rem; min-height: 0; font-size: 0.8rem; }</style>",
+        unsafe_allow_html=True)
+
+    c1, c2, c3, c4 = st.columns([1, 1, 1.4, 0.3])
 
     def _cam_idx(token, fallback):
         for k, cam in enumerate(cameras):
@@ -142,23 +156,29 @@ def render_camera_tab():
                              help="Box/point-cloud overlays are generated from the OpenLABEL labels + "
                                   "calibration and cached under the dataset's outputs/visualizer/rendered/.")
     mode = modes[variant_label]
+    if mode:
+        c4.markdown("<div style='height:1.9em'></div>", unsafe_allow_html=True)
+        if c4.button("♻️", key="viz_regen_btn",
+                     help="Regenerate: delete cached overlays and re-render. Only needed if the "
+                          "labels or geometry changed under the same filenames (e.g. edited GT, "
+                          "a re-cropped road). Settings changes above already bust the cache on "
+                          "their own."):
+            import shutil
+            shutil.rmtree(ds.rendered_dir, ignore_errors=True)
+            st.session_state.road_video = None
+            st.rerun()
     if not have_labels:
         st.info(f"No OpenLABEL label files in `{label_dir}` — only raw images can be shown.")
 
     color_mode, point_size = "by_category", 2
     track_hist, hist_window, trail_width = False, 30, 8
     if mode:
-        oc1, oc2, oc3 = st.columns([1, 1.4, 1])
+        oc1, oc2 = st.columns([1.3, 1.4])
         color_mode = oc1.radio("Box colour", ["by_category", "by_track_id"], horizontal=True,
                                help="by_category: colour encodes the class. by_track_id: each object "
                                     "gets its own colour to follow it across frames.")
         if mode == "point_cloud":
             point_size = oc2.select_slider("Point size", [1, 2, 3], value=2)
-        if oc3.button("♻️ Regenerate (clear cache)", help="Delete cached overlays and re-render."):
-            import shutil
-            shutil.rmtree(ds.rendered_dir, ignore_errors=True)
-            st.session_state.road_video = None
-            st.rerun()
         th1, th2, th3 = st.columns([1.3, 1, 1])
         track_hist = th1.checkbox("🛤️ Track history (trails)", value=False,
                                   help="Draw each object's recent path as a tapering trail (coloured to "
@@ -181,7 +201,6 @@ def render_camera_tab():
     if n == 0:
         st.warning("Not enough synchronized frames.")
         return
-    st.caption(f"{n} frames · **{_short_cam(left_cam)}** (left) ↔ **{_short_cam(right_cam)}** (right) · “{variant_label}”")
 
     left_id = lp.camera_id_from_image(raw_left[0])
     right_id = lp.camera_id_from_image(raw_right[0])
@@ -347,40 +366,42 @@ def render_lidar_tab():
     st.divider()
     st.subheader("🎬 3D LiDAR video")
     st.caption("Create a video at a specific angle of the intersection, this will be saved locally and displayed in the videos tab next to the road video.")
-    a1, a2, a3 = st.columns(3)
-    c_az = a1.slider("Azimuth°", -180, 180, 180, key="vid3d_az",
-                     help="Spin the camera around the scene (compass heading).")
-    c_el = a2.slider("Elevation°", 0, 89, 30, key="vid3d_el",
-                     help="Camera height above the ground plane. Low ≈ eye-level / camera-like.")
-    c_roll = a3.slider("Roll°", -45, 45, 0, key="vid3d_roll", help="Tilt the horizon.")
-    z1, z2, z3 = st.columns(3)
-    c_zoom = z1.slider("Zoom", 0.4, 4.0, 2.05, 0.05, key="vid3d_zoom",
-                       help="Higher = closer (moves the camera in). True 3D zoom — no distortion or glitch.")
-    c_px = z2.slider("Pan X", -1.0, 1.0, 0.05, 0.05, key="vid3d_px",
-                     help="Shift the look-at point left/right (normalized scene units).")
-    c_py = z3.slider("Pan Y", -1.0, 1.0, -0.05, 0.05, key="vid3d_py",
-                     help="Shift the look-at point forward/back (normalized scene units).")
-    s1, s2, s3 = st.columns(3)
-    v_fps = s1.slider("FPS", 1, 30, 10, key="vid3d_fps")
-    v_pts = s2.select_slider("Points", [3000, 6000, 12000, 20000], value=20000, key="vid3d_pts")
-    v_max = s3.number_input("Max frames (0 = all)", 0, n, 0, key="vid3d_max")
 
-    camera = lv.orbit_camera(azimuth=c_az, elevation=c_el, zoom=c_zoom,
-                             pan_x=c_px, pan_y=c_py, roll=c_roll)
-    prev_i = min(int(st.session_state.get("lidar_frame", 0)), n - 1)
-    _pp = _load_pts(pcds[prev_i], int(v_pts))
-    _po = lp.load_objects(labels[prev_i])
-    # uirevision keyed to the camera: moving a slider applies the new camera, but
-    # stepping the scene frame (same camera) preserves any manual mouse-orbit.
-    st.plotly_chart(
-        lv.build_figure(_pp, _po, color_mode, height=560, road_poly=road,
-                        sensors=sensors, hdmap_lanes=hdmap_lanes, camera=camera,
-                        uirevision=f"vid_{c_az}_{c_el}_{c_roll}_{c_zoom}_{c_px}_{c_py}"),
-        use_container_width=True, key="vid3d_preview")
-    st.caption(f"Preview — frame {prev_i+1}/{n} · az {c_az}° · el {c_el}° · roll {c_roll}° · "
-               f"zoom {c_zoom}× · pan ({c_px:g}, {c_py:g})  ·  the render uses this exact camera.")
-    st.info("⏱️ kaleido renders ~1–3 s per frame (a headless browser per frame), so all "
-            f"{n} frames can take several minutes. Set **Max frames** low to test the angle first.")
+    with st.expander("🎛️ Camera settings + preview", expanded=False):
+        a1, a2, a3 = st.columns(3)
+        c_az = a1.slider("Azimuth°", -180, 180, 180, key="vid3d_az",
+                         help="Spin the camera around the scene (compass heading).")
+        c_el = a2.slider("Elevation°", 0, 89, 30, key="vid3d_el",
+                         help="Camera height above the ground plane. Low ≈ eye-level / camera-like.")
+        c_roll = a3.slider("Roll°", -45, 45, 0, key="vid3d_roll", help="Tilt the horizon.")
+        z1, z2, z3 = st.columns(3)
+        c_zoom = z1.slider("Zoom", 0.4, 4.0, 2.05, 0.05, key="vid3d_zoom",
+                           help="Higher = closer (moves the camera in). True 3D zoom — no distortion or glitch.")
+        c_px = z2.slider("Pan X", -1.0, 1.0, 0.05, 0.05, key="vid3d_px",
+                         help="Shift the look-at point left/right (normalized scene units).")
+        c_py = z3.slider("Pan Y", -1.0, 1.0, -0.05, 0.05, key="vid3d_py",
+                         help="Shift the look-at point forward/back (normalized scene units).")
+        s1, s2, s3 = st.columns(3)
+        v_fps = s1.slider("FPS", 1, 30, 10, key="vid3d_fps")
+        v_pts = s2.select_slider("Points", [3000, 6000, 12000, 20000], value=20000, key="vid3d_pts")
+        v_max = s3.number_input("Max frames (0 = all)", 0, n, 0, key="vid3d_max")
+
+        camera = lv.orbit_camera(azimuth=c_az, elevation=c_el, zoom=c_zoom,
+                                 pan_x=c_px, pan_y=c_py, roll=c_roll)
+        prev_i = min(int(st.session_state.get("lidar_frame", 0)), n - 1)
+        _pp = _load_pts(pcds[prev_i], int(v_pts))
+        _po = lp.load_objects(labels[prev_i])
+        # uirevision keyed to the camera: moving a slider applies the new camera, but
+        # stepping the scene frame (same camera) preserves any manual mouse-orbit.
+        st.plotly_chart(
+            lv.build_figure(_pp, _po, color_mode, height=560, road_poly=road,
+                            sensors=sensors, hdmap_lanes=hdmap_lanes, camera=camera,
+                            uirevision=f"vid_{c_az}_{c_el}_{c_roll}_{c_zoom}_{c_px}_{c_py}"),
+            use_container_width=True, key="vid3d_preview")
+        st.caption(f"Preview — frame {prev_i+1}/{n} · az {c_az}° · el {c_el}° · roll {c_roll}° · "
+                   f"zoom {c_zoom}× · pan ({c_px:g}, {c_py:g})  ·  the render uses this exact camera.")
+        st.info("⏱️ kaleido renders ~1–3 s per frame (a headless browser per frame), so all "
+                f"{n} frames can take several minutes. Set **Max frames** low to test the angle first.")
 
     if st.button("🎬 Generate 3D LiDAR video (kaleido)", type="primary", use_container_width=True):
         bar = st.progress(0.0, text="Rendering 3D frames (kaleido)…")

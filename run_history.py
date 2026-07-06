@@ -2,29 +2,31 @@
 
 Each filtering "evaluation" (current model + config scored over a sample of frames
 via the foreground-quality proxy) appends one JSON line to
-  <workspace>/outputs/run_history/<tag>.jsonl
-where <tag> encodes the sensor + input-source so south / north / registered and
-cropped / full each keep their own trend. The Background Filtering page reads this
-back to show current-vs-previous deltas + a trend chart, so you don't have to
-remember last run's numbers.
+  <workspace>/outputs/run_history/<category>/<tag>.jsonl
+where <category> separates the Background-Filtering foreground-quality tracker
+("bgfilter") from the Evaluation page's detection-metric trackers ("eval", which
+also holds the Registered-vs-South A/B runs), and <tag> encodes the sensor +
+input-source so south / north / registered and cropped / full each keep their own
+trend. The relevant page reads this back to show current-vs-previous deltas + a
+trend chart, so you don't have to remember last run's numbers.
 """
 import os
 import json
 import time
 
 
-def _dir(ds):
-    return os.path.join(ds.outputs_dir, "run_history")
+def _dir(ds, category):
+    return os.path.join(ds.outputs_dir, "run_history", category)
 
 
-def _path(ds, tag):
-    return os.path.join(_dir(ds), f"{tag}.jsonl")
+def _path(ds, category, tag):
+    return os.path.join(_dir(ds, category), f"{tag}.jsonl")
 
 
 # Only the knobs worth tracking — paths/frame-counts are noise for a tuning trend.
 _TRACKED_KEYS = (
     "ground_grid", "dz_thresh", "bg_voxel", "bg_ratio", "cell_size", "cell_ratio",
-    "inward_buffer_m", "enable_pole_filter", "enable_5x5", "enable_sor",
+    "inward_buffer_m", "enable_pole_filter", "enable_sor",
     "sor_k", "sor_std",
 )
 _TRACKED_CLUSTER = (
@@ -43,9 +45,9 @@ def summarize_params(config):
     return out
 
 
-def log_run(ds, tag, metrics, params, note=""):
+def log_run(ds, category, tag, metrics, params, note=""):
     """Append one run record. metrics + params are plain dicts of JSON-able values."""
-    os.makedirs(_dir(ds), exist_ok=True)
+    os.makedirs(_dir(ds, category), exist_ok=True)
     rec = {
         "ts": time.time(),
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -53,14 +55,14 @@ def log_run(ds, tag, metrics, params, note=""):
         "metrics": metrics,
         "params": params,
     }
-    with open(_path(ds, tag), "a", encoding="utf-8") as fp:
+    with open(_path(ds, category, tag), "a", encoding="utf-8") as fp:
         fp.write(json.dumps(rec) + "\n")
     return rec
 
 
-def load_history(ds, tag):
+def load_history(ds, category, tag):
     """Return the run records (oldest first); [] if none yet."""
-    p = _path(ds, tag)
+    p = _path(ds, category, tag)
     if not os.path.exists(p):
         return []
     out = []
@@ -76,8 +78,8 @@ def load_history(ds, tag):
     return out
 
 
-def clear_history(ds, tag):
-    p = _path(ds, tag)
+def clear_history(ds, category, tag):
+    p = _path(ds, category, tag)
     if os.path.exists(p):
         os.remove(p)
 

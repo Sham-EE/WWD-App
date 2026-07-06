@@ -249,11 +249,7 @@ with st.expander("🧹 Ground removal", expanded=False):
     config["dz_thresh"] = g2.number_input("Ground Z Threshold (m)", 0.1, 1.0, 0.3, 0.05)
 
 with st.expander("🧱 Background model (occupancy + persistence)", expanded=False):
-    st.caption("Defaults tuned 2026-07-04: a bg_ratio/cell_ratio sweep (registered/cropped, "
-               "veh-only, ROI, match_dist=2.0m) found 0.98/0.90 too strict — voxels/cells with "
-               "slightly inconsistent returns (still clearly static) weren't crossing the "
-               "threshold. Lowering both improved F1 0.7106→0.7327 with precision, recall, "
-               "MOTP, and ID-switches all better together (not a precision/recall trade).")
+
     b1, b2 = st.columns(2)
     config["bg_voxel"] = b1.slider("BG Voxel Size (m)", 0.5, 2.0, 1.0, 0.1)
     config["bg_ratio"] = b2.slider("BG Presence Ratio", 0.5, 1.0, 0.85, 0.01)
@@ -311,9 +307,6 @@ with st.expander("📍 Pole-like geometry filter", expanded=False):
 
 with st.expander("⚙️ Misc filters", expanded=False):
     config["inward_buffer_m"] = st.number_input("Road Edge Inward Buffer (m)", value=2.0)
-    config["enable_5x5"] = st.checkbox("Enable 5×5 coarse background stage", value=True,
-        help="Blunt macro-grid background removal. Disable to A/B whether it adds anything "
-             "over the fine voxel mask (it can nuke whole approach lanes).")
 
 with st.expander("🧽 Denoise (statistical outlier removal)", expanded=False):
     config["enable_sor"] = st.checkbox("Enable SOR on foreground output", value=False,
@@ -327,7 +320,6 @@ with st.expander("🧽 Denoise (statistical outlier removal)", expanded=False):
         value=12, step=1, help="Mean distance is computed over k nearest neighbours."))
     config["sor_std"] = so2.number_input("SOR std ratio", min_value=0.5, max_value=5.0,
         value=2.0, step=0.1, help="Lower = more aggressive (drops more points).")
-config["coarse_5x5"] = {"NX": 5, "NY": 5}  # hard-coded
 
 # ---------------- Load or Build background model ----------------
 if "bg_model" not in st.session_state:
@@ -415,6 +407,10 @@ if st.session_state.bg_model:
     # quality proxy and logs it, so each tuning change shows an explicit delta vs the
     # last run + a trend line. (A fast stand-in for the full detection eval.)
     if has_gt and pcd_files:
+        # run_history/bgfilter/ — separate from run_history/eval/ (Evaluation page's
+        # detection-metric + A/B trackers) so the folder makes it obvious at a glance
+        # which tracker each logged file belongs to.
+        _RH_CAT = "bgfilter"
         _tag = f"{_sensor}_{_src}"
 
         def _aggregate_quality(_pcd_files, _gt_index, _bg_model, _cfg, min_pts, stride):
@@ -443,7 +439,7 @@ if st.session_state.bg_model:
             tc = st.columns(3)
             track_stride = int(tc[0].number_input("Sample every Nth frame", 1, 50, 10,
                 key="bf_track_stride", help="Higher = faster, coarser estimate."))
-            track_minpts = int(tc[1].number_input("≥ pts for 'covered'", 1, 200, 10,
+            track_minpts = int(tc[1].number_input("≥ pts for 'covered'", 1, 200, 5,
                 key="bf_track_minpts"))
             note = tc[2].text_input("Note (optional)", key="bf_track_note",
                 placeholder="e.g. density eps + SOR")
@@ -453,14 +449,14 @@ if st.session_state.bg_model:
                 with st.spinner("Scoring foreground quality over sampled frames..."):
                     metrics = _aggregate_quality(pcd_files, gt_index, st.session_state.bg_model,
                                                  config, track_minpts, track_stride)
-                    rh.log_run(_ds, _tag, metrics, rh.summarize_params(config), note=note)
+                    rh.log_run(_ds, _RH_CAT, _tag, metrics, rh.summarize_params(config), note=note)
                 st.success(f"Logged: {metrics['covered']}/{metrics['scanned']} objects covered "
                            f"over {metrics['frames']} sampled frames.")
             if bcol[1].button("🗑️ Clear", use_container_width=True, key="bf_track_clear"):
-                rh.clear_history(_ds, _tag)
+                rh.clear_history(_ds, _RH_CAT, _tag)
                 st.rerun()
 
-            hist = rh.load_history(_ds, _tag)
+            hist = rh.load_history(_ds, _RH_CAT, _tag)
             if hist:
                 cur = hist[-1]["metrics"]
                 prev = hist[-2]["metrics"] if len(hist) > 1 else None

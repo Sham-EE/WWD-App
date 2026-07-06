@@ -29,18 +29,17 @@ def _load_raw(path):
 
 
 # Filter-time config — must mirror the Background Filtering page DEFAULTS so the geometry
-# editor's foreground matches what that page would produce (density clusterer, 5x5 on, SOR
-# off). Keep in sync if those defaults change.
+# editor's foreground matches what that page would produce (density clusterer, SOR off).
+# Keep in sync if those defaults change.
 _GEOM_FILTER_CFG = {
-    "ground_grid": 0.5, "dz_thresh": 0.3, "bg_voxel": 1.0, "bg_ratio": 0.98,
-    "cell_size": 1.0, "cell_ratio": 0.9, "inward_buffer_m": 2.0,
+    "ground_grid": 0.5, "dz_thresh": 0.3, "bg_voxel": 1.0, "bg_ratio": 0.85,
+    "cell_size": 1.0, "cell_ratio": 0.75, "inward_buffer_m": 2.0,
     "cluster": {"mode": "density", "ds_voxel": 0.15, "eps0": 0.35, "eps_k": 0.008,
                 "eps_min": 0.35, "eps_max": 2.0, "min_samples": 16,
                 "eps_scale": 2.5, "n_tiers": 3, "min_samples_far": 8},
     "enable_pole_filter": True, "pole_min_height": 1.5, "pole_min_aspect_xy": 6.0,
     "pole_max_xy_area": 1.0, "pole_min_linearity": 0.75, "pole_min_points": 8,
-    "pole_max_points": 80, "enable_5x5": True, "enable_sor": False,
-    "coarse_5x5": {"NX": 5, "NY": 5},
+    "pole_max_points": 80, "enable_sor": False,
 }
 
 
@@ -130,9 +129,13 @@ def _geom_detections(csv_path, _mtime):
     return by_frame, (np.array(cen) if cen else np.zeros((0, 2))), np.array(stat, dtype=bool)
 
 
-def _resolve_bg_model(src):
-    """Saved model path matching `src`, else the other source's, else None."""
-    for p in (ds.model_path_for(src), ds.model_path_for("cropped" if src == "full" else "full")):
+def _resolve_bg_model(sensor, src):
+    """Saved model path for THIS sensor matching `src`, else the sensor's other crop,
+    else None. Never falls back to a different sensor's model — south's background
+    model applied to a north/registered cloud would misclassify almost everything,
+    since the geometry differs."""
+    for p in (ds.model_path_for_sensor(sensor, src),
+              ds.model_path_for_sensor(sensor, "cropped" if src == "full" else "full")):
         if p and os.path.exists(p):
             return p
     return None
@@ -210,7 +213,8 @@ with tab_crop:
         "Registered (south + north)": (ds.registered_dir, ds.cropped_dir_for("registered")),
     }
     sc1, sc2 = st.columns([1, 2])
-    source = sc1.selectbox("Source LiDAR", list(sources), index=0)
+    source = sc1.selectbox("Source LiDAR", list(sources),
+                           index=list(sources).index("Registered (south + north)"))
     src_dir, out_dir = sources[source]
     margin = sc2.slider("Road margin (m)", 0.0, 5.0, 0.0, 0.5,
                         help="Expand the road polygon outward before clipping (0 = exact).")
@@ -305,7 +309,11 @@ with tab_gt:
             ds.registered_dir)
 
     gs1, gs2 = st.columns([1.3, 1])
-    gt_source = gs1.selectbox("Source LiDAR", list(gt_sources), index=0, key="gt_source")
+    # Default to Registered when it's available (the fused GT hasn't been generated
+    # yet on a fresh dataset, so this falls back to South until it is).
+    _gt_default_idx = (list(gt_sources).index("Registered (south + north)")
+                       if "Registered (south + north)" in gt_sources else 0)
+    gt_source = gs1.selectbox("Source LiDAR", list(gt_sources), index=_gt_default_idx, key="gt_source")
     gt_src, gt_out, gt_cloud_dir = gt_sources[gt_source]
     gt_margin = gs2.slider("Region margin (m)", 0.0, 15.0, 0.0, 1.0,
                            help="Expand the research/ROI region. Edit its SHAPE in the Geometry Editor; "
@@ -454,9 +462,21 @@ with tab_geom:
         geom_bg = _load_raw(geom_clouds[gfi])
     gt_map = _gt_map(ds.gt_dir_for_input(_g_pcd_dir)) or _gt_map(ds.raw_labels_south_dir) or _gt_map(ds.gt_dir)
     _g_model = ds.model_path_for_sensor(_g_sensor, _g_src)
-    model_path = _g_model if (_g_model and os.path.exists(_g_model)) else _resolve_bg_model(geom_src)
+    model_path = _g_model if (_g_model and os.path.exists(_g_model)) else _resolve_bg_model(_g_sensor, geom_src)
+    # Every model file is literally named "background_model.pkl" — showing that
+    # basename told you nothing. Show the <sensor>/<crop> it actually came from
+    # instead, and flag it plainly when that differs from what's selected above
+    # (the "other crop" fallback in _resolve_bg_model).
+    if model_path:
+        _model_root = os.path.join(ds.outputs_dir, "background", "background_model")
+        _model_rel = os.path.dirname(os.path.relpath(model_path, _model_root))
+        _model_txt = f"`{_model_rel}/background_model.pkl`"
+        if model_path != _g_model:
+            _model_txt += f"  ⚠️ no model built for {_g_sensor.capitalize()}·{_g_src.capitalize()} yet — using this one instead"
+    else:
+        _model_txt = "none — build on Background Filtering"
     st.caption(f"🛰️ {_g_sensor.capitalize()} · {'Cropped' if _g_src=='cropped' else 'Full'}  ·  "
-               f"model: `{os.path.basename(model_path) if model_path else 'none — build on Background Filtering'}`")
+               f"model: {_model_txt}")
 
     show_hdmap = st.checkbox("🗺️ Intersection (HD map) backdrop", value=True, key="geom_show_hdmap",
                              help="Overlay the real intersection's road network (the dev-kit HD map) — the "
