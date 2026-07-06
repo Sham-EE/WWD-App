@@ -21,9 +21,10 @@ if not lanes:
 opts = wrong_way_options(lanes)
 labels = [o["label"] for o in opts]
 
-st.caption("Your V2X dashboard (`assets/index.html`), with the map re-centred on **our** intersection and "
-           "the exact scenario's lane geometry injected on load. Pick which lane the wrong-way "
-           "driver runs against; the dashboard's own controls drive the rest.")
+st.caption("This page embeds a standalone V2X alert dashboard, with its built-in demo map replaced by the "
+           "real, georeferenced TUMTraf intersection and the chosen scenario's lane geometry. Pick which "
+           "lane the wrong-way driver runs against below, the dashboard's own controls handle the alert "
+           "simulation from there.")
 
 # Pre-select the simulator's last broadcast lane, if one was sent over; otherwise
 # default to the canonical East-bound-in-a-Westbound-lane scenario.

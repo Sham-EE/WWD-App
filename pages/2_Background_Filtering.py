@@ -23,6 +23,9 @@ nav.render_sidebar()
 st.title("🔬 Background Filtering")
 logging.info("--- Background Filter Page Loaded ---")
 
+# --- Input and Output Paths ---
+st.subheader("📁 Input and Output")
+
 # ---------------- Active-dataset paths -----------------
 import dataset_manager as dm
 _ds = dm.get_active()
@@ -46,9 +49,36 @@ DEFAULT_PCD = _ds.input_pcd_for_sensor(_sensor, _src)
 # line up across south / north / registered.
 DEFAULT_GT = _ds.gt_dir_for_input(DEFAULT_PCD)
 DEFAULT_OUT = _ds.filtered_dir_for_sensor(_sensor, _src)
-st.caption(f"🛰️ Input: `{os.path.basename(DEFAULT_PCD.rstrip('/'))}`"
-           + (f"  ·  🏷️ GT: `{os.path.basename(DEFAULT_GT.rstrip('/'))}`"
-              if os.path.isdir(DEFAULT_GT) else "  ·  🏷️ GT: none found"))
+
+# Folder paths default from the Sensor/Input toggles; tuck them into a collapsible
+# section (keyed by sensor/source so they re-follow the toggles when you switch) —
+# same position/pattern as Object Detection and Tracking.
+with st.expander("📁 Folder paths & model (advanced override)", expanded=False):
+    fp1, fp2 = st.columns(2)
+    model_save_path = fp1.text_input("Background Model Path", DEFAULT_MODEL_PATH,
+                                     key=f"bf_model_{_sensor}_{_src}")
+    pcd_dir_in = fp2.text_input("PCD Directory", DEFAULT_PCD, key=f"bf_pcd_{_sensor}_{_src}")
+    fp3, fp4 = st.columns(2)
+    output_dir = fp3.text_input("Output Directory (filtered PCDs)", DEFAULT_OUT,
+                                key=f"bf_out_{_sensor}_{_src}")
+    build_frames = fp4.number_input("Build Frames (0 = all)", min_value=0, value=0, key="bf_buildN")
+    fp5, fp6 = st.columns(2)
+    use_saved_model = fp5.checkbox("Load saved model if available", value=True, key="bf_loadsaved")
+    save_filtered = fp6.checkbox("Save filtered foreground points (PCD)", value=True, key="bf_savefilt")
+
+# Path relative to data/ (not just the basename) so it's clear which KIND of folder
+# this is — raw/ vs derived/, point_clouds/ vs labels/, cropped vs not — not just
+# which sensor (that's already shown by the radio above).
+_pcd_rel = os.path.relpath(DEFAULT_PCD.rstrip('/'), _ds.data_dir)
+_gt_ok = os.path.isdir(DEFAULT_GT)
+_io_parts = [f"🛰️ Input: `{_pcd_rel}`"]
+if not _gt_ok:
+    _io_parts.append("🏷️ GT: none found")
+else:
+    _io_parts.append(f"🏷️ GT: `{os.path.relpath(DEFAULT_GT.rstrip('/'), _ds.data_dir)}`")
+st.caption("  ·  ".join(_io_parts))
+
+config = {"pcd_dir": pcd_dir_in, "build_frames": build_frames, "gt_dir": DEFAULT_GT}
 
 @st.cache_data(show_spinner="Discovering PCD files...")
 def discover_pcd_files(dir_path: str):
@@ -226,22 +256,6 @@ from dataset_prep import foreground_quality  # shared with the Geometry Editor
 
 # ---------------- Model & filter parameters (collapsible, on the page) ----------------
 st.subheader("⚙️ Model & Filter Parameters")
-
-with st.expander("📁 Folder paths & model (advanced override)", expanded=False):
-    # keyed by sensor/source so the fields re-follow the toggles when you switch
-    fp1, fp2 = st.columns(2)
-    model_save_path = fp1.text_input("Background Model Path", DEFAULT_MODEL_PATH,
-                                     key=f"bf_model_{_sensor}_{_src}")
-    pcd_dir_in = fp2.text_input("PCD Directory", DEFAULT_PCD, key=f"bf_pcd_{_sensor}_{_src}")
-    fp3, fp4 = st.columns(2)
-    output_dir = fp3.text_input("Output Directory (filtered PCDs)", DEFAULT_OUT,
-                                key=f"bf_out_{_sensor}_{_src}")
-    build_frames = fp4.number_input("Build Frames (0 = all)", min_value=0, value=0, key="bf_buildN")
-    fp5, fp6 = st.columns(2)
-    use_saved_model = fp5.checkbox("Load saved model if available", value=True, key="bf_loadsaved")
-    save_filtered = fp6.checkbox("Save filtered foreground points (PCD)", value=True, key="bf_savefilt")
-
-config = {"pcd_dir": pcd_dir_in, "build_frames": build_frames, "gt_dir": DEFAULT_GT}
 
 with st.expander("🧹 Ground removal", expanded=False):
     g1, g2 = st.columns(2)

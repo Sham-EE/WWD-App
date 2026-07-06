@@ -25,7 +25,7 @@ nav.render_sidebar()
 st.title("🚨 Wrong-Way Driver Simulator")
 st.markdown(
     "Real wrong-way events are rare and this dataset is all legal traffic, so this page "
-    "**spawns a synthetic wrong-way driver** and runs it through the *real* WWD detector — then "
+    "**spawns a synthetic wrong-way driver** and runs it through the *real* WWD detector, then "
     "shows it **driving through the actual LiDAR scan** (the same 3D view as the Visualizer)."
 )
 

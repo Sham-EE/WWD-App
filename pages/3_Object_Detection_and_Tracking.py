@@ -54,6 +54,12 @@ with st.expander("📁 Folder paths (advanced override)", expanded=False):
         value=_ds.input_pcd_for_sensor(_sensor, _src), key=f"odt_orig_{_sensor}_{_src}")
     st.caption(f"Detection output → `{output_dir}`")
 
+# Path relative to the dataset workspace (not just the basename) so it's clear which
+# KIND of folder this is — a Background-Filtering output vs a raw/derived point
+# cloud — not just which sensor (that's already shown by the radio above).
+st.caption(f"🛰️ Filtered: `{os.path.relpath(filtered_pcd_dir.rstrip('/'), _ds.workspace)}`  ·  "
+           f"🖼️ Original: `{os.path.relpath(original_pcd_dir.rstrip('/'), _ds.workspace)}`")
+
 # --- Parameters (each group collapses into its own section) ---
 st.subheader("⚙️ Algorithm Parameters")
 

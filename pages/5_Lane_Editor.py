@@ -182,7 +182,7 @@ with left:
                 l['heading_deg'] = float(st.session_state[_hdkey])
                 l['lane_id'] = st.session_state[_wkey]  # the lane's name is its direction
                 if l.get('polygon'):
-                    st.caption(f"✏️ Drawn polygon · {len(l['polygon'])} vertices — re-shape it in "
+                    st.caption(f"✏️ Drawn polygon · {len(l['polygon'])} vertices; re-shape it in "
                                "**✏️ Draw mode** (right) via *Replace selected lane*.")
                 else:
                     xc = st.columns(2)

@@ -1,847 +1,222 @@
 # LiDAR Wrong-Way Driving (WWD) Detection Toolkit
 
 A Streamlit pipeline for detecting wrong-way driving from roadside LiDAR point
-clouds. The **Home** page shows a live, dataset-aware **pipeline stepper** (a
-compact pill-and-arrow flow that marks each stage Done / Next / To-do) plus
-quick-launch tool cards; the **sidebar** groups the tools into collapsible
-sections (Data & setup · Detection pipeline · Wrong-way driving). The pages
-(in sidebar / usage order):
+clouds: background filtering → clustering/tracking → wrong-way flagging →
+quantitative evaluation, plus tools to calibrate a new site (lane geometry,
+scene geometry, sensor registration) and to demo a wrong-way alert over a
+simulated V2X broadcast.
 
-0. **Datasets** — choose which dataset the app works on, or add your own.
-1. **Dataset Prep** — recreate the dataset's *derived* data in-app (no external
-   scripts), **edit the scene geometry that the whole pipeline reads**, and
-   **register the south + north LiDARs into one fused cloud**. Four tabs, laid
-   out in recommended order with their own prep stepper: **Registration**
-   (optional) → **Geometry Editor** → **Crop to road** → **Scorable GT**.
-   See below.
-2. **Background Filtering** — build a static-background model and keep only the
-   moving foreground points. Choose the **sensor** (Registered / South / North)
-   and **Cropped / Full** input; a full 3D inspector (see below).
-3. **Object Detection, Tracking & WWD** — cluster the foreground, track objects
-   with a Kalman filter, and **flag wrong-way vehicles** by comparing each
-   vehicle's velocity direction against the expected lane direction.
-4. **Evaluation** — score detection/tracking against ground-truth cuboids
-   (precision / recall / F1, MOTA / MOTP / ID-switches) with a side-by-side
-   GT-vs-detection visual comparison.
-5. **Lane Editor** — build/adjust the wrong-way lane geometry: axis boxes **or drawn
-   polygons**, a **direction dropdown + numeric heading**, and a **draw-the-direction-line**
-   tool (trace a lane → its bearing becomes the heading), over the point cloud + **HD-map**
-   overlay with **georeferenced true cardinals** and a compass rose.
-6. **WWD Simulator** — spawn a synthetic wrong-way driver through the real detector and fire
-   the V2X dashboard's messaging on detection. Renders the **registered/cropped** fused cloud
-   with **lanes coloured + a heading arrow per lane** matching the Lane Editor, a
-   **georeferenced** true-North compass, and a live map of the real intersection (true compass
-   bearings, exact lat/lon — the TUMTraf s110 junction in Garching-Hochbrück, Munich).
-7. **Visualizer** — three tabs: a **camera** viewer (both cameras side by side with
-   generated bounding-box / point-cloud overlays + track-history trails + video),
-   a **3D LiDAR** viewer (the scan + ground-truth boxes + the **real HD-map
-   road network** in one oblique view — the dev-kit "digital twin"), and a
-   **Real intersection** tab (interactive Google Maps satellite embed of the
-   site). A native, dependency-light replacement for the TUM Traffic dev-kit.
+**Contents:** [Quickstart](#quickstart) · [What's inside](#whats-inside) ·
+[How it works](#how-it-works) · [Datasets](#datasets) ·
+[Current benchmark](#current-benchmark) · [Project layout](#project-layout) ·
+[Known limitations / next steps](#known-limitations--next-steps)
+
+---
+
+## Quickstart
+
+```bash
+# 1. Install Git, if you don't have it: https://git-scm.com/downloads
+
+# 2. Clone this repository
+git clone <this-repository-url>
+cd <repository-folder>
+
+# 3. Install Conda, if you don't have it: https://docs.conda.io/en/latest/miniconda.html
+
+# 4. Create the environment (Python 3.11 — open3d doesn't yet support 3.13)
+conda create -n lidar_env python=3.11 -y
+
+# 5. Activate it
+conda activate lidar_env
+
+# 6. Install dependencies
+pip install -r requirements.txt
+
+# 7. Run the app
+streamlit run Home.py
+# (if `streamlit` isn't on PATH: python -m streamlit run Home.py)
+```
+
+The bundled dataset (`datasets/A9_r02_s02/`) ships with sample derived data, so
+the app is usable immediately — see **Datasets** below for adding your own, and
+**End-to-end workflow** if you need to regenerate derived data from scratch.
+
+> **Optional — HD-map overlay:** the Visualizer's HD-map/digital-twin view and
+> exact lat/lon features read `datasets/<id>/map/lane_samples.json`, extracted
+> from the TUM Traffic dev-kit's `src/map/map.zip`. Everything degrades
+> gracefully without it.
+
+---
+
+## What's inside
+
+The sidebar groups pages into three sections (Home shows a dataset-aware
+**pipeline stepper** marking each stage Done / Next / To-do):
+
+**Data & setup**
+- **Datasets** — pick the active dataset, or add your own (a folder of `.pcd`
+  frames + optional OpenLABEL GT).
+- **Dataset Prep** — registration (fuse south+north LiDARs), the scene-geometry
+  editor (research/road/exclusion polygons the whole pipeline reads), crop-to-road,
+  and scorable-GT generation.
+- **Visualizer** — camera + 3D LiDAR label viewers and a real-intersection map;
+  a native replacement for the TUM Traffic dev-kit's visualization tools.
+
+**Detection pipeline**
+- **Background Filtering** — build a static-background model and keep only the
+  moving foreground, with a full 3D inspector for tuning.
+- **Detection & Tracking** — cluster the foreground, track objects with a
+  Kalman filter, associate detections frame-to-frame.
+- **Evaluation** — score against ground truth (precision/recall/F1, MOTA/MOTP/
+  ID-switches) with a visual GT-vs-detection comparison, plus a Registered-vs-South
+  A/B benchmark.
+
+**Wrong-way driving**
+- **Lane Editor** — draw lane geometry (boxes or arbitrary polygons) and set each
+  lane's legal direction of travel — the reference WWD compares vehicle heading against.
+- **WWD Simulator** — inject a synthetic wrong-way driver through the real
+  detector/flagging logic (no scripted result) and fire a simulated V2X alert.
+- **V2X Dashboard** — a standalone alert dashboard seeded with the real,
+  georeferenced intersection and a chosen wrong-way scenario.
+
+---
+
+## How it works
+
+- **Background filtering** (`bg_filter_core.py`): a per-cell/voxel occupancy +
+  cluster-recurrence model of what's static, refreshed by a geometric pole-shape
+  filter and optional denoising. Cropped input dramatically outperforms full/raw
+  input since off-road clutter is the dominant false-positive source (see
+  *Current benchmark* below).
+- **Detection & tracking** (`detection_logic.py`): range-adaptive clustering,
+  PCA-oriented boxes, temporal confirmation, a Kalman tracker with gated Hungarian
+  association, and a static-phantom suppression pass. Defaults live in one place,
+  `DEFAULT_DETECTION_PARAMS` — the UI and the A/B benchmark both read it, so they
+  can't silently drift apart.
+- **Wrong-way flagging** (`wwd_detection.py`): a box's PCA yaw is 180°-ambiguous, so
+  WWD instead compares the **Kalman velocity direction** to the expected lane
+  heading (`config/lanes.geojson`). A track is flagged only for a sustained run of
+  frames that's fast enough, wrong enough, travels far enough, and holds a steady
+  heading — with the intersection interior exempted so legal turns aren't mis-flagged.
+- **Evaluation** (`evaluation.py`): OpenLABEL GT aligned to detection frames by
+  filename timestamp, Hungarian BEV-centre matching gated *before* assignment, CLEAR-MOT
+  metrics, class/ROI filters, and a Registered-vs-South A/B harness with per-distance-bin
+  recall (the direct test of "fusion fills occlusion shadows").
+- **Registration** (`registration.py`): fuses south+north via calibration-init +
+  coarse-to-fine point-to-plane ICP (the bundled extrinsics alone miss a
+  systematic ~8° yaw), written in the south LiDAR frame so it's a drop-in
+  superset — south GT/calibration/geometry all apply to it directly. Also builds a
+  de-duplicated **fused-union GT** with per-object point counts recomputed on the
+  fused cloud.
+- **Georeferencing** (`geo_reference.py`): composes the OpenLABEL + HD-map chain
+  into exact WGS84 lat/lon + true compass bearings, so the Lane Editor, WWD
+  Simulator, and V2X Dashboard all agree on real-world directions and position.
+
+---
 
 ## Datasets
 
-The app is **multi-dataset**. Each dataset has its own self-contained workspace
-under `datasets/<id>/`:
+The app is **multi-dataset**; each has its own self-contained workspace:
 
 ```
-datasets/A9_r02_s02/         # the bundled TUMTraf A9 template
-  config/   lanes.geojson, site_geometry.json     ← tracked in git (small)
-    defaults/  lanes.geojson, site_geometry.json  ← factory snapshot for "reset to default"
-  data/                                            ← gitignored (large, local)
-    raw/        point_clouds/{s110_lidar_ouster_south,_north}/, labels/{…south,…north}/,
-                images/{s110_camera_basler_south1_8mm,_south2_8mm}/   # untouched TUMTraf download
-    derived/    point_clouds/{registered, cropped/<sensor>}/, labels/scorable/<sensor>/   # regenerated by Dataset Prep
-  outputs/                                         ← gitignored, nested by stage:
+datasets/<id>/
+  config/            lanes.geojson, site_geometry.json, georef.json  ← tracked (small)
+    defaults/        factory snapshot for "reset to default"
+  map/               lane_samples.json (HD map, optional, gitignored)
+  data/              ← gitignored (large, local)
+    raw/             point_clouds/{..._south,_north}/, labels/, images/   # untouched download
+    derived/         point_clouds/{registered, cropped/<sensor>}/, labels/scorable/<sensor>/
+  outputs/           ← gitignored, nested by stage
     background/{background_model,background_filtering}/<sensor>/<crop>/
-    detection/object_detection/<sensor>/<crop>/    # tracks.csv, animation, eval report
+    detection/object_detection/<sensor>/<crop>/     # tracks.csv, animation, eval report
+    run_history/{bgfilter,eval}/<tag>.jsonl          # logged tuning runs, tracked over time
     visualizer/{rendered,road_videos}/
-    # <sensor> = south|north|registered, <crop> = cropped|full
 ```
 
-Each dataset keeps a **`config/defaults/`** snapshot of its curated geometry +
-lanes; the Geometry Editor and Lane Editor can **reset any component back to these
-defaults**. New datasets snapshot their auto-derived starter geometry as the
-default automatically.
+Two toggles — **Sensor** (Registered / South / North) and **Input cloud**
+(Cropped / Full) — are shared across Filtering → Detection → Evaluation via
+session state; each combination writes to its own folder so results never
+collide and metrics stay comparable. GT auto-resolves to match the selected
+sensor.
 
-On the **Datasets** page you can switch the active dataset (every page reads/writes
-the active one) or **add your own**: point it at a folder of `.pcd` frames on disk
-(not copied) and optional OpenLABEL GT. A starter `site_geometry.json` is derived
-from the data extent so it runs immediately; datasets **without GT** still filter
-(the background model derives its height band from the point cloud). Build lanes
-for a new dataset on the **Lane Editor** page, then run Background Filtering →
-Detection → Evaluation.
-
-## Visualizer (page 7) — native dev-kit replacement
-
-The TUM Traffic dev-kit's label visualizations need a heavy native/OpenGL setup
-that's painful to install on Mac/Windows. This page reproduces them with pure
-Python (PIL + Plotly), reading the camera calibration **straight out of each
-OpenLABEL label JSON** (`coordinate_systems` extrinsics + `streams` intrinsics) —
-so no dev-kit, no calibration files, and no extra dependencies.
-
-- **Camera tab** — both cameras side by side (south2 left, south1 right by
-  default). Switch between **Raw**, **Bounding boxes (3D)**, and **Boxes + point
-  cloud** (LiDAR projected onto the image, depth-coloured blue→red). Overlays are
-  generated on the fly from labels + calibration and cached under
-  `outputs/rendered/`. Optional **track-history trails** (coloured per object,
-  adjustable length/thickness). Exact dev-kit class colours + `TYPE_id` labels.
-  **Generate** a side-by-side MP4 (GIF fallback) of any variant.
-- **3D LiDAR tab** — the point cloud + ground-truth 3D boxes + the **real HD-map
-  road network** overlaid, in one big oblique (z-up) view coloured by category — the
-  dev-kit "digital twin." The HD map comes from the dev-kit's `lane_samples.json`
-  (place it in `datasets/<id>/map/`), transformed into the cloud frame with the dev-kit's own
-  recipe (`hd_map.py` map→`s110_base`, then its `visualize_point_cloud_with_3d_boxes`
-  `s110_base`→cloud transform — a 77.8° rotation + fixed translation, copied verbatim
-  so the lanes land exactly on the scan). Toggles: 📦 Boxes · 🛣️ Road outline ·
-  📍 LiDAR markers · 🗺️ HD map.
-- **Sensor / Input / GT toggles** drive **both** tabs: **Sensor** (Registered / South /
-  North — registered reuses the south GT + camera calibration, since it's in the south
-  frame), **Input cloud** (Cropped / Full), and **GT boxes** (**Scorable** = what
-  Evaluation scores, vs **All (raw)** = every annotated box). Each frame shows its
-  **scorable / raw box counts** underneath so you can see what the scorable filter dropped.
-
-Frame stepping is isolated with `st.fragment` + cached loads so playback is smooth
-(no full-page refresh). The same playback control is on **Background Filtering**,
-which is also a full **3D inspector** (see its section below).
-
-## Dataset Prep (page 1) — derived data + editable geometry + registration
-
-Everything the pipeline needs beyond the raw download is reproducible **in-app**,
-and the **scene geometry is editable** — edits propagate to *every* page because
-filtering, cropping, scorable GT, ROI evaluation, and the road outline all read
-the active dataset's `config/site_geometry.json` through `geometry_config` (cached
-by file mtime, so a save updates the whole app with no restart).
-
-- **✂️ Crop to road** — clip a LiDAR's clouds to the **road polygons**. Works per
-  source (**south / north / registered**) and writes the `.pcd`s straight into that
-  source's `derived/cropped_{south,north,registered}/` folder. Verified to reproduce
-  the bundled cropped clouds exactly. Side-by-side preview (south ↔ north),
-  cropped/full toggle, optional road outline.
-- **🏷️ Scorable GT** — a **transparent, reproducible** visible-only ground truth:
-  keep objects inside the eval ROI that actually have LiDAR points. Replaces the
-  original bundled visible-GT (made by an opaque per-frame visibility check that
-  can't be reproduced from the labels). Runs **per source** (south / north /
-  registered → `derived/labels/scorable/<sensor>/`). Editable keep/drop
-  **criteria** (min/max points, max range, occlusion levels, classes) with a live
-  kept-vs-dropped preview. The **Source LiDAR** picker drives the preview cloud,
-  labels *and* the ROI: the ROI is defined in the south frame and **transformed into
-  the selected source's frame** (identity for south/registered, rotated into the
-  north frame for north) so kept/dropped classification lines up with that sensor's
-  cloud.
-- **🗺️ Geometry Editor** — edit the **research polygon (ROI)**, **road polygons**
-  (cropping), and **foreground-exclusion rectangles**, then **Save** to update the
-  whole pipeline. Editing options:
-  - **+/- steppers** (Lane-Editor style), **draw a box** on the plot to add an
-    exclusion / road / set the ROI, **nudge** a whole polygon with ◀▶▲▼, add/delete
-    polygons & vertices, **vertex labels** (`ROIn` / `R<road>.<v>` / `X<rect>.<v>`).
-  - **Reset any component (or all) to the dataset default**, derive the ROI from the
-    data extent, or set **ROI = road bounds + margin**.
-  - **Live overlays:** colour the cloud **by height** (Turbo, like the dev-kit),
-    overlay the **background-filter foreground** (red), **GT boxes** (category-coloured),
-    a **🟡 off-object foreground** layer (kept foreground outside every GT box — the same
-    clutter / false-foreground cue as the Background-Filtering viewer, so you can drop a
-    crop / exclusion zone right over the junk the filter keeps), and a **live FG-quality
-    readout** (objects covered / on-object recall / off-object foreground). Crucially the
-    foreground is split by the *current, unsaved* geometry — points your exclusion rects /
-    road crop would remove turn **grey** and drop out of the metric, so you can tune
-    exclusions and watch the numbers move **before** saving or rebuilding the model.
-- **🧭 Registration** — fuse the **south + north** LiDARs into one cloud (calibration-init
-  + ICP refinement), written in the **south LiDAR frame** so it reuses the south GT /
-  calibration / polygons. One cohesive 3D viewer with a **Raw ↔ Registered** toggle,
-  **by-sensor / by-height** colouring, **Frame (south / s110_base)** + **Crop** toggles,
-  road/ROI overlays and **LiDAR-position markers**; also builds a **fused (union) GT**.
-  Batch-writes `data/derived/point_clouds/registered/`. Full details in the
-  **Point-cloud registration** section below.
-
-### Sensor + cropped/full A/B pipeline
-
-Two orthogonal toggles (shared across **Background Filtering → Detection → Evaluation**
-via session state) let you A/B any input:
-- **Sensor**: **Registered** (default) / **South** / **North**.
-- **Input cloud**: **Cropped (road)** / **Full (uncropped)** (the bundled clouds are
-  road-cropped to ~63 m; full reaches the raw ~200 m extent).
-
-Each combination writes to its **own** nested folder
-(`outputs/background/background_model/<sensor>/<crop>/`, and likewise for
-`background_filtering` and `detection/object_detection`), so results never overwrite
-each other and metrics can be compared. The **GT auto-resolves to the input sensor**
-(south → `labels/scorable/south`, north → `labels/scorable/north` or raw north labels,
-registered → `labels/scorable/registered`, falling back as needed) — no hand-editing
-paths. Resolved by `dataset_manager`'s `input_pcd_for_sensor` / `model_path_for_sensor`
-/ `filtered_dir_for_sensor` / `detection_dir_for_sensor` / `gt_dir_for_input` helpers.
-
-Because Evaluation scores the **in-memory** detection results, the Detection and
-Evaluation pages **tag results with their sensor/source** and warn clearly if you try
-to score a run against a different sensor's GT (instead of a cryptic "no frames aligned"
-error) — re-run Detection after switching the toggle.
-
-## Background Filtering (page 2) — 3D inspector
-
-The Background Filtering viewer is a full inspection tool for tuning the filter, not just
-a preview. All controls live **on the page** (no sidebar) — **Sensor** + **Input cloud**
-toggles at the top pick the source, then the model/filter parameters are grouped into
-collapsible expanders (📁 Folder paths & model · 🧹 Ground removal · 🧱 Background model ·
-🔗 Clustering (DBSCAN) · 📍 Pole-like geometry filter · ⚙️ Misc filters) above a full-width
-**🧠 Build Background Model** button — matching the Object Detection page's layout:
-
-- **Compact, collapsible controls.** A single-line frame nav (⏮ ◀ ▶ ⏭ · Play · delay ·
-  frame slider) plus a collapsible **🎛️ Layers & overlays** panel with **✅ All / ⬜ None**
-  bulk toggles — so the controls stay small and the point cloud gets the space.
-- **Layers (persist across frames):** 🔴 foreground / ⚪ original cloud toggles, plus
-  geometry overlays that show *why* a point survives — 🛣️ road outline (solid on
-  cropped = the real crop; dashed on full = reference), 🔵 ROI, 🟣 exclusion zones.
-- **📍 LiDAR markers** — mark the sensor position(s) with a diamond + dotted plumb line
-  to the nadir (the blank-spot under each LiDAR). Frame-aware: sensor at the origin for
-  south/north; for registered (south frame) the south LiDAR sits at the origin and the
-  north LiDAR at its calibrated offset (with the ICP delta applied).
-- **🔵🟠 S/N split** (registered only) — colour the original cloud by **source LiDAR**
-  (south / north, using the Registration tab's exact palette) so you can see fusion
-  coverage and which sensor a region's points come from. The saved registered cloud is
-  XYZ-only, so the split is re-derived on the fly from the raw clouds + the manifest
-  matrices/ICP (`registration.registered_split_for_frame`) — no cloud rebuild needed.
-- **🏷️ GT boxes** (category-coloured + `TYPE_id` labels, matched per frame) and a
-  **📊 FG quality** metric (objects covered ≥N pts / on-object recall / off-object
-  foreground) — a fast *proxy* for detectability so you can tune filter params without
-  running the whole Detection→Evaluation loop.
-- **Filter-quality overlays** that *show* what the metric counts: **❌ Uncovered obj**
-  red-outlines the GT objects the LiDAR hit but the filter kept too little foreground
-  for (< `≥ pts`), and **🟡 Off-object FG** recolours (yellow) the foreground points
-  outside every GT box (clutter / false-foreground). The frame caption summarises both
-  inline (`✅ covered/scanned · 🟡 off-object FG`).
-- **🌈 Color by height** (Turbo) with a **Height span** slider that compresses the
-  colormap to the lowest few metres so even cars show a bottom→top gradient.
-- **Persistent camera:** 🔍 zoom / 🔄 rotate / 📐 tilt sliders drive the 3D camera
-  from Streamlit state, so the view holds across frame steps **and** toggles (Streamlit
-  does not preserve the Plotly 3D camera via `uirevision`, so sliders are the reliable
-  way; mouse drag still works for quick looks). The full/uncropped view is clipped to
-  the road window so it isn't flattened by the raw ~200 m extent; a **🔭 View margin**
-  slider widens that window when you want to see vehicles/boxes out on the approaches.
-
-The same **compact controls, bulk toggles, height colouring and LiDAR markers** are
-shared (via `viewer_ui.py`) across **every** preview with a play/next control —
-**Object Detection & Tracking**, the **Visualizer**, and the **Dataset Prep**,
-**Evaluation** and **WWD Simulator** viewers.
-
-### Filter quality / tuning knobs (with a measured ablation)
-
-- **Density-adaptive clustering** (🔗 Clustering → *Clusterer* = Density-adaptive, default).
-  The legacy "adaptive" DBSCAN built a per-point range-scaled eps then collapsed it to a
-  single median, so `eps0`/`eps_k` only nudged one number — and the range→eps law is
-  *inverted* for the fused cloud (far-from-south is dense-near-north). The density path
-  splits the cloud into range tiers and sets `eps = eps_scale × measured k-NN spacing`
-  **per tier**, easing `min_samples` for sparse tiers. It yields far fewer, cleaner
-  clusters (≈62 vs 170, ≈2% vs 12% noise) — but on the **detection ablation it is
-  metrically neutral** (F1 within noise of global; see table). Kept as the default because
-  it's better-principled and cleaner for the detection-stage work to come; global is
-  retained for A/B.
-- **Statistical outlier removal** (🧽 Denoise, default **off**). A post-subtraction SOR
-  pass drops isolated points whose mean k-NN distance is an outlier (`sor_k`, `sor_std`).
-  The point-level proxy made it look like a free precision win, but the **detection
-  ablation shows it is a pure precision↔recall dial** — it raises precision by removing
-  real on-object points, costing mid-field (20-40 m) recall. Default off because wrong-way
-  detection is recall-critical.
-- **5×5 coarse stage toggle** (⚙️ Misc). The blunt macro-grid background stage can now be
-  disabled to A/B whether it adds anything over the fine voxel mask.
-
-**Ablation (registered/full, shared scorable GT, ROI on, all classes, identical detector):**
-
-| BG-filter variant | Precision | Recall | F1 | R@0-20 | R@20-40 | R@40-60 |
-|---|---|---|---|---|---|---|
-| Global clusterer (baseline) | 28.3 | **65.2** | 39.5 | 52.3 | 80.8 | 50.5 |
-| Density clusterer | 27.0 | 65.9 | 38.3 | 53.0 | 81.7 | 50.9 |
-| Global + SOR (std 2.0) | 35.6 | 49.2 | 41.3 | 47.0 | 52.2 | 46.3 |
-| Density + SOR (std 2.0) | **36.3** | 51.9 | **42.7** | 49.1 | 54.2 | 49.9 |
-| Global + SOR (std 3.0) | 30.2 | 58.5 | 39.9 | 50.2 | 70.0 | 47.4 |
-
-Findings: (1) the **clusterer choice is metrically neutral** — cleaner clusters don't move
-detection F1; (2) **SOR trades recall for precision monotonically** (F1 stays ≈39-43 across
-the range) rather than adding net quality. The real bottleneck is the very low precision
-(~28%, FP-dominated), which is a **detection-stage** problem, not a denoising one — the next
-optimization target. A negative/ablation result, but a useful one for the paper.
-- **📈 Run tracker — "is it getting better?"** Scores the *current* model+config over a
-  frame sample with the foreground-quality proxy and **logs each run** to
-  `outputs/run_history/<sensor>_<source>.jsonl`. The panel shows current-vs-previous
-  **deltas** (covered %, on-object recall, off-object FG — with green/red arrows), a
-  **trend line** across runs, and a **"changed since last run"** parameter diff — so you
-  can see immediately whether a tuning change actually helped instead of trying to
-  remember last run's numbers (`run_history.py`).
-
-## Running
-
-```bash
-# From this folder, with your Python environment active (see requirements.txt:
-# shapely 2.x, scipy, scikit-learn, open3d, streamlit, plotly, pydeck, pandas, matplotlib,
-# pyproj (georeferencing), imageio + imageio-ffmpeg for MP4 export):
-streamlit run Home.py
-```
-
-> **HD-map / georeferencing data (optional):** the Visualizer's HD-map overlay and the
-> exact lat/lon features read the active dataset's `<dataset>/map/lane_samples.json` (e.g.
-> `datasets/A9_r02_s02/map/`) — extract it from the dev-kit's `src/map/map.zip` and drop it
-> there (it's gitignored; everything degrades gracefully without it).
-
-### End-to-end workflow
-0. **Dataset Prep** (first run / from scratch) → Crop to road, Registration, and
-   Scorable GT regenerate everything under `data/derived/` from `data/raw/`.
-1. **Background Filtering** → pick the **Sensor** + **Input cloud**, then *Build
-   Background Model* with **"Save filtered foreground points (PCD)" checked**. Writes
-   `outputs/background/background_filtering/<sensor>/<crop>/`. ⚠️ The live viewer filters
-   on the fly; only **Build** writes the files detection reads. Re-run when you change a
-   filter setting.
-2. **Object Detection and Tracking** → *Start Detection* (keep the same Sensor/Input).
-   Reads the filtered clouds, writes tracks → `outputs/detection/object_detection/<sensor>/<crop>/tracks.csv`, runs WWD.
-   The 3D view has toggleable overlays — ⚪ point cloud, 🟠 foreground (the filtered cloud
-   the detector ran on), 🔴 objects/tracks, 🏷️ GT boxes, **❌ Missed GT** (undetected
-   objects, red) — and a per-frame coverage caption (`GT: N · X/N detected · ❌ missed`).
-   Parameter groups and the folder paths collapse into expanders to keep the page tidy.
-3. **Evaluation** → *Run Evaluation* (keep **Restrict to ROI** on for the fair number).
-   Re-run Detection after switching sensor — eval scores the in-memory run and warns on
-   a mismatch. Use the **Visual Evaluation** panel to step through frames.
-4. **Lane Editor** → calibrate/adjust lanes, **Save to config**.
-
-> Note: refreshing the browser resets all Streamlit sliders to their defaults,
-> so a run after a refresh uses default parameters. For reproducible numbers,
-> record the settings you used (especially the eval **match-distance gate**).
-
-## Project layout
-
-| File | Purpose |
-|------|---------|
-| `Home.py` | Landing page — dataset-aware **pipeline stepper** + grouped tool cards + active dataset |
-| `nav.py` | Shared nav: collapsible sidebar, tool/sub-tab definitions, `render_stepper`, per-tool completion |
-| `pages/0_Datasets.py` | Select active dataset / add your own; per-dataset workspace |
-| `pages/1_Dataset_Prep.py` | Crop to road, scorable GT, **Geometry Editor**, **Registration** (4 tabs) |
-| `pages/2_Background_Filtering.py` | Background model build + foreground 3D inspector |
-| `pages/3_Object_Detection_and_Tracking.py` | Detection, tracking, **WWD**, viewer + GIF |
-| `pages/4_Evaluation.py` | Metrics + **visual GT-vs-detection** comparison |
-| `pages/5_Lane_Editor.py` | Build/adjust lane geometry, export `lanes.geojson` |
-| `pages/6_WWD_Simulator.py` | Synthetic wrong-way driver + **V2X dashboard** broadcast |
-| `pages/7_Visualizer.py` | Camera overlays + **3D LiDAR labels** (dev-kit replacement) |
-| `dataset_prep.py` | Crop + scorable-GT generation, BEV previews |
-| `registration.py` | South+north LiDAR fusion (calibration read + ICP refine + manifest) |
-| `geometry_editor.py` | Load/save/reset site geometry + editor preview figure |
-| `dataset_manager.py` | Dataset registry, active-dataset, per-dataset + per-sensor/source path resolution |
-| `bg_filter_core.py` | Background modelling + filtering (GT-less z-band fallback) |
-| `detection_logic.py` | Candidate extraction (adaptive eps), Kalman tracker, association |
-| `wwd_detection.py` | **Wrong-way logic** (velocity vs. lane direction) |
-| `evaluation.py` | CLEAR-MOT metrics + BEV figures + class/ROI filters |
-| `geometry_config.py` | Loads the active dataset's scene geometry + point-in-polygon |
-| `lane_tools.py` | Lane Editor helpers (auto-cluster, **drawable polygons**, **direction-line heading fit** `path_heading`, **true-cardinal colours/compass**, geojson round-trip, 3D + draw previews) |
-| `visualization.py` | 3D interactive view + matplotlib GIF (cardinal arrows) |
-| `label_projection.py` | OpenLABEL boxes/point-cloud → camera image (calibration from JSON) |
-| `lidar_viewer.py` | 3D LiDAR scan + GT boxes + HD-map overlay (oblique view) via Plotly |
-| `geo_reference.py` | Georeferencing: sensor↔WGS84 (true bearings, lat/lon) + HD-map road network (dev-kit transform) |
-| `datasets/<id>/map/lane_samples.json` | Per-dataset HD-map road network (from dev-kit `src/map/map.zip`; gitignored — resolved via `dataset_manager`) |
-| `viewer_ui.py` | Shared compact viewer controls (one-line nav + bulk overlay toggles) |
-| `road_viewer.py` | Camera browsing + side-by-side video helpers |
-| `wwd_simulator.py` | Synthetic wrong-way track + V2X dashboard integration (georef-aware lane names, editor-matched lane colours, `default_scenario_index`) |
-| `datasets/<id>/config/site_geometry.json` | Per-dataset scene geometry (research/road/exclusion) |
-| `datasets/<id>/config/lanes.geojson` | Per-dataset **lane directions for WWD** |
-| `datasets/<id>/config/georef.json` | Per-dataset **georeference** (site name + map→base / base→cloud transforms) |
-| `datasets/<id>/config/defaults/` | Factory snapshot of geometry + lanes for **reset-to-default** |
-| `datasets/<id>/derived/` | Regenerated derived data (cropped clouds, scorable GT, registered) |
+### End-to-end workflow (regenerating a dataset from scratch)
+1. **Dataset Prep** → Registration (optional) → Geometry Editor → Crop to road → Scorable GT.
+2. **Background Filtering** → pick Sensor + Input cloud → *Build Background Model*
+   (with "Save filtered foreground points" checked).
+3. **Detection & Tracking** → *Start Detection* (same Sensor/Input) → writes `tracks.csv`.
+4. **Evaluation** → *Run Evaluation* (Restrict to ROI on for the fair number).
+5. **Lane Editor** → calibrate lanes → Save, so WWD has a reference direction per lane.
 
 ---
 
-## How wrong-way detection works
+## Current benchmark
 
-The bounding-box yaw from PCA is 180°-ambiguous, so it can't distinguish
-wrong-way from right-way. Instead WWD uses the **Kalman velocity** direction
-(`atan2(vy, vx)`) and compares it to the **expected heading** of the lane the
-vehicle is in (the active dataset's `config/lanes.geojson`). A track is flagged only when, for a
-sustained run of frames, it is fast enough, points far enough against the lane,
-travels far enough, **and** holds a steady heading — with the **intersection
-interior exempted** (where lane boxes overlap and turning is legal). This is what
-prevents turning vehicles at the junction from being mis-flagged.
+*(Registered/cropped, gated matcher, exclusion zones, ROI on, 2.0 m BEV match gate —
+tuned 2026-07-04.)*
 
-WWD parameters live on the Detection page: *Angle vs. flow*, *Min speed*,
-*Sustained frames*, *Min displacement*, *Exempt junction turns*, *Min heading
-steadiness*.
-
-### Visualization
-- Object markers and their heading **arrows are colour-coded by cardinal direction**.
-  The **Detection view** uses the sensor-frame palette (E blue · N cyan · W purple · S
-  pink); stationary/undefined = grey. *(The **Lane Editor** and **WWD Simulator** use a
-  separate **georeferenced true-compass** palette — N green · E red · S orange · W blue —
-  matching each other.)*
-- Wrong-way vehicles show an **orange diamond + "WRONG WAY"** label.
-- Lane boxes + expected-direction arrows can be overlaid (toggle on the page).
-
----
-
-## Calibrating lane geometry (Lane Editor — page 5)
-
-Each dataset's `config/lanes.geojson` defines, per road region (an axis box **or an
-arbitrary drawn polygon**), the **expected legal direction of travel** (degrees, math
-convention: `0=+X`, `90=+Y`, `180/-180=-X`, `-90=-Y`, i.e. `atan2(vy,vx)` in the sensor
-frame). The file is **currently calibrated** (eastbound / westbound / northbound /
-southbound). To recalibrate or retarget:
-
-1. Run a detection first (produces `outputs/detection/object_detection/<sensor>/<crop>/tracks.csv`).
-2. Open the **Lane Editor**. Start from **✨ Auto-generate** (cluster the observed traffic
-   into N directions → starter boxes), **📂 Load saved**, or **➕ Add lane**.
-3. **Shape** each lane and **set its direction**, watching the live preview (colour points
-   by *Cardinal* / *Lane membership* / *Heading*; toggle the point-cloud backdrop and the
-   **🗺️ Intersection HD-map** overlay; pan/scroll-zoom):
-   - The **Direction dropdown** (Eastbound / Westbound / Northbound / Southbound) snaps the
-     heading + name + colour to a compass cardinal; the numeric **Heading°** field
-     fine-tunes it (the two stay in sync); the **X/Y** fields size a box lane.
-   - **✏️ Draw** mode (a flat top-down view of the *same* scene) offers **🟦 Lane shape**
-     (lasso/box a polygon) and **➡️ Direction line** — drag a stroke along the lane and its
-     bearing becomes the heading (fit through **all** the drawn points, so it follows
-     bends). This is the most accurate way to set a heading and works even for **turn-only
-     lanes** with no straight-through traffic to measure.
-   - With a georeference, **🧭 True cardinals** colours/names lanes by **real compass
-     direction** and shows a compass rose.
-4. **💾 Save** (overwrites the active dataset's `config/lanes.geojson`); optionally **📌 Set
-   as new default**.
-5. **Validate:** re-run on normal traffic → expect zero wrong-way flags; run a known
-   wrong-way clip → expect it flagged. Tune the WWD sliders.
-
-> **Cardinals are georeferenced.** With a georeference present, the lane names and colours
-> reflect **true compass directions** — and the **WWD Simulator** and **V2X Dashboard** use
-> the same naming + palette, so the three read identically. WWD correctness depends only on
-> relative direction, so the names are cosmetic, but they now match the real map. Without a
-> georeference the editor falls back to the sensor axes (`+X`≈East, `+Y`≈North).
-
----
-
-## Evaluation notes
-
-- GT is read from OpenLABEL `.json` cuboids and aligned to detection frames by
-  the leading `<timestamp1>_<timestamp2>` filename token.
-- **Restrict to processed region (ROI)** (on by default): only scores GT inside
-  the area the detector actually processes (research polygon ∩ `|y| ≤ roi_abs_y`).
-  Objects outside the sensor's operational region aren't counted as misses — this
-  is the fair number. (Many GT objects sit beyond x=45 / |y|>40, where the system
-  never looks.)
-- **Vehicles only**: scores only CAR/TRUCK/VAN/BUS/TRAILER/MOTORCYCLE. Note this
-  currently *lowers* precision, because the detector emits boxes that match
-  pedestrians/bicycles (it does not yet classify), so excluding those classes
-  turns matches into false positives.
-- **Match-distance gate** strongly affects the numbers — always report it.
-- **Visual Evaluation** panel: step frame-by-frame, GT (left) vs detections
-  (right) in identical axes; toggle separate/overlay views, point-cloud backdrop,
-  and "show missed (red)" to see false negatives.
-
-### Registered vs South — A/B benchmark (Evaluation → 2nd tab)
-A controlled measurement of whether fusion actually helps: runs the **same** detection
-on the **south** and **registered** filtered clouds and scores both, reporting overall
-P/R/F1/MOTA **and per-distance-bin recall** (`evaluation.recall_by_distance`) — the
-direct test of the "fusion fills occlusion shadows → better far recall" hypothesis.
-- **Shared objective GT (recommended).** Grade BOTH pipelines against the *same*
-  registered-union GT (which includes the north-only vehicles south's GT lacks) so south
-  is fairly penalised for objects it physically can't see, and recall shares one
-  denominator. (The alternative, "each sensor's own GT", flatters south — its GT is
-  missing those objects entirely.) A **Scorable / All-raw** toggle picks the GT kind;
-  scorable (num_points recomputed on the fused cloud) is the fair bar.
-- **Result (cropped, ROI, shared scorable GT).** Fusion is a clear win near/mid-field —
-  recall **0.18 → 0.49** at 0–20 m, **0.64 → 0.77** at 20–40 m. With the original
-  `truck_merge_dist = 10 m` it *regressed* far (0.52 → 0.36): in the denser fused far-field
-  the 10 m truck-merge fused adjacent vehicles into one. Dropping it to **`5 m` (now the
-  default)** fixes that — it barely changes south (sparse far-field) but lifts registered
-  far recall **0.36 → 0.49** and **overall recall 0.531 → 0.625, F1 0.598 → 0.666**. Net,
-  on the fair shared GT, **registered now beats south**: recall **0.625 vs 0.549**, F1
-  **0.666 vs 0.643** (south keeps a precision edge, 0.78 vs 0.71). This is exactly what the
-  benchmark is for — it turned "should help" into a measured win *and* surfaced the
-  one-line tuning fix that was hiding the benefit.
-  *(Numbers in this bullet are the older pre-matching-fix figures. The full evidence base —
-  re-baselined under the corrected matcher AND the current geometry / exclusion zones — is in
-  [`RESULTS.md`](RESULTS.md); see the current values below.)*
-
-### Current baseline (registered/cropped, gated matcher, exclusion zones, ROI, 2.0 m gate)
-*(tuned 2026-07-04 — a hyperparameter sweep across detection/tracking AND background-filtering
-settings; full tables in [`RESULTS.md`](RESULTS.md) §8)*
 | classes | Precision | Recall | F1 | MOTP |
 |---|---|---|---|---|
 | vehicles only | 0.724 | 0.752 | 0.738 | ~1.25 m |
 | all classes | 0.746 | 0.740 | 0.743 | ~1.22 m |
 
-That's **+2.7 F1 points** over the prior baseline (0.711 veh-only), with tighter localization
-(MOTP improved) and a negligible ID-switch cost — from real tuning (`strong_pts` 100→50,
-`truck_merge_dist` 5→3.5, `yaw_merge_deg` 15→10, `truck_len_thresh` 7→8, `bg_ratio` 0.98→0.85,
-`cell_ratio` 0.90→0.75), not from loosening the match gate (still 2.0 m, verified fair —
-see §8a in `RESULTS.md` for why a looser gate inflates F1 without a real improvement).
+Fusion (Registered vs South) is a clear recall win, concentrated near/mid-field.
+Cropping to the road polygon is the single biggest lever in the pipeline (off-road
+clutter dominates false positives on the full/raw cloud).
 
-> **Not yet re-verified: the A/B-vs-south comparison below.** It still reflects the
-> *pre-2026-07-04-tuning* hyperparameters on both sides. The qualitative conclusion (fusion
-> wins recall/F1, south keeps a precision edge) is very likely still true, but the exact
-> numbers should be re-run under the new defaults before being cited as current.
-
-**A/B vs south (shared registered-union GT, veh-only, pre-tuning settings): registered wins
-recall and F1 — recall 0.737 vs 0.564, F1 0.711 vs 0.653** (south keeps a precision edge,
-0.777 vs 0.687). Fusion's payoff is **+17 pts of recall** (vehicles a single sensor can't
-see), which is what matters for not missing a wrong-way driver. **Per-distance-bin recall
-(shared GT, veh-only):** 0–20 m 0.191→0.579 (+38.8 pt), 20–40 m 0.628→0.828 (+20.0 pt),
-40–60 m 0.572→0.609 (+3.7 pt) — fusion's win is concentrated near/mid-field, confirmed
-winning at all three bins including far. (Detection is deterministic: identical settings
-→ identical results.)
-
-> **On these numbers vs. earlier versions of this doc.** The baseline/A/B figures above
-> were re-run live (not pulled from an old ablation doc) and are measurably better than
-> earlier-cited numbers for the same scenario (e.g. baseline F1 was previously quoted as
-> ≈0.67–0.70; recall in particular is now ~8–10 pts higher). That's real drift from
-> parameter tuning done since those figures were first written down, not a
-> methodology change — a reminder that any number in this file can go stale as the
-> detector keeps improving. Treat numbers without a re-verification date as
-> **directionally trustworthy but not exact** unless re-checked against a live run.
-
-> **Evaluator matching fix (applied throughout).** The Hungarian matcher applied the distance
-> gate *after* the global assignment; in dense scenes that stranded genuinely-close
-> detection/GT pairs, scoring a real in-box detection as *both* a miss and a false positive.
-> Fixed (gate before assigning), which raised absolute F1 ≈ 4 pts. All numbers in `RESULTS.md`
-> and the baseline above use the fixed matcher.
-
-> **Full ablation tables → [`RESULTS.md`](RESULTS.md)** — the paper-ready evidence base
-> (registration A/B, BG-filter ablation, cropped≫full, static-suppression, and the
-> precision Pareto analysis below).
-
-### Static-phantom suppression (detection FP analysis)
-
-An earlier false-positive breakdown on registered/cropped reported **~70 % of FPs**
-coming from tracks that persist ≥ 20 frames (static-leak phantoms — barriers/poles the
-occupancy background model can't remove because they're geometrically identical to a
-parked car, but never move). **Re-tested 2026-07-03 against the current pipeline: this
-figure no longer reproduces.** Under today's settings, only ~5.6 % of false positives
-match that signature. The mechanism: **exclusion zones** (drawn in the Geometry Editor
-over the fixed poles/barriers, at zero recall cost) now remove most static phantoms
-*before* tracking even sees them — they didn't exist when the original ~70 % figure was
-measured. `suppress_static` was the original fix for this leak; now it only mops up
-whatever the zones miss, so its own measured contribution shrank accordingly. Two things
-still hold, one measured fresh, one now much smaller than originally reported:
-
-- **Detection on CROPPED clouds ≫ FULL — still true, and bigger than previously stated.**
-  Off-road clutter dominates FPs on the uncropped cloud: **F1 0.711 (cropped) vs. 0.462
-  (full)**, veh-only, registered — a ~25-point gap, and **846 FPs (cropped) vs. 3,620 FPs
-  (full) — a 76.6 % reduction** from cropping alone. This remains the single biggest lever
-  in the pipeline; use cropped clouds for detection.
-- **Track motion gate** (`suppress_static`, default on): drop tracks that **both** persist
-  ≥ `static_min_frames` (30) **and** never exceed `static_max_speed` (0.5 m/s, lifetime
-  max). Re-measured fresh (registered/cropped, veh-only, ROI, own scorable GT):
-
-  | input | suppress | P | R | F1 | FP |
-  |---|---|---|---|---|---|
-  | registered/cropped | off | 0.674 | 0.737 | 0.704 | 896 |
-  | registered/cropped | **on** | **0.687** | 0.737 | **0.711** | **846** |
-
-  A real but now **small** win (+0.7 F1, −5.6 % FP, no recall cost) — not the +5 F1/−30 %
-  FP this section previously claimed. Kept on by default (it's free — no recall cost — and
-  still catches a genuine failure mode), but it's no longer the load-bearing fix it once
-  was; cropping is doing most of the work now.
-
-> **Not re-verified in this pass.** The Precision-Pareto-sweep conclusion below and the
-> BG-filter ablation table (density vs. global clusterer, SOR variants) further up this
-> doc were **not** re-run for this update — both require multiple full
-> background-model + detection + eval cycles per row, out of scope for a quick
-> verification pass. Given the baseline itself moved substantially (precision 52%→69%
-> since the Pareto sweep was last run — see the box above), **the Pareto conclusion
-> ("no lever beats the baseline") is not confirmed at today's baseline** and should be
-> re-swept before citing it as current. Treat the paragraph below as historical.
-
-**Precision was Pareto-capped, at an earlier baseline.** With static-suppression on, the
-registered/cropped baseline *at the time* was **P 52.4 / R 60.8 / F1 56.3** (today's
-re-verified baseline is P 0.687 — see above). Every remaining precision lever was swept —
-`min_cluster_pts` (flat and range-aware), `min_hits`, `merge_dist`, static aggressiveness,
-and an NMS duplicate-suppression pass — and **all were pure precision↔recall trades; none
-beat the baseline F1** (full table in [`RESULTS.md`](RESULTS.md)) *at that baseline*. The
-leftover FPs were tiny clusters (median 5 pts) in the mid-field, irreducibly ambiguous
-against real sparse vehicles; near-duplicates within ≤2.5 m were already merged by the
-tracker. Whether this conclusion still holds at today's higher baseline is an open
-question — worth re-sweeping rather than assuming.
+> The full sweep tables, the A/B fusion benchmark, and the static-phantom FP
+> analysis behind these numbers live in a local `RESULTS.md` working document
+> (git-ignored — a lab notebook, not shipped with the repo).
 
 ---
 
-## Changelog (highlights since the pipeline came together)
+## Project layout
 
-**Lane calibration + WWD Simulator polish (latest)**
-- **Draw-the-direction lane calibration.** The Lane Editor's flat **✏️ Draw** canvas now
-  renders the *same* scene as the 3D preview (point-cloud backdrop + HD-map roads + lane
-  arrows) and offers two tools: **🟦 Lane shape** (lasso/box a lane polygon) and **➡️
-  Direction line** — drag a stroke *along* a lane (first point = "from", last = "to") and
-  its bearing becomes the lane heading. The direction is fit by least-squares through
-  **all** the drawn points (`lane_tools.path_heading`), so a bending road is traced exactly
-  and hand-wobble is averaged out; the travel sign comes from the draw order. (This
-  replaced an earlier, less reliable "set the heading from the vehicles in the lane"
-  attempt — the tracked per-frame heading is too noisy on this data.)
-- **Lanes are travel directions.** Each lane has a **Direction dropdown** (Eastbound /
-  Westbound / Northbound / Southbound) that snaps its heading + name + colour to a compass
-  cardinal, alongside the numeric **Heading°** field (fine-tune; the two stay in sync) and
-  the X/Y box fields. Arbitrary drawn **polygons** are supported end-to-end (`lane_ring`,
-  point-in-polygon lane assignment, geojson round-trip).
-- **True (georeferenced) cardinals + compass rose.** With a georeference, the editor
-  colours/names lanes by **real compass direction** and draws a mini compass rose; a **🧭
-  True cardinals** toggle governs the frame everywhere (dropdown, names, colours, compass).
-  **E/W mirror fix:** the georeference's east/west was mirrored vs reality (the first-frame
-  truck heads sensor +X, which the georef called "West" but really drives **East** toward
-  the Jägerhof) — corrected by a reflection across N–S (`true_cardinal_buckets`), so
-  cardinals now match the map.
-- **WWD Simulator ↔ Lane Editor parity.** The simulator now (a) draws lanes in the **same
-  true-compass palette** as the editor (N green / E red / S orange / W blue) in **both** the
-  3D scene and the BEV, (b) shows a **colour-matched heading arrow per lane** in the 3D
-  scene, (c) uses **georeference-aware lane names** (`cardinal_name`) so a lane called
-  "Northbound" reads "legal direction: North" (not the old sensor-frame "South"), and (d)
-  carries a **georeferenced true-North compass** in the viewer.
-- **Registered cloud by default + denser view.** The simulator scene now renders the
-  **registered/cropped** fused cloud + its labels (was south/cropped) in the same south
-  frame; **Points shown** defaults to **50k** and reaches **"All"** (~80–83k, the full fused
-  cloud).
-- **Default scenario = East-bound in a Westbound lane** (legal direction West), the
-  canonical wrong-way case, pre-selected in **both** the WWD Simulator and the V2X Dashboard
-  (`default_scenario_index`); the V2X page still honours a scenario handed over from the
-  simulator.
+| File | Purpose |
+|------|---------|
+| `Home.py` | Landing page — pipeline stepper + tool cards |
+| `nav.py` | Shared sidebar/nav, tool definitions, per-tool completion |
+| `pages/0_Datasets.py` | Select/add a dataset |
+| `pages/1_Dataset_Prep.py` | Registration, Geometry Editor, Crop to road, Scorable GT (4 tabs) |
+| `pages/2_Background_Filtering.py` | Background model build + foreground 3D inspector |
+| `pages/3_Object_Detection_and_Tracking.py` | Detection, tracking, WWD, viewer |
+| `pages/4_Evaluation.py` | Metrics + visual GT-vs-detection + A/B benchmark |
+| `pages/5_Lane_Editor.py` | Build/adjust lane geometry |
+| `pages/6_WWD_Simulator.py` | Synthetic wrong-way driver + embedded V2X broadcast |
+| `pages/7_Visualizer.py` | Camera + 3D LiDAR viewers, real-intersection map |
+| `pages/8_V2X_Dashboard.py` | Standalone V2X alert dashboard |
+| `dataset_manager.py` | Dataset registry + per-dataset/sensor/source path resolution |
+| `geometry_config.py` / `geometry_editor.py` | Scene geometry: load/save + point-in-polygon helpers |
+| `bg_filter_core.py` | Background modelling + filtering |
+| `detection_logic.py` | Clustering, Kalman tracker, association, `DEFAULT_DETECTION_PARAMS` |
+| `wwd_detection.py` | Wrong-way logic (velocity vs. lane direction) |
+| `evaluation.py` | CLEAR-MOT metrics, BEV figures, class/ROI filters |
+| `registration.py` | South+north LiDAR fusion (calibration + ICP + fused GT) |
+| `lane_tools.py` | Lane Editor helpers (auto-cluster, drawable polygons, heading fit) |
+| `geo_reference.py` | Georeferencing: sensor↔WGS84, true bearings, HD-map road network |
+| `wwd_simulator.py` | Synthetic wrong-way track + V2X dashboard integration |
+| `run_history.py` | Persistent tuning-run history (`outputs/run_history/`) |
+| `visualization.py` / `lidar_viewer.py` / `label_projection.py` | 3D/camera rendering helpers |
+| `viewer_ui.py` / `road_viewer.py` | Shared viewer controls + video helpers |
+| `dataset_prep.py` | Crop + scorable-GT generation, BEV previews |
 
-**Home / navigation refresh**
-- **Collapsible sidebar** (`nav.py` + `.streamlit/config.toml` `showSidebarNavigation = false`):
-  Home at top, then expandable sections — **Data & setup**, **Detection pipeline**,
-  **Wrong-way driving** — replacing Streamlit's flat page list. Every page calls
-  `nav.render_sidebar()`; tool definitions live in one place (`nav.SECTIONS`).
-- **Dataset-aware pipeline stepper** on Home: a compact pill-and-arrow flow
-  (`nav.render_stepper`) that reads the active dataset's artifacts and marks each
-  stage **Done / Next / To-do**, with a "next step" jump button. Section cards below
-  list each tool's in-page tabs.
-- **Dataset Prep prep stepper**: the four tabs are reordered to the recommended
-  sequence (**Registration** *(optional)* → **Geometry Editor** → **Crop to road** →
-  **Scorable GT**) with their own stepper showing what's already done.
+---
 
-**Georeferencing + HD-map digital twin**
-- The dataset is the **real TUMTraf s110 intersection** (Schleißheimer Str. (B471) ×
-  Zeppelinstr., Garching-Hochbrück, Munich). `geo_reference.py` composes the OpenLABEL
-  + HD-map chain to convert sensor coordinates to **exact WGS84 lat/lon** and **true
-  compass bearings** (UTM 32N via `pyproj`; anchor from the HD map's `geoReference`/
-  `origin`).
-- **HD-map road network** (`datasets/<id>/map/lane_samples.json` from the dev-kit's `src/map/map.zip`)
-  is rendered in the **Visualizer 3D tab** on top of the point cloud + class-coloured
-  boxes — the dev-kit "digital twin," in one oblique z-up view.
-- **Alignment fix:** the HD-map→cloud transform is copied **verbatim from the dev-kit**
-  (`hd_map.py` map→`s110_base`, then `visualize_point_cloud_with_3d_boxes`'s 77.8°
-  rotation + translation `s110_base`→cloud) — reverse-engineering it via OpenLABEL
-  extrinsics produced a ~180° flip; the dev-kit's own recipe lands the lanes exactly.
-- **WWD Simulator** gained a live georeferenced map (satellite + HD-map + driver) and a
-  true-bearing, lat/lon-tagged V2X broadcast. Requires `pyproj` (added to requirements).
-- **🛰️ Real intersection tab** in the Visualizer — an interactive Google Maps embed of the
-  exact junction (pan/zoom/Street View, click the Jägerhof) so you can confirm it's a real,
-  findable place.
-- **Per-dataset georef (multi-dataset-ready):** the site name + the two transforms live in
-  **`<dataset>/config/georef.json`** (read via `dataset_manager`, merged over built-in
-  defaults), and the HD map in **`<dataset>/map/lane_samples.json`** — so a new site retargets
-  the whole georef/HD-map/maps stack by shipping those two files, with **no code changes**.
-  Datasets without them fall back gracefully to the non-georeferenced views.
+## Known limitations / next steps
 
-**Core detection / WWD**
-- **WWD** implemented (Kalman velocity vs. lane direction) with junction
-  exemption + heading-steadiness so turning vehicles aren't mis-flagged.
-- **Quantitative evaluation** (P/R/F1, MOTA/MOTP/ID-switches) + **visual
-  GT-vs-detection** comparison; **class** and **ROI** filters; the **settings
-  used** are written into `evaluation_report.json` and shown in-app.
-- **Lane Editor** (auto-cluster from `tracks.csv`, editable table, live 3D
-  preview, export). **Cardinal-direction colour encoding** for markers/arrows.
-- **Range-adaptive DBSCAN eps** (`eps = eps0 + eps_k·range`, clipped) — better on
-  both precision and recall for near/dense vs far/sparse objects. Optional
-  **vehicle class gate**.
-- Recall bug-fixes: pole filter no longer deletes dense **trucks**
-  (`pole_max_points`); fast dense clusters bypass temporal confirmation
-  (`strong_pts`).
-- **Static-phantom suppression** (`suppress_static`, default on) — drops tracks that
-  both persist and never move (the static-leak signature); FP analysis showed ~70 % of
-  registered FPs came from these. **registered/cropped F1 51.1 → 56.2**. See the
-  *Static-phantom suppression* section.
-- **Cross-sensor GT dedup** now IoU-aware (`fuse_labels`, `dedup_iou`) — kills the
-  residual-displaced south/north "twin" boxes (phantom FNs + red twins).
-- **Evaluator matching fix** — gate the Hungarian assignment *before* solving (was gated
-  after), so dense scenes stop stranding close detection/GT pairs as miss+FP. Raised
-  absolute F1 ≈ 4 pts (both P and R). All pre-fix numbers understate F1.
-- **Lowered `strong_pts` 200→100** (auto-accept dense clusters) — recovers near-field dense
-  movers that failed temporal confirmation; clean Pareto gain (recall up, precision flat).
-- **Persistent eval history** — every evaluation (single + A/B) appends settings+metrics to
-  `outputs/run_history/`, with current-vs-previous deltas + trend (reuses `run_history.py`).
-- **Density-adaptive background clustering** + **SOR denoise** (off by default) + **📈 run
-  tracker** on Background Filtering; a measured ablation showed the BG-occupancy knobs are
-  near their ceiling (the win was structural — fusion, cropping, static-suppression).
-- **Sensor-split (S/N) view** on Background Filtering and an **off-object (yellow)
-  foreground overlay** in the Geometry Editor for placing crop / exclusion zones.
+Full detail and measured evidence for each of these lives in the local
+`RESULTS.md` working notebook mentioned above. Headline items:
+- **A learned detector** — the clustering pipeline is at its measured precision
+  ceiling; candidates include PointPillars, SECOND, CenterPoint, PV-RCNN, or
+  InfraDet3D (purpose-built for roadside infrastructure LiDAR).
+- **Validate beyond this one site** — every number here comes from a single
+  282-frame clip at one intersection. The pipeline is dataset-aware and
+  georeference-agnostic by design; the next real test is a second intersection.
+- **Tracker association tuning** to reduce ID-switches further (gate/noise terms
+  were never swept).
+- **A real hardware pipeline** — move the V2X broadcast from simulation to an
+  actual RSU/OBU exchanging real C-V2X/J2735 TIM messages.
 
-**Datasets**
-- **Multi-dataset workspaces** (`datasets/<id>/`): switch the active dataset or
-  add your own (point at a PCD folder); per-dataset config/model/outputs; starter
-  site-geometry auto-derived from data; **GT-less datasets still filter** (z-band
-  derived from the point cloud). The whole pipeline is dataset-aware.
-
-**Dataset Prep + editable geometry**
-- **Dataset Prep** page (4 tabs): recreate derived data in-app — **crop to road**
-  (per source), **scorable GT** (transparent visible-only GT with editable
-  keep/drop criteria), a **Geometry Editor**, and **Registration** (south+north fusion).
-- **Editable scene geometry that propagates everywhere**: edit research / road /
-  exclusion regions with +/- steppers + live preview; saving updates filtering,
-  cropping, scorable GT, ROI eval, and the road outline (cached by file mtime).
-- **Reset-to-default** for each geometry component and for the lanes, backed by a
-  per-dataset `config/defaults/` snapshot (tracked in git).
-- **Cropped vs full A/B pipeline**: shared *Input cloud* toggle across
-  Filtering / Detection / Evaluation, each source writing to its own
-  `…`/`…_full` folders so metrics can be compared.
-
-**Inspection & 3D-visualization tooling**
-- **Background Filtering 3D inspector**: persistent foreground/original layer toggles;
-  road / ROI / exclusion geometry overlays; per-frame **GT boxes** (category-coloured
-  + labels); a live **FG-quality** proxy metric; **height colouring** (Turbo) with a
-  tunable span; and a **persistent camera** (zoom/rotate/tilt sliders, since Streamlit
-  won't preserve the Plotly 3D camera). Full/uncropped view clipped to the road window
-  so it isn't flattened by the raw extent.
-- **Geometry Editor live tooling**: draw-box / nudge / vertex-label editing; overlay
-  the BG-filter foreground + GT; and a **what-if FG-quality metric** that applies the
-  *unsaved* geometry (cropped-out points grey out and leave the metric) so you tune
-  exclusions before saving.
-- **Dev-kit-style height colouring** available across the Dataset-Prep 2D previews and
-  the Object-Detection 3D viewer too.
-
-**Visualization (V2X + dev-kit replacement)**
-- **WWD Simulator** + embedded **V2X dashboard**: a synthetic wrong-way driver
-  runs through the real detector and auto-fires the dashboard's TIM/C-V2X messaging
-  on detection.
-- **Visualizer** page reproduces the TUM Traffic dev-kit's label visualizations
-  natively (calibration read from the OpenLABEL JSON): camera box / point-cloud
-  overlays with track-history trails + video, and a 3D LiDAR BEV/Side view.
-- Smooth playback everywhere (`st.fragment` + cached loads).
-
-**Multi-sensor & registration**
-- **Point-cloud registration** (`registration.py` + Dataset Prep **🧭 Registration**
-  tab): fuse south + north, **calibration-init + coarse-to-fine point-to-plane ICP**
-  (recovers the ~8° relative yaw the bundled extrinsics miss), written in the **south
-  LiDAR frame** so it reuses the south GT / camera calibration / polygons. One viewer with
-  **Raw ↔ Registered** + **by-sensor / by-height** + **Frame (south / s110_base)** + **Crop**
-  + LiDAR markers; batch write + `registration.json` manifest; plus a **fused (union) GT**
-  (`fuse_labels`) that adds the north-only boxes the south GT misses, with each box's
-  **`num_points` recomputed on the fused cloud** so the scorable gate is honest for
-  registered (south-only counts would unfairly drop objects dense only after fusion).
-- **Frame-aware scorable-GT ROI** — the south-frame research polygon is transformed into
-  the selected source's frame (identity for south/registered, rotated for north) so the
-  kept/dropped classification lines up with that sensor's cloud.
-- **Registered-vs-South A/B benchmark** (Evaluation → 2nd tab): same detection on both
-  clouds, overall metrics + **per-distance-bin recall**, with a **shared objective GT**
-  (registered union) so south is fairly graded on the objects it can't see. Surfaced the
-  far-field over-merge (`truck_merge_dist` 10→5), after which registered beats south.
-- **Centralized detection defaults** — `detection_logic.DEFAULT_DETECTION_PARAMS` is the
-  single source of truth; the Detection page overlays its UI values on it (and now exposes
-  a **Truck merge distance** slider), the A/B uses it directly, so the two can't drift.
-- **South / North / Registered sensor toggle** shared across Background Filtering /
-  Detection / Evaluation, each combination writing to its own folder, with **auto-
-  resolved GT** per sensor. Detection/Eval **tag results with sensor/source** and warn
-  on a cross-sensor mismatch instead of a cryptic "no frames aligned" error.
-
-**UI / organization cleanup**
-- **Folder reorganization** — `data/derived/` mirrors `data/raw/`
-  (`point_clouds/{registered,cropped/<sensor>}/`, `labels/scorable/<sensor>/`), and
-  `outputs/` nests by stage (`background/…`, `detection/…`, `visualizer/…`), each by
-  `<sensor>/<crop>`. Resolved through centralized `dataset_manager` helpers.
-- **Compact, consistent viewers** (`viewer_ui.py`): one-line frame nav + collapsible
-  **🎛️ Layers & overlays** panel with **✅ All / ⬜ None**, shared by **every** preview
-  with a play/next control — Background Filtering, Detection, Visualizer, and the Dataset
-  Prep / Evaluation / WWD Simulator viewers. **Object Detection** and **Background
-  Filtering** both put all their controls on the page (no sidebar), with parameter
-  groups + folder paths in collapsible expanders and a full-width Build/Start button.
-- **Detection ↔ GT diagnostics:** Detection gains a **🏷️ GT-box overlay**, a **🟠
-  foreground overlay** (the filtered cloud it ran on), a **❌ Missed-GT overlay** (red,
-  undetected objects) and a per-frame coverage caption; Background Filtering gains the
-  matching **❌ uncovered-object** and **🟡 off-object-foreground** overlays. The
-  Visualizer adds a **Scorable vs All-raw GT** toggle with per-frame box counts.
-- **Geometry Editor + Lane Editor follow the active sensor/source** (shared `pipeline_*`
-  state) — they show the **registered/cropped cloud + that model/GT/tracks** by default,
-  not a hardcoded south/full reference (which had made the FG numbers look wrong). The
-  Geometry Editor adds a **🎯 detection overlay** (per-frame boxes + an all-frames centre
-  scatter, static detections in purple = FP/pole risk), a **🕒 Show-ALL-frames** aggregate
-  of foreground + off-object FG (so persistent clutter is visible for exclusion-zone
-  placement), a tunable **off-object box buffer**, a **📌 Set-as-new-default** button, and
-  Box-Select drawing (no Pan/Draw toggle). Its overlays + Registration's now use the same
-  collapsible **🎛️ Layers & overlays + ✅ All / ⬜ None** pattern as the rest of the app.
-- **Persistent eval history** — every evaluation (single run + A/B) appends settings +
-  metrics to `outputs/run_history/`, with current-vs-previous deltas + a trend
-  (`run_history.py`), so detection runs are comparable over time (not just the latest
-  `evaluation_report.json`).
-- **LiDAR position markers** (diamond + nadir plumb line) available on every 3D viewer,
-  frame-aware (sensor origin for south/north, calibrated position for registered).
-- Fixed the exclusion-zone legend (one dotted entry, not four fat-dashed keys).
-- **Visualizer tidy-ups:** simplified render cache/video names
-  (`rendered/south1/pcd_cat_ps2_full`, `road_south2_south1_pcd_cat.mp4`); short camera
-  names in the UI; fixed a duplicate-slider-id crash.
-- **Housekeeping:** Dataset Prep moved to the 2nd page (usage order); raw images
-  flattened to one folder per camera; dropped the unused `bb`/`bb_pcd` pre-renders, the
-  `labels_visible_south_image` GT-preview folder, and the empty detection `vis/` folder;
-  background filtering clears stale `.pcd`s before writing so a re-run can't leave orphans.
-
-## Point-cloud registration (south + north → one cloud) ✅
-
-The s110 site has **two** roadside LiDARs (ouster *south* and *north*), each cloud in
-its own sensor frame. The Dataset Prep **🧭 Registration** tab fuses them into one
-denser cloud covering the full intersection. Fusion happens via the shared `s110_base`
-frame, but the result is **written in the south LiDAR frame** — so registered is a
-drop-in superset of the south cloud: the **south GT boxes, south camera calibration,
-and road/ROI polygons all apply to it directly**. (A **Frame** toggle in the preview
-lets you view it in either the south or the neutral `s110_base` frame — same cloud,
-just renumbered.)
-
-**Key fact:** the dataset ships **per-sensor extrinsics**. Every OpenLABEL label JSON
-(south *and* north) carries the sensor→`s110_base` transform in `coordinate_systems`
-(south LiDAR at `(−2.37, 16.20, 8.62)`, north at `(−1.03, 2.56, 8.62)`, both relative to
-the common `s110_base`). The rig is static, so the 4×4 is **constant across frames**
-(verified drift = 0). These extrinsics make a good *initialization* — but they are **not
-exact**: composing them through `s110_base` aligns the **ground plane** (south/north
-ground within 7 cm) yet leaves a **systematic ~8° relative yaw + ~2 m translation** error
-between the two sensors (verified: structures only overlap once north is rotated ≈ −8°).
-So calibration alone is **not** sufficient; an ICP correction is required.
-
-**Implemented — calibration-init + ICP refinement** (`registration.py` + the Registration
-tab):
-1. **Read the extrinsics** straight from the labels (`read_sensor_to_base` /
-   `calibration_for`), with a static-rig sanity check (`calibration_is_constant`).
-2. **Nearest-timestamp pairing** (`match_frame_pairs`) — the sensors fire async, so each
-   south frame pairs with its nearest north frame (mean Δt ≈ 12 ms, max ≈ 89 ms over the
-   282-frame clip).
-3. **Fuse** both clouds via `s110_base`, then re-express in the **south LiDAR frame**
-   (`fuse_pair(..., to_frame=to_south_frame(M_south))`), tagging each point by source so
-   the preview can colour **south vs north distinctly** — the "do they line up?" QA view.
-   One cohesive viewer toggles **Raw ↔ Registered**, **by-sensor / by-height** (Turbo),
-   **Frame** (south / `s110_base`) and **Crop**, with road/ROI overlays + persistent camera.
-4. **ICP correction** (`icp_refine`, Open3D) — **coarse-to-fine** (5 → 2 → 1 → 0.5 m)
-   **point-to-plane** ICP recovers the yaw the calibration misses (a single tight pass
-   gets stuck in a local minimum). It reports **yaw / Δt / fitness / inlier RMSE**; the
-   correction is consistent frame-to-frame (yaw −7.85° to −7.90°), confirming it's a
-   static systematic error, so one correction applies to every frame. **On by default.**
-5. **Batch register** writes fused clouds → `data/derived/point_clouds/registered/` plus a
-   `registration.json` manifest (matrices + ICP delta + **output frame / frame transform**
-   + pairing stats).
-6. **Fused GT** (`fuse_labels`) — each sensor only annotates what *it* sees, so the south
-   GT alone misses the objects only north saw (~2.3 boxes/frame here). The Registration tab
-   builds a **union GT**: north boxes are transformed into the south frame and the ones
-   south didn't annotate are appended. Shared objects are **de-duplicated by centre distance
-   _or BEV-IoU overlap_** — the IoU check (`dedup_iou=0.10`) catches the same vehicle whose
-   south/north boxes are pushed apart by the residual ~8° yaw / ~2 m calibration error (up to
-   ~5 m at range, beyond the 2.5 m centre gate); without it those twins were emitted twice,
-   double-counting GT into a phantom false-negative + a confusing "red twin" in the overlay.
-   Measured 94→52 residual twins; small metric effect (it only removes a handful of scored
-   duplicates) but a real correctness/visual fix. Every box's **`num_points` is recomputed
-   against the fused cloud** (the stored counts are south-only, which would unfairly drop
-   objects sparse for south but dense once fused — ~10% of boxes at `min_points=10`), so the
-   scorable gate is honest for registered. Registered detection/eval then resolve to this
-   fused GT.
-7. **Propagates** through the **Registered (south + north)** source in the Crop-to-road
-   and Scorable-GT tabs (and the per-sensor toggles on Filtering / Detection / Evaluation /
-   Visualizer) end-to-end.
-
-**Why it matters.** A registered cloud roughly doubles intersection coverage (fills each
-sensor's occlusion shadows), improving recall on far/occluded objects and making WWD at
-the junction more reliable — and because it's in the south frame with a union GT, it slots
-straight into the existing scorable-GT + evaluation flow.
-
-## Other open follow-ups
-- **Georeference E/W at the transform level.** The cardinal *display* (compass + lane
-  colours/names in the Lane Editor and WWD Simulator) is corrected for the georef's mirrored
-  east/west, but the underlying `sensor_xy_to_latlon` **position** mapping — used to place
-  lanes on the **V2X Dashboard** map — still carries that mirror. Worth confirming, and
-  fixing at the source, if the V2X map reads east-west flipped.
-- Reduce **ID switches** further (association / `max_missed` tuning).
-- Remaining **GT leakage** for the bundled A9 dataset: the background filter still
-  uses GT cuboids to set per-region z-bands when GT is present (new datasets
-  already use the label-free fallback).
-- **Raw (uncropped) point clouds**: now selectable via the *Full (uncropped)*
-  toggle; the full clouds extend the point-cloud overlays / 3D view to distant
-  structures automatically.
+> Streamlit resets all sliders to their defaults on a browser refresh — for
+> reproducible numbers, note the settings used (especially the eval match-distance
+> gate), or check `outputs/run_history/` for the logged trend.

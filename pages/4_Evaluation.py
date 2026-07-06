@@ -84,7 +84,6 @@ def _render_single_run():
         "Evaluate the most recent detection/tracking run against ground-truth cuboids. "
         "Reports **precision / recall / F1** (detection) and **MOTA / MOTP / ID-switches** "
         "(tracking), matching predictions to GT by bird's-eye-view centre distance. "
-        "Run **Object Detection and Tracking** first — this tab reuses its results."
     )
     results = st.session_state.get('detection_results')
     if not results:
@@ -335,7 +334,7 @@ _AB_SENSORS = ["south", "registered"]
 def _render_ab():
     st.markdown(
         "Run the **same** detection on the **South** and **Registered** filtered clouds and score each "
-        "against its own scorable GT — a controlled test of whether fusion (south + north) actually "
+        "against its own scorable GT: a controlled test of whether fusion (south + north) actually "
         "improves detection, especially **recall on far / occluded objects**. Both clouds are in the "
         "south frame, so ranges-from-sensor and the ROI are directly comparable (apples-to-apples)."
     )
@@ -444,7 +443,7 @@ def _render_ab():
     st.subheader("Overall metrics")
     if state.get("shared"):
         st.caption(f"⚖️ Both scored against the **shared registered-union GT** "
-                   f"(`{res['south']['gt_dir']}`, {ss['gt_objects_total']} objects — same denominator)  ·  {cfg}")
+                   f"(`{res['south']['gt_dir']}`, {ss['gt_objects_total']} objects: same denominator)  ·  {cfg}")
     else:
         st.caption(f"South GT: `{res['south']['gt_dir']}` · Registered GT: `{res['registered']['gt_dir']}`  "
                    f"·  {cfg}")
@@ -465,7 +464,7 @@ def _render_ab():
         f"Recall {'+' if dr >= 0 else ''}{dr*100:.1f} pts on Registered vs South "
         f"({ss['recall']*100:.1f}% → {rs['recall']*100:.1f}%).")
 
-    st.subheader("Recall by distance — the occlusion-shadow test")
+    st.subheader("Recall by distance: the occlusion-shadow test")
     st.caption("Range = BEV distance from the south sensor. The fusion hypothesis predicts the biggest "
                "recall gains in the **far** bins, where south alone has occlusion shadows.")
     sb = {d["bin"]: d for d in res["south"]["rbd"]}

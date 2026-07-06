@@ -25,3 +25,6 @@ datasets/*/outputs/
 
 # Streamlit static-serving copies for the synced Videos tab (large, regenerated)
 static/
+
+# Results/ablation notes — living working doc, not meant to be tracked
+RESULTS.md
