@@ -8,7 +8,7 @@ from wwd_detection import load_lane_config
 from wwd_simulator import (wrong_way_options, default_scenario_index, make_wrong_way_track,
                            build_v2x_intersection, v2x_dashboard_html)
 
-st.set_page_config(layout="wide", page_title="V2X Dashboard")
+st.set_page_config(layout="wide", page_title="V2X Dashboard", page_icon="assets/favicon.png")
 nav.render_sidebar()
 st.title("📡 V2X Dashboard")
 
@@ -22,7 +22,7 @@ opts = wrong_way_options(lanes)
 labels = [o["label"] for o in opts]
 
 st.caption("Your V2X dashboard (`assets/index.html`), with the map re-centred on **our** intersection and "
-           "lane geometry injected in place of the built-in Houston one. Pick which lane the wrong-way "
+           "the exact scenario's lane geometry injected on load. Pick which lane the wrong-way "
            "driver runs against; the dashboard's own controls drive the rest.")
 
 # Pre-select the simulator's last broadcast lane, if one was sent over; otherwise

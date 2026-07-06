@@ -2,7 +2,7 @@ import streamlit as st
 import dataset_manager as dm
 import nav
 
-st.set_page_config(page_title="LiDAR WWD Toolkit", page_icon="🚗", layout="wide")
+st.set_page_config(page_title="LiDAR WWD Toolkit", page_icon="assets/favicon.png", layout="wide")
 nav.render_sidebar()
 
 # ---------------- Header ----------------
@@ -17,25 +17,7 @@ st.markdown(
 
 # ---------------- Active dataset banner ----------------
 _active = dm.get_active()
-_status = _active.status()
-def _status_pill(label, ok):
-    """A rounded status pill matching the pipeline stepper — green + ✓ when the
-    artifact is present, red + ✕ when it's missing."""
-    bg, bd, tx, glyph = (("#101a13", "#2c5036", "#86d6a0", "✓") if ok
-                         else ("#1a1113", "#512c31", "#d98a90", "✕"))
-    return (f"<span style='display:inline-flex;align-items:center;gap:5px;background:{bg};"
-            f"border:1px solid {bd};border-radius:999px;padding:3px 12px;font-size:.78rem;"
-            f"font-weight:600;color:{tx};white-space:nowrap'>{label}"
-            f"<span style='opacity:.85'>{glyph}</span></span>")
-
-
-_chips = "".join(_status_pill(lbl, ok) for lbl, ok in [
-    ("PCDs", _status["pcd"]),
-    ("GT", _status["gt"]),
-    ("lanes", _status["lanes"]),
-    ("model", _status["model"]),
-    ("filtered", _status["filtered"]),
-])
+_chips = nav.status_pills_html(_active.status())
 ab1, ab2 = st.columns([4, 1])
 with ab1:
     st.markdown(
@@ -69,23 +51,46 @@ st.write("")
 st.divider()
 
 # ---------------- Tool groups (one card per section, sub-tabs listed) ----------------
-for title, tools in nav.SECTIONS:
-    with st.container(border=True):
-        st.markdown(f"#### {title}")
-        cols = st.columns(len(tools))
-        for i, (page, icon, name, desc, subs) in enumerate(tools):
-            with cols[i]:
-                st.markdown(f"**{icon}&nbsp; {name}**", unsafe_allow_html=True)
-                st.caption(desc)
-                if subs:
-                    st.markdown(
-                        "".join(
-                            f"<span style='display:inline-block;background:#1b212b;border:1px solid #2a3340;"
-                            f"border-radius:6px;padding:1px 7px;margin:0 4px 4px 0;font-size:.72rem;"
-                            f"color:#9aa6b2'>{s}</span>" for s in subs
-                        ),
-                        unsafe_allow_html=True,
-                    )
-                if st.button("Open", key=f"go_{page}", use_container_width=True):
-                    st.switch_page(page)
-    st.write("")
+# Scoped CSS so every card's "Open" button sits flush at the bottom of its column,
+# regardless of how many lines the description/sub-tab chips wrap to — the columns
+# already stretch to equal height (Streamlit's row is a flex container), this just
+# turns each column into a flex column and pins the last element (the button) down.
+st.markdown(
+    """<style>
+    div.st-key-tool_cards div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] {
+        height: 100%;
+    }
+    div.st-key-tool_cards div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] >
+    div[data-testid="stVerticalBlockBorderWrapper"] > div[data-testid="stVerticalBlock"] {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    div.st-key-tool_cards div[data-testid="stColumn"] div[data-testid="stElementContainer"]:has(button) {
+        margin-top: auto;
+        padding-top: 10px;
+    }
+    </style>""",
+    unsafe_allow_html=True,
+)
+with st.container(key="tool_cards"):
+    for title, tools in nav.SECTIONS:
+        with st.container(border=True):
+            st.markdown(f"#### {title}")
+            cols = st.columns(len(tools))
+            for i, (page, icon, name, desc, subs) in enumerate(tools):
+                with cols[i]:
+                    st.markdown(f"**{icon}&nbsp; {name}**", unsafe_allow_html=True)
+                    st.caption(desc)
+                    if subs:
+                        st.markdown(
+                            "".join(
+                                f"<span style='display:inline-block;background:#1b212b;border:1px solid #2a3340;"
+                                f"border-radius:6px;padding:1px 7px;margin:0 4px 4px 0;font-size:.72rem;"
+                                f"color:#9aa6b2'>{s}</span>" for s in subs
+                            ),
+                            unsafe_allow_html=True,
+                        )
+                    if st.button("Open", key=f"go_{page}", use_container_width=True):
+                        st.switch_page(page)
+        st.write("")

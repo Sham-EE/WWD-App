@@ -15,10 +15,10 @@ import streamlit as st
 SECTIONS = [
     ("📂 Data & setup", [
         ("pages/0_Datasets.py",     "🗂️", "Datasets",      "Choose the active dataset or add your own.", []),
-        ("pages/1_Dataset_Prep.py", "🧰", "Dataset Prep",  "Register, draw road geometry, crop & make scorable GT — recreate derived data.",
+        ("pages/1_Dataset_Prep.py", "🧰", "Dataset Prep",  "Register, draw road geometry, crop & make scorable GT.",
             ["🧭 Registration", "🗺️ Geometry Editor", "✂️ Crop to road", "🏷️ Scorable GT"]),
-        ("pages/7_Visualizer.py",   "🎬", "Visualizer",    "Cameras + 3D LiDAR labels, overlays, and the real intersection.",
-            ["🎥 Road Viewer", "🧊 LiDAR 3D", "🛰️ Real intersection"]),
+        ("pages/7_Visualizer.py",   "🎬", "Visualizer",    "Cameras + 3D LiDAR labels, synced video, and the real intersection.",
+            ["🎥 Road Viewer", "🧊 LiDAR 3D", "🎬 Videos", "🛰️ Real intersection"]),
     ]),
     ("⚙️ Detection pipeline", [
         ("pages/2_Background_Filtering.py",          "🔬", "Background Filtering", "Build a background model; keep moving foreground points.", []),
@@ -92,6 +92,29 @@ _STEP_STYLE = {
     "todo":     ("#14181f", "#2a3340", "#8b97a7", ""),
     "optional": ("#1a1710", "#4a3c22", "#d2bd86", "○"),
 }
+
+
+# Dataset artifact chips (present/missing), styled like the stepper's done/todo pills.
+_STATUS_ITEMS = [("PCDs", "pcd"), ("GT", "gt"), ("lanes", "lanes"),
+                 ("model", "model"), ("filtered", "filtered")]
+
+
+def status_pills_html(status):
+    """Row of rounded pills for a dataset's status dict (from Dataset.status()) —
+    green + check when the artifact is present, red + cross when it's missing. Shared
+    by Home's active-dataset banner and the Datasets page dataset list so both match."""
+    parts = []
+    for label, key in _STATUS_ITEMS:
+        ok = bool(status.get(key))
+        bg, bd, tx, glyph = ("#101a13", "#2c5036", "#86d6a0", "✓") if ok \
+            else ("#1a1113", "#512c31", "#d98a90", "✕")
+        parts.append(
+            f"<span style='display:inline-flex;align-items:center;gap:5px;background:{bg};"
+            f"border:1px solid {bd};border-radius:999px;padding:3px 12px;font-size:.78rem;"
+            f"font-weight:600;color:{tx};white-space:nowrap'>{label}"
+            f"<span style='opacity:.85'>{glyph}</span></span>"
+        )
+    return "".join(parts)
 
 
 def render_stepper(steps):

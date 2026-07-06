@@ -451,17 +451,41 @@ direct test of the "fusion fills occlusion shadows → better far recall" hypoth
   [`RESULTS.md`](RESULTS.md); see the current values below.)*
 
 ### Current baseline (registered/cropped, gated matcher, exclusion zones, ROI, 2.0 m gate)
+*(tuned 2026-07-04 — a hyperparameter sweep across detection/tracking AND background-filtering
+settings; full tables in [`RESULTS.md`](RESULTS.md) §8)*
 | classes | Precision | Recall | F1 | MOTP |
 |---|---|---|---|---|
-| vehicles only | 0.691 | 0.654 | 0.672 | ~1.2 m |
-| all classes | 0.723 | 0.682 | 0.702 | ~1.2 m |
+| vehicles only | 0.724 | 0.752 | 0.738 | ~1.25 m |
+| all classes | 0.746 | 0.740 | 0.743 | ~1.22 m |
 
-**A/B vs south (shared scorable GT, veh-only): registered now wins both — recall
-0.654 vs 0.505 and F1 0.672 vs 0.602** (south keeps a small precision edge, 0.745 vs 0.691).
-Fusion's payoff is the **+15 pts of recall** (vehicles a single sensor can't see), which is
-what matters for not missing a wrong-way driver. Full tables + the negative/Pareto results
-in [`RESULTS.md`](RESULTS.md). (Detection is deterministic: identical settings → identical
-results.)
+That's **+2.7 F1 points** over the prior baseline (0.711 veh-only), with tighter localization
+(MOTP improved) and a negligible ID-switch cost — from real tuning (`strong_pts` 100→50,
+`truck_merge_dist` 5→3.5, `yaw_merge_deg` 15→10, `truck_len_thresh` 7→8, `bg_ratio` 0.98→0.85,
+`cell_ratio` 0.90→0.75), not from loosening the match gate (still 2.0 m, verified fair —
+see §8a in `RESULTS.md` for why a looser gate inflates F1 without a real improvement).
+
+> **Not yet re-verified: the A/B-vs-south comparison below.** It still reflects the
+> *pre-2026-07-04-tuning* hyperparameters on both sides. The qualitative conclusion (fusion
+> wins recall/F1, south keeps a precision edge) is very likely still true, but the exact
+> numbers should be re-run under the new defaults before being cited as current.
+
+**A/B vs south (shared registered-union GT, veh-only, pre-tuning settings): registered wins
+recall and F1 — recall 0.737 vs 0.564, F1 0.711 vs 0.653** (south keeps a precision edge,
+0.777 vs 0.687). Fusion's payoff is **+17 pts of recall** (vehicles a single sensor can't
+see), which is what matters for not missing a wrong-way driver. **Per-distance-bin recall
+(shared GT, veh-only):** 0–20 m 0.191→0.579 (+38.8 pt), 20–40 m 0.628→0.828 (+20.0 pt),
+40–60 m 0.572→0.609 (+3.7 pt) — fusion's win is concentrated near/mid-field, confirmed
+winning at all three bins including far. (Detection is deterministic: identical settings
+→ identical results.)
+
+> **On these numbers vs. earlier versions of this doc.** The baseline/A/B figures above
+> were re-run live (not pulled from an old ablation doc) and are measurably better than
+> earlier-cited numbers for the same scenario (e.g. baseline F1 was previously quoted as
+> ≈0.67–0.70; recall in particular is now ~8–10 pts higher). That's real drift from
+> parameter tuning done since those figures were first written down, not a
+> methodology change — a reminder that any number in this file can go stale as the
+> detector keeps improving. Treat numbers without a re-verification date as
+> **directionally trustworthy but not exact** unless re-checked against a live run.
 
 > **Evaluator matching fix (applied throughout).** The Hungarian matcher applied the distance
 > gate *after* the global assignment; in dense scenes that stranded genuinely-close
@@ -475,40 +499,56 @@ results.)
 
 ### Static-phantom suppression (detection FP analysis)
 
-A false-positive breakdown on registered/cropped found that **~70 % of FPs come from
-tracks that persist ≥ 20 frames** — the worst offenders appear in *every one* of the 282
-frames. These are the static-leak phantoms (barriers/poles/vegetation the occupancy
-background model can't remove because they're geometrically identical to parked cars —
-but they never move). Two things follow:
+An earlier false-positive breakdown on registered/cropped reported **~70 % of FPs**
+coming from tracks that persist ≥ 20 frames (static-leak phantoms — barriers/poles the
+occupancy background model can't remove because they're geometrically identical to a
+parked car, but never move). **Re-tested 2026-07-03 against the current pipeline: this
+figure no longer reproduces.** Under today's settings, only ~5.6 % of false positives
+match that signature. The mechanism: **exclusion zones** (drawn in the Geometry Editor
+over the fixed poles/barriers, at zero recall cost) now remove most static phantoms
+*before* tracking even sees them — they didn't exist when the original ~70 % figure was
+measured. `suppress_static` was the original fix for this leak; now it only mops up
+whatever the zones miss, so its own measured contribution shrank accordingly. Two things
+still hold, one measured fresh, one now much smaller than originally reported:
 
-- **Detection on CROPPED clouds ≫ FULL.** The full research-region cloud's off-road
-  clutter dominates FPs; clipping to the road lifts F1 from ≈0.36 to ≈0.52 (veh-only).
-  Use cropped clouds for detection.
+- **Detection on CROPPED clouds ≫ FULL — still true, and bigger than previously stated.**
+  Off-road clutter dominates FPs on the uncropped cloud: **F1 0.711 (cropped) vs. 0.462
+  (full)**, veh-only, registered — a ~25-point gap, and **846 FPs (cropped) vs. 3,620 FPs
+  (full) — a 76.6 % reduction** from cropping alone. This remains the single biggest lever
+  in the pipeline; use cropped clouds for detection.
 - **Track motion gate** (`suppress_static`, default on): drop tracks that **both** persist
   ≥ `static_min_frames` (30) **and** never exceed `static_max_speed` (0.5 m/s, lifetime
-  max). Real vehicles always break the floor, so recall is barely touched; a never-moving
-  object is never a wrong-way driver anyway. Measured (real pipeline, veh-only, ROI):
+  max). Re-measured fresh (registered/cropped, veh-only, ROI, own scorable GT):
 
-  | input | suppress | P | R | F1 |
-  |---|---|---|---|---|
-  | registered/cropped | off | 43.8 | 61.5 | 51.1 |
-  | registered/cropped | **on** | **52.3** | 60.6 | **56.2** |
-  | south/cropped | off | 73.2 | 51.2 | 60.2 |
-  | south/cropped | on | 75.6 | 49.3 | 59.7 |
+  | input | suppress | P | R | F1 | FP |
+  |---|---|---|---|---|---|
+  | registered/cropped | off | 0.674 | 0.737 | 0.704 | 896 |
+  | registered/cropped | **on** | **0.687** | 0.737 | **0.711** | **846** |
 
-  Big win on the fused/registered pipeline (+5 F1, −30 % FP); near-neutral on the
-  already-clean single south sensor (it has few phantoms) — consistent with the leak being
-  a fusion artifact. Same gate applied to both, so the A/B stays fair.
+  A real but now **small** win (+0.7 F1, −5.6 % FP, no recall cost) — not the +5 F1/−30 %
+  FP this section previously claimed. Kept on by default (it's free — no recall cost — and
+  still catches a genuine failure mode), but it's no longer the load-bearing fix it once
+  was; cropping is doing most of the work now.
 
-**Precision is then Pareto-capped.** With static-suppression on, the registered/cropped
-baseline is **P 52.4 / R 60.8 / F1 56.3**. Every remaining precision lever was swept —
+> **Not re-verified in this pass.** The Precision-Pareto-sweep conclusion below and the
+> BG-filter ablation table (density vs. global clusterer, SOR variants) further up this
+> doc were **not** re-run for this update — both require multiple full
+> background-model + detection + eval cycles per row, out of scope for a quick
+> verification pass. Given the baseline itself moved substantially (precision 52%→69%
+> since the Pareto sweep was last run — see the box above), **the Pareto conclusion
+> ("no lever beats the baseline") is not confirmed at today's baseline** and should be
+> re-swept before citing it as current. Treat the paragraph below as historical.
+
+**Precision was Pareto-capped, at an earlier baseline.** With static-suppression on, the
+registered/cropped baseline *at the time* was **P 52.4 / R 60.8 / F1 56.3** (today's
+re-verified baseline is P 0.687 — see above). Every remaining precision lever was swept —
 `min_cluster_pts` (flat and range-aware), `min_hits`, `merge_dist`, static aggressiveness,
-and an NMS duplicate-suppression pass — and **all are pure precision↔recall trades; none
-beats the baseline F1** (full table in [`RESULTS.md`](RESULTS.md)). The leftover FPs are
-tiny clusters (median 5 pts) in the mid-field, irreducibly ambiguous against real sparse
-vehicles; near-duplicates within ≤2.5 m are already merged by the tracker. So the defaults
-are kept (the `min_cluster_pts` slider already lets you dial toward precision when fewer
-false alarms matter more than recall); further gains need a learned detector, not tuning.
+and an NMS duplicate-suppression pass — and **all were pure precision↔recall trades; none
+beat the baseline F1** (full table in [`RESULTS.md`](RESULTS.md)) *at that baseline*. The
+leftover FPs were tiny clusters (median 5 pts) in the mid-field, irreducibly ambiguous
+against real sparse vehicles; near-duplicates within ≤2.5 m were already merged by the
+tracker. Whether this conclusion still holds at today's higher baseline is an open
+question — worth re-sweeping rather than assuming.
 
 ---
 

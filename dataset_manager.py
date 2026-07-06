@@ -48,14 +48,9 @@ TEMPLATES = [
         "gt_dir": "datasets/A9_r02_s02/data/derived/labels/scorable/south",
         "workspace": "datasets/A9_r02_s02",
         "description": (
-            "Real TUM Traffic intersection — sensor station **s110** at "
+            "TUM Traffic intersection sensor station **s110** at "
             "Schleißheimer Str. (B471) × Zeppelinstr., Garching-Hochbrück, Munich "
-            "(48.2494 °N, 11.6308 °E). Ships curated derived data: road-cropped **south** "
-            "LiDAR + visible-only **scorable GT**, **WWD lane** directions and **site "
-            "geometry**, a south+north **registered** (fused) cloud, **georeferencing** "
-            "config (exact WGS84 + true compass bearings) and the **HD-map** road network "
-            "for the digital twin. The large raw LiDAR/image data is downloaded separately "
-            "into `data/` — the template config already points at it."
+            "(48.2494 °N, 11.6308 °E)."
         ),
     },
 ]
@@ -338,12 +333,25 @@ class Dataset:
                 return os.path.isdir(p) and any(f.endswith(".pcd") for f in os.listdir(p))
             except Exception:
                 return False
+
+        def has_any(root, ext):
+            # Recursive: "model"/"filtered" are built per sensor/source
+            # (outputs/background/{background_model,background_filtering}/<sensor>/<crop>/),
+            # so this must find a match in ANY of those, not just the south/cropped
+            # default that model_path/filtered_dir point to — otherwise the status
+            # pills read "todo" even after building on e.g. Registered (the app's
+            # own default sensor elsewhere).
+            for _root, _dirs, files in os.walk(root):
+                if any(f.endswith(ext) for f in files):
+                    return True
+            return False
+
         return {
             "pcd": has_pcd(self.pcd_dir),
             "gt": os.path.isdir(self.gt_dir or ""),
             "lanes": os.path.exists(self.lanes_path),
-            "model": os.path.exists(self.model_path),
-            "filtered": has_pcd(self.filtered_dir),
+            "model": has_any(os.path.join(self.outputs_dir, "background", "background_model"), ".pkl"),
+            "filtered": has_any(os.path.join(self.outputs_dir, "background", "background_filtering"), ".pcd"),
         }
 
     def to_dict(self):

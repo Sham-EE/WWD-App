@@ -70,7 +70,7 @@ def _pcd_xy(path, grid=0.3):
 
 
 import nav
-st.set_page_config(layout="wide", page_title="Evaluation")
+st.set_page_config(layout="wide", page_title="Evaluation", page_icon="assets/favicon.png")
 nav.render_sidebar()
 st.title("📊 Quantitative Evaluation")
 

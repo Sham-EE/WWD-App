@@ -20,18 +20,36 @@ from geometry_config import get_research_polygon, get_road_polygon
 # overlays its UI-controlled values on top of this; the Evaluation A/B benchmark uses
 # it as-is — so the two can't silently drift (the "identical params" guarantee for the
 # A/B is structural, not manual). `truck_merge_dist` was lowered 10→5 after the A/B
-# showed the 10 m merge over-joined adjacent vehicles in the denser fused far-field.
+# showed the 10 m merge over-joined adjacent vehicles in the denser fused far-field,
+# then to 3.5 (below) after a further hyperparameter sweep on top of that fix.
+#
+# 2026-07-04 hyperparameter sweep (registered/cropped, veh-only, ROI, match_dist=2.0m,
+# shared registered-union GT): a one-at-a-time sweep over merge_dist, truck_merge_dist,
+# yaw_merge_deg, truck_len_thresh, strong_pts, min_cluster_pts, min_hits, static_*, and
+# roi_abs_y, then combining the individually-positive changes, found F1 0.7106 -> 0.7240
+# (P +1.0pt, R +1.7pt, MOTP tighter 1.341->1.287m, ID-switches flat) from the four values
+# changed below — combined with a matching background-filtering sweep (bg_ratio 0.98->0.85,
+# cell_ratio 0.90->0.75 in pages/2_Background_Filtering.py), the full pipeline measured
+# F1 0.7106 -> 0.7376. Not an exhaustive grid — a coordinate-descent search on one 282-frame
+# clip, so treat as a strong lead rather than a provably global optimum.
 DEFAULT_DETECTION_PARAMS = {
     "dbscan_eps": 2.0, "min_cluster_pts": 1, "min_hits": 2, "roi_abs_y": 40.0, "yaw_bias_deg": -90.0,
     "fps": 10.0, "max_missed": 5, "moving_speed_thresh": 3.0,
-    "merge_dist": 2.5, "yaw_merge_deg": 15.0, "truck_len_thresh": 7.0, "truck_merge_dist": 5.0,
+    # yaw_merge_deg 15->10 and truck_len_thresh 7->8: both individually improved F1 with
+    # MOTP tighter and ID-switches flat/better (2026-07-04 sweep, see note above).
+    "merge_dist": 2.5, "yaw_merge_deg": 10.0, "truck_len_thresh": 8.0,
+    # truck_merge_dist 5->3.5: continues the same direction as the earlier 10->5 fix —
+    # even less willing to bridge two clusters into one "truck" reduces over-merging
+    # further (2026-07-04 sweep: F1 +1.0pt, MOTP tighter, ID-switches -1, at this value alone).
+    "truck_merge_dist": 3.5,
     "vehicle_gate": False, "vehicle_min_length": 2.5, "vehicle_min_points": 40,
     # Auto-accept a cluster (skip temporal confirmation) once it has this many points —
     # a dense road cluster is unambiguously a real vehicle, while clutter is tiny (median
-    # ~5 pts). Lowered 200→100 after a trace showed dense near-field movers (e.g. a fast
+    # ~5 pts). Lowered 200->100 after a trace showed dense near-field movers (e.g. a fast
     # 184-pt car with no prior frame) failing temporal confirmation at the old cutoff;
-    # 100 lifts 0-20 m recall 52.5→55.8 at zero precision cost.
-    "strong_pts": 100,
+    # 100 lifts 0-20 m recall 52.5->55.8 at zero precision cost. Lowered again 100->50
+    # in the 2026-07-04 sweep (F1 +0.35pt, MOTP/ID-switches essentially unchanged).
+    "strong_pts": 50,
     "adaptive_eps": True, "aeps0": 0.8, "aeps_k": 0.04, "aeps_min": 1.0, "aeps_max": 3.0,
     # Static-phantom suppression: drop tracks that are BOTH long-lived AND never
     # moved (the static-leak signature — barriers/poles/vegetation the background

@@ -167,29 +167,32 @@ const { useState, useRef, useEffect, useCallback, useMemo } = React;
  * ======================================================================= */
 const STORAGE_KEY = "wwd_v2x_intersections";
 
-// Default site = a REAL one-way road pulled from OpenStreetMap. Because OSM stores a
-// one-way road's nodes in the direction of legal travel, "wrong-way" is simply driving
-// against this node order — the legal direction is known, not guessed.
+// Default site = the actual TUMTraf s110 research intersection this dashboard is
+// built for (Schleißheimer Str. × Zeppelinstr., Garching-Hochbrück, DE), georeferenced
+// from the LiDAR lane geometry. laneNodes are ordered in the LEGAL direction of travel
+// (westbound), so "wrong-way" is simply driving against this node order. When launched
+// from the Streamlit app this is replaced with the exact live scenario on load; this
+// default only shows if the file is opened standalone.
 const DEFAULT_SITE = {
-  id: "houston-allen-fr",
-  name: "Allen Pkwy Frontage Rd — Houston, TX",
+  id: "tumtraf-s110-westbound",
+  name: "Schleißheimer Str. (B471) × Zeppelinstr., Garching-Hochbrück (Munich), DE",
   protected: true,
   createdAt: "2024-01-01T00:00:00.000Z",
-  source: "OSM way 15331729 · highway=tertiary · oneway=yes",
-  roadName: "Allen Parkway Frontage Road",
-  center: [29.761420, -95.393672],
-  elevation: 12,
+  source: "TUMTraf A9 · s110 LiDAR georeference",
+  roadName: "Schleißheimer Str. (B471) × Zeppelinstr., Garching-Hochbrück (Munich), DE",
+  center: [48.249274, 11.630759],
+  elevation: 482,
   applicableRegion: {
-    nwLat: 29.762510, nwLon: -95.395466,
-    seLat: 29.760432, seLon: -95.391692,
+    nwLat: 48.249355, nwLon: 11.630243,
+    seLat: 48.249194, seLon: 11.631275,
   },
-  // ordered in the LEGAL direction of travel (westbound, per OSM oneway tagging)
+  // ordered in the LEGAL direction of travel (westbound lane)
   laneNodes: [
-    [29.761710, -95.392492],
-    [29.761579, -95.392996],
-    [29.761303, -95.394007],
-    [29.761276, -95.394199],
-    [29.761232, -95.394666],
+    [48.249355, 11.630243],
+    [48.249315, 11.630501],
+    [48.249274, 11.630759],
+    [48.249234, 11.631017],
+    [48.249194, 11.631275],
   ],
 };
 
@@ -312,15 +315,59 @@ function encodeUPER(tim) {
   return { hex: segs.map((s) => s.hex).join(""), segments: segs };
 }
 
-// Scatter ambient C-V2X receiver vehicles around the intersection (some in, some out of range)
-function generateReceivers(center) {
+// Scatter C-V2X receiver vehicles along the actual road so they're visible on/near
+// the lane when zoomed in — a cluster hugging the road (a few metres off each shoulder,
+// spread along and a bit past its length), plus a couple further out to keep the
+// in-range/out-of-range geofence count meaningful.
+function generateReceivers(site) {
+  const nodes = site.laneNodes || [];
+  const center = site.center;
   const recs = [];
-  for (let i = 0; i < 6; i++) {
+  if (nodes.length >= 2) {
+    const segs = [];
+    let total = 0;
+    for (let i = 0; i < nodes.length - 1; i++) {
+      const d = haversine(nodes[i], nodes[i + 1]);
+      segs.push({ a: nodes[i], b: nodes[i + 1], d });
+      total += d;
+    }
+    const along = (frac) => {
+      let t = frac * total;
+      if (t <= 0) {
+        const s = segs[0];
+        const over = s.d > 0 ? -t / s.d : 0;
+        return { pt: [s.a[0] - (s.b[0] - s.a[0]) * over, s.a[1] - (s.b[1] - s.a[1]) * over], brg: bearing(s.a, s.b) };
+      }
+      for (const s of segs) {
+        if (t <= s.d || s === segs[segs.length - 1]) {
+          const u = s.d > 0 ? Math.max(0, Math.min(1, t / s.d)) : 0;
+          return { pt: [s.a[0] + (s.b[0] - s.a[0]) * u, s.a[1] + (s.b[1] - s.a[1]) * u], brg: bearing(s.a, s.b) };
+        }
+        t -= s.d;
+      }
+      const last = segs[segs.length - 1];
+      return { pt: last.b, brg: bearing(last.a, last.b) };
+    };
+    const offsetLateral = (pt, brg, metres) => {
+      const perp = (brg + 90) * Math.PI / 180;
+      const dLat = (metres * Math.cos(perp)) / 111111;
+      const dLon = (metres * Math.sin(perp)) / (111111 * Math.cos(pt[0] * Math.PI / 180));
+      return [pt[0] + dLat, pt[1] + dLon];
+    };
+    for (let i = 0; i < 6; i++) {
+      const frac = -0.15 + Math.random() * 1.3; // along the road, a bit past either end
+      const { pt, brg } = along(frac);
+      const lateral = (Math.random() < 0.5 ? -1 : 1) * (4 + Math.random() * 14); // 4–18 m off the shoulder
+      recs.push({ id: "rx" + i, coord: offsetLateral(pt, brg, lateral), alerted: false });
+    }
+  }
+  // a couple further out, so not every ambient vehicle is inside the RSU radius
+  for (let i = 0; i < 2; i++) {
     const brg = Math.random() * 2 * Math.PI;
-    const dist = 80 + Math.random() * 440; // 80–520 m
+    const dist = 150 + Math.random() * 250; // 150–400 m
     const dLat = (dist * Math.cos(brg)) / 111111;
     const dLon = (dist * Math.sin(brg)) / (111111 * Math.cos(center[0] * Math.PI / 180));
-    recs.push({ id: "rx" + i, coord: [center[0] + dLat, center[1] + dLon], alerted: false });
+    recs.push({ id: "rx" + (6 + i), coord: [center[0] + dLat, center[1] + dLon], alerted: false });
   }
   return recs;
 }
@@ -1213,9 +1260,11 @@ function PipelinePanel({ pipeline, ticker, outputs, packetID, pulse, inRange }) 
 /* =========================================================================
  * Navigation platform push (SIMULATED)
  * ======================================================================= */
-function NavPushPanel({ active, ts, inRange, pushCount }) {
+function NavPushPanel({ active, ts, inRange, pushCount, roadName }) {
   const count = (inRange && inRange.count) || 0;
   const total = (inRange && inRange.total) || 0;
+  // Short form for the mock nav search bar — first segment of the full road/site name.
+  const shortRoad = (roadName || "this road").split(/[,×]/)[0].trim();
 
   return (
     <section className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-5 space-y-4">
@@ -1279,7 +1328,7 @@ function NavPushPanel({ active, ts, inRange, pushCount }) {
               <div className="absolute left-1/2 bottom-0 w-2 h-full -translate-x-1/2 rotate-6"
                 style={{ background: "linear-gradient(#4285f4,#4285f4)", opacity: 0.7, borderRadius: 8 }}></div>
               <div className="absolute top-2 left-2 right-2 h-7 rounded-md bg-[#0a0c10]/70 flex items-center px-2 text-[11px] text-[var(--muted)]">
-                <span className="mr-2">🔍</span> Allen Pkwy · 4 min
+                <span className="mr-2">🔍</span> {shortRoad} · 4 min
               </div>
               {active ? (
                 <div className="nav-in absolute bottom-2 left-2 right-2 rounded-lg bg-[#2a0d0d] border border-red-500/50 p-2.5 shadow-lg">
@@ -1582,7 +1631,7 @@ function App() {
   // keep a live ref to startSim for auto-demo timers
   useEffect(() => { startSimRef.current = startSim; });
   // stop sim if intersection switches mid-run, and respawn surrounding receivers
-  useEffect(() => { stopSim(false); setReceivers(generateReceivers(current.center)); }, [currentId]);
+  useEffect(() => { stopSim(false); setReceivers(generateReceivers(current)); }, [currentId]);
   // cleanup on unmount
   useEffect(() => () => { if (intervalRef.current) clearInterval(intervalRef.current); }, []);
 
@@ -1889,6 +1938,7 @@ function App() {
           ts={outputs.oncoming}
           inRange={inRange}
           pushCount={pushCount}
+          roadName={current.roadName || current.name}
         />
       </div>
 

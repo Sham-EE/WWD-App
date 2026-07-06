@@ -12,7 +12,7 @@ from lane_tools import (
 )
 
 import nav
-st.set_page_config(layout="wide", page_title="Lane Editor")
+st.set_page_config(layout="wide", page_title="Lane Editor", page_icon="assets/favicon.png")
 nav.render_sidebar()
 
 

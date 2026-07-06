@@ -18,7 +18,7 @@ import run_history as rh
 
 # --- Page Configuration ---
 import nav
-st.set_page_config(layout="wide", page_title="Background Filtering")
+st.set_page_config(layout="wide", page_title="Background Filtering", page_icon="assets/favicon.png")
 nav.render_sidebar()
 st.title("🔬 Background Filtering")
 logging.info("--- Background Filter Page Loaded ---")
@@ -249,12 +249,17 @@ with st.expander("🧹 Ground removal", expanded=False):
     config["dz_thresh"] = g2.number_input("Ground Z Threshold (m)", 0.1, 1.0, 0.3, 0.05)
 
 with st.expander("🧱 Background model (occupancy + persistence)", expanded=False):
+    st.caption("Defaults tuned 2026-07-04: a bg_ratio/cell_ratio sweep (registered/cropped, "
+               "veh-only, ROI, match_dist=2.0m) found 0.98/0.90 too strict — voxels/cells with "
+               "slightly inconsistent returns (still clearly static) weren't crossing the "
+               "threshold. Lowering both improved F1 0.7106→0.7327 with precision, recall, "
+               "MOTP, and ID-switches all better together (not a precision/recall trade).")
     b1, b2 = st.columns(2)
     config["bg_voxel"] = b1.slider("BG Voxel Size (m)", 0.5, 2.0, 1.0, 0.1)
-    config["bg_ratio"] = b2.slider("BG Presence Ratio", 0.5, 1.0, 0.98, 0.01)
+    config["bg_ratio"] = b2.slider("BG Presence Ratio", 0.5, 1.0, 0.85, 0.01)
     b3, b4 = st.columns(2)
     config["cell_size"] = b3.slider("Grid Cell Size (m)", 0.5, 5.0, 1.0, 0.1)
-    config["cell_ratio"] = b4.slider("Cluster Presence Ratio", 0.5, 1.0, 0.9, 0.01)
+    config["cell_ratio"] = b4.slider("Cluster Presence Ratio", 0.5, 1.0, 0.75, 0.01)
 
 with st.expander("🔗 Clustering (DBSCAN)", expanded=False):
     cluster_mode = st.radio(

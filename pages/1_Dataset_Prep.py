@@ -14,11 +14,10 @@ import road_viewer as rv
 import viewer_ui as vu
 import nav
 
-st.set_page_config(layout="wide", page_title="Dataset Prep")
+st.set_page_config(layout="wide", page_title="Dataset Prep", page_icon="assets/favicon.png")
 nav.render_sidebar()
 st.title("🧰 Dataset Prep")
-st.markdown("Recreate the dataset's **derived** data from the raw TUM Traffic download, in-app — so "
-            "everything the pipeline needs is reproducible, no external scripts.")
+st.markdown("Create the dataset's **derived** data from the raw TUM Traffic download, or your own.")
 
 ds = dm.get_active()
 st.caption(f"📂 Dataset: **{ds.name}**")
@@ -194,20 +193,15 @@ nav.render_stepper([
     (ic, nm, "done" if dn else ("next" if i == _prep_next else ("optional" if op else "todo")))
     for i, (ic, nm, dn, op) in enumerate(_prep_steps)
 ])
-st.caption("Registration is optional — only when fusing south + north. "
-           "Geometry Editor draws the road polygons, Crop clips the clouds to them, "
-           "then Scorable GT builds the visible-only ground truth.")
 
 # Tabs follow the recommended order; the `with` blocks keep their original
 # variable names, so only the labels + unpack order changed.
 tab_reg, tab_geom, tab_crop, tab_gt = st.tabs(
-    ["🧭 Registration", "🗺️ Geometry Editor", "✂️ Crop to road (ROI)", "🏷️ Scorable GT (visible-only)"])
+    ["🧭 Registration", "🗺️ Geometry Editor", "✂️ Crop to road", "🏷️ Scorable GT (visible-only)"])
 
 # ===================== Step 3: Crop to road =====================
 with tab_crop:
-    st.caption("Clip a LiDAR's point clouds to the **road polygons** in `site_geometry.json`. "
-               "Scales across sensors — crop the south, the north, or (later) the registered cloud. "
-               "Verified to reproduce the bundled cropped clouds exactly.")
+    st.caption("Crop a LiDAR's point clouds to the **road polygons** in `site_geometry.json`. ")
 
     # Source -> (raw input dir, cropped output dir)
     sources = {
@@ -295,10 +289,7 @@ with tab_crop:
 # ===================== Step 4: Scorable GT =====================
 with tab_gt:
     st.caption("Build a **scorable** ground-truth set: keep only objects inside the processed region "
-               "(the eval ROI) that actually have LiDAR points. Transparent + reproducible — the basis "
-               "for fair evaluation. (The bundled `labels_visible_south` used an opaque per-frame "
-               "visibility check that can't be reproduced from the labels; this is the principled "
-               "equivalent.)")
+               "(the Research Polygon: ROI) that have sufficient LiDAR points. This created a fair evaluation metric for the algorithms")
 
     # Source -> (raw labels dir, scorable-GT output dir, raw cloud dir for preview)
     gt_sources = {
@@ -414,9 +405,9 @@ with tab_gt:
 
 # ===================== Step 2: Geometry Editor =====================
 with tab_geom:
-    st.caption("Edit the **site geometry** — research/ROI polygon, road polygons (used for cropping), "
+    st.caption("Edit the **site geometry**: research/ROI polygon, road polygons (used for cropping), "
                "and exclusion rectangles. **Saving updates the whole pipeline** (Background Filtering, "
-               "cropping, scorable GT, the road outline) — they all read this file.")
+               "cropping, scorable GT, the road outline all read this file).")
 
     if "geom_edit" not in st.session_state or st.session_state.get("geom_ds") != ds.id:
         st.session_state.geom_edit = ge.load_site_geometry(ds)
@@ -647,7 +638,7 @@ with tab_geom:
             else:
                 st.info("No exclusion rectangles.")
     with g_right:
-        st.markdown("**👁 Live preview** — **drag to pan**, scroll to zoom. To draw a road / exclusion / "
+        st.markdown("**👁 Live preview**: **drag to pan**, scroll to zoom. To draw a road / exclusion / "
                     "ROI box, click the ⬚ **Box Select** tool in the chart's top-right toolbar, then drag "
                     "a rectangle. (Overlay toggles are in 🎛️ Layers & overlays.)")
         dm_mode = "pan"  # left-drag pans; drawing uses the modebar Box-Select tool
@@ -726,7 +717,7 @@ with tab_geom:
 with tab_reg:
     st.caption("Fuse the **south** and **north** Ouster LiDARs into one cloud. The sensor→base "
                "extrinsics are read straight from the OpenLABEL labels (static rig → constant 4×4), so "
-               "registration is **deterministic** — no guessing. The fused cloud is written in the "
+               "registration is **deterministic**. The fused cloud is written in the "
                "**south LiDAR frame**, so it's a drop-in superset of the south cloud (the GT, camera "
                "calibration, and road/ROI polygons all match it). Optional **ICP** then *measures* how "
                "well the bundled calibration aligns the clouds.")
@@ -798,12 +789,11 @@ with tab_reg:
     st.session_state.setdefault("reg_delta", None)
 
     st.divider()
-    st.subheader("👁 Preview — Raw vs Registered")
+    st.subheader("👁 Preview: Raw vs Registered")
     st.caption("One viewer, two modes. **Raw** overlays the two clouds in their own sensor frames "
-               "(the 'before' — they won't line up). **Registered** fuses them (the 'after'); use the "
+               "(the 'before', they won't line up). **Registered** fuses them (the 'after'); use the "
                "**Frame** toggle to view in the south LiDAR frame (what's written) or the neutral "
-               "`s110_base`. Toggle **By sensor** to colour south (blue) / north (orange) — if a "
-               "vehicle shows up as two offset copies in Registered view, that's a registration error.")
+               "`s110_base`. Toggle **By sensor** to colour south (blue) / north (orange).")
 
     @st.cache_data(show_spinner=False)
     def _fused(sp, npath, Ms_l, Mn_l, refine_l):
@@ -884,14 +874,14 @@ with tab_reg:
         # the yaw/shift describe how far OFF the raw calibration is; the verdict
         # then says whether that error is currently being corrected.
         if not big_yaw:
-            verdict = "✅ raw calibration already aligns well — correction negligible"
+            verdict = "✅ raw calibration already aligns well (correction negligible)"
         elif use_refine:
             verdict = "✅ corrected (this is how far off the raw calibration was)"
         else:
-            verdict = "⚠️ raw calibration is off by this much — toggle on to correct"
+            verdict = "⚠️ raw calibration is off by this much (toggle on to correct)"
         st.info(f"ICP correction (north→south): yaw **{inf['yaw_deg']:+.2f}°** · "
                 f"shift **{inf['translation_m']:.2f} m** · fitness **{inf['fitness']:.2f}** · "
-                f"RMSE **{inf['inlier_rmse']:.3f} m** — {verdict}")
+                f"RMSE **{inf['inlier_rmse']:.3f} m** · {verdict}")
 
         is_raw = view.startswith("Raw")
         if is_raw:
@@ -975,19 +965,13 @@ with tab_reg:
         bar.empty()
         st.success(f"Wrote **{n}** fused clouds (south LiDAR frame) → `{reg_out}`  "
                    "(manifest: `registration.json`). Now crop or score the **Registered (south + north)** "
-                   "source in the other tabs — it reuses the south GT, calibration, and polygons.")
+                   "source in the other tabs: it reuses the south GT, calibration, and polygons.")
 
     # --- fused GT labels (union of south + north boxes) ---
     st.divider()
     st.subheader("🏷️ Build fused GT labels (south ∪ north)")
     reg_label_out = os.path.join(ds.derived_dir, "labels", "registered")
-    st.caption("Each sensor only annotates the objects **it** can see, so the registered cloud — which "
-               "borrows the **south** GT — is missing the objects only **north** saw (they have points in "
-               "the fused cloud but no box). This builds a **union** GT: north boxes are transformed into "
-               "the south frame and the ones south didn't annotate are added (shared objects keep their "
-               "south box). Each box's **`num_points` is recomputed against the fused cloud** so the "
-               "scorable gate is honest for registered (the stored counts are south-only). Afterwards, "
-               "build the **Registered** scorable set in the 🏷️ Scorable GT tab.")
+    st.caption("Each sensor only annotates objects it sees, so the registered cloud (using south GT) misses objects visible only to the north sensor. This builds a union GT by transforming north boxes into the south frame and adding any missing annotations while keeping south boxes for shared objects.")
     fc1, fc2 = st.columns([1.4, 2])
     fuse_dist = fc1.slider("Duplicate-merge distance (m)", 0.5, 5.0, 2.5, 0.5,
                            help="A north box within this distance of a south box is treated as the SAME "

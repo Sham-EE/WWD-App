@@ -13,7 +13,7 @@ import viewer_ui as vu
 import geo_reference as geo
 import nav
 
-st.set_page_config(layout="wide", page_title="Visualizer")
+st.set_page_config(layout="wide", page_title="Visualizer", page_icon="assets/favicon.png")
 nav.render_sidebar()
 
 import re as _re
@@ -289,14 +289,19 @@ def render_camera_tab():
 
 # ======================= LiDAR labels (3D) tab =======================
 def render_lidar_tab():
-    st.markdown("LiDAR scan + ground-truth 3D boxes — **Bird's Eye** and **Side** view (rotate/zoom each).")
+    st.markdown("LiDAR scan + ground-truth 3D boxes.")
     n = min(len(labels), len(pcds))
     if n == 0:
         st.warning("Need both OpenLABEL labels and point clouds (set them in **Input folders** above).")
         return
     o1, o2, o3, o4, o5, o6 = st.columns(6)
     color_mode = o1.radio("Box colour", ["by_category", "by_track_id"], horizontal=True, key="lv_color")
-    max_pts = o2.select_slider("Points shown", [10000, 20000, 30000, 50000], value=20000, key="lv_pts")
+    max_pts = o2.select_slider("Points shown", [10000, 20000, 30000, 50000, 80000, 100000],
+                               value=20000, key="lv_pts",
+                               format_func=lambda n: "All" if n >= 100000 else f"{n // 1000}k",
+                               help="Max LiDAR points rendered per frame. Registered is denser than a single "
+                                    "sensor — ~80-83k points/frame cropped, ~93-96k full — so 'All' shows the "
+                                    "complete cloud for any sensor/crop combination.")
     show_boxes = o3.checkbox("📦 Boxes", value=True, key="lv_boxes",
                              help="Show the 3D boxes + LiDAR markers.")
     show_road = o4.checkbox("🛣️ Road outline", value=True, key="lv_road",
@@ -341,10 +346,7 @@ def render_lidar_tab():
     # ---- 3D LiDAR video — Plotly/kaleido, WYSIWYG with the interactive preview ----
     st.divider()
     st.subheader("🎬 3D LiDAR video")
-    st.caption("This preview uses the **same Plotly engine** as the render, so what you frame is exactly "
-               "what you get — and zooming in won't streak the HD-map lines across the screen. **Orbit it "
-               "with the mouse** to explore, then lock the camera with the sliders (the render uses the "
-               "sliders). Found the look? Note the values and I'll hardcode them.")
+    st.caption("Create a video at a specific angle of the intersection, this will be saved locally and displayed in the videos tab next to the road video.")
     a1, a2, a3 = st.columns(3)
     c_az = a1.slider("Azimuth°", -180, 180, 180, key="vid3d_az",
                      help="Spin the camera around the scene (compass heading).")
@@ -410,18 +412,17 @@ def render_lidar_tab():
 # ======================= Real intersection (Google Maps) tab =======================
 def render_real_tab():
     import streamlit.components.v1 as components
-    st.markdown(f"The dataset's **real location** — a live, interactive Google Map of "
-                f"**{geo.site_name()}**. Pan, zoom, switch Map/Satellite (bottom-left), or click a "
-                "place like the **Jägerhof**.")
+    st.markdown(f"The dataset's **real location**: a live, interactive Google Map of "
+                f"**{geo.site_name()}**.")
     lat, lon = geo.sensor_position_latlon("south") or geo.site_latlon()
     src = f"https://maps.google.com/maps?q={lat},{lon}&t=h&z=18&hl=en&output=embed"   # t=h → satellite
     components.html(
         f'<iframe width="100%" height="660" style="border:0;border-radius:10px" loading="lazy" '
         f'referrerpolicy="no-referrer-when-downgrade" src="{src}"></iframe>', height=680)
     pano = f"https://www.google.com/maps/@?api=1&map_action=pano&viewpoint={lat},{lon}"
-    st.caption(f"📍 LiDAR gantry @ **{lat:.6f}, {lon:.6f}** — placed by the exact georeference.  "
+    st.caption(f"📍 LiDAR gantry @ **{lat:.6f}, {lon:.6f}**: placed by the exact georeference.  "
                f"[Open in Google Maps ↗](https://www.google.com/maps/search/?api=1&query={lat},{lon})  ·  "
-               f"[👤 Street View — walk it in first-person ↗]({pano})")
+               f"[👤 Street View: walk it in first-person ↗]({pano})")
 
 
 # ======================= Videos tab (synced playback) =======================
@@ -508,8 +509,7 @@ def render_videos_tab():
     import glob
     import base64
     import streamlit.components.v1 as components
-    st.markdown("Play the **Road Viewer** clip and the **3D LiDAR** clip **together** — one button runs "
-                "both in lock-step, stacked so you see both at once. Generate them first in the "
+    st.markdown("Play the **Road Viewer** clip and the **3D LiDAR** clip **together**. Generate them first in the "
                 "🎥 Road Viewer and 🧊 LiDAR labels tabs.")
 
     def _resolve(state_key, *patterns):
@@ -550,11 +550,7 @@ def render_videos_tab():
 
                 html = _SYNC_PLAYER_HTML.replace("__V1__", _uri(rc)).replace("__V2__", _uri(lc))
             components.html(html, height=int(h) + 8, scrolling=False)
-            st.caption(f"Road: `{os.path.basename(road[0])}` · LiDAR: `{os.path.basename(lidar[0])}`  ·  "
-                       "in-page sync uses compact copies (full-res clips stay in road_videos). **Play both** "
-                       "starts them together and auto-resyncs on drift; use the **speed** buttons to slow "
-                       "them down. Road looking soft? Re-render it in the 🎥 Road Viewer tab at a higher "
-                       "**Frame height** (720–1080).")
+
             synced = True
         except Exception as e:
             st.warning(f"Couldn't build the synced player ({e}). Showing separate players below.")

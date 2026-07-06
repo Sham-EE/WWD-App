@@ -9,7 +9,7 @@ import registration as reg
 import viewer_ui as vu
 import nav
 
-st.set_page_config(layout="wide", page_title="Object Detection and Tracking")
+st.set_page_config(layout="wide", page_title="Object Detection and Tracking", page_icon="assets/favicon.png")
 nav.render_sidebar()
 
 st.title("📦 Object Detection and Tracking")

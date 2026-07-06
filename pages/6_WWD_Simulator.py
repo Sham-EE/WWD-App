@@ -20,7 +20,7 @@ import dataset_prep as dp
 import registration as reg
 import nav
 
-st.set_page_config(layout="wide", page_title="WWD Simulator")
+st.set_page_config(layout="wide", page_title="WWD Simulator", page_icon="assets/favicon.png")
 nav.render_sidebar()
 st.title("🚨 Wrong-Way Driver Simulator")
 st.markdown(
